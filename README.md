@@ -119,6 +119,7 @@ This project includes Railway-friendly files:
 - `nixpacks.toml` to install `ffmpeg`
 - `railway.json` with the `uvicorn` start command
 - `.python-version` pinned to `3.11`
+- `runtime.txt` pinned to `3.11`
 
 Recommended Railway setup:
 
@@ -134,6 +135,12 @@ DEEPGRAM_API_KEY=...
 ELEVENLABS_API_KEY=...
 ELEVENLABS_VOICE_ID=...
 OPENAI_API_KEY=...
+```
+
+Also set this Railway variable explicitly to avoid Python `3.13` builds:
+
+```text
+NIXPACKS_PYTHON_VERSION=3.11
 ```
 
 4. Either:
