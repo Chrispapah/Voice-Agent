@@ -116,7 +116,7 @@ Keep the Zadarma routing pointed at the same Twilio SIP Domain during rollout.
 
 This project includes Railway-friendly files:
 
-- `nixpacks.toml` to install `ffmpeg`
+- `nixpacks.toml` to install `ffmpeg` and `portaudio`
 - `railway.json` with the `uvicorn` start command
 - `.python-version` pinned to `3.11`
 - `runtime.txt` pinned to `3.11`
