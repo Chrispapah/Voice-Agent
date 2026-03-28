@@ -26,6 +26,25 @@ load_dotenv()
 configure_pretty_logging()
 
 
+def ensure_nltk_resources() -> None:
+    # Vocode's ElevenLabs synthesizer uses NLTK tokenization for message cutoff logic.
+    # Railway images start empty, so make sure the required tokenizers exist before calls.
+    import nltk
+    from nltk.data import find
+
+    required_resources = (
+        ("tokenizers/punkt", "punkt"),
+        ("tokenizers/punkt_tab/english", "punkt_tab"),
+    )
+
+    for resource_path, download_name in required_resources:
+        try:
+            find(resource_path)
+        except LookupError:
+            logger.info("Downloading NLTK resource: {}", download_name)
+            nltk.download(download_name, quiet=True)
+
+
 def apply_runtime_env(settings: ContactCenterSettings) -> None:
     if settings.openai_api_key:
         os.environ["OPENAI_API_KEY"] = settings.openai_api_key
@@ -92,6 +111,7 @@ def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundC
 def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     settings = settings or ContactCenterSettings()
     apply_runtime_env(settings)
+    ensure_nltk_resources()
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
 
