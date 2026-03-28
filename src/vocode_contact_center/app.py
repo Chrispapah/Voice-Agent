@@ -19,11 +19,12 @@ from vocode.streaming.transcriber.deepgram_transcriber import (
     TimeSilentConfig,
 )
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
-from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboundCallConfig
+from vocode.streaming.telephony.server.base import TwilioInboundCallConfig
 
 from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
 from vocode_contact_center.settings import ContactCenterSettings
+from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
 
 load_dotenv()
 configure_pretty_logging()
@@ -160,7 +161,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         return app
 
     config_manager = RedisConfigManager()
-    telephony_server = TelephonyServer(
+    telephony_server = LatencyTrackingTelephonyServer(
         base_url=base_url,
         config_manager=config_manager,
         inbound_call_configs=[build_inbound_call_config(settings)],

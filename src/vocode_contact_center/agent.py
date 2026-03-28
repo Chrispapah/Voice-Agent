@@ -10,6 +10,7 @@ from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.message import BaseMessage, LLMToken
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
 
+from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.langchain_support import (
     astream_text_tokens,
     build_chain,
@@ -38,11 +39,19 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         super().__init__(agent_config=agent_config, **kwargs)
         self.chain = build_chain(agent_config)
         self.config_manager = RedisConfigManager()
+        self._call_context_cache: dict[str, str] = {}
+        self._logged_streaming_synthesizer_mode = False
 
     async def _get_call_context(self, conversation_id: str) -> str:
+        cached_context = self._call_context_cache.get(conversation_id)
+        if cached_context is not None:
+            return cached_context
+
         call_config = await self.config_manager.get_config(conversation_id)
         if call_config is None:
-            return "Call metadata is unavailable."
+            context = "Call metadata is unavailable."
+            self._call_context_cache[conversation_id] = context
+            return context
 
         from_phone = getattr(call_config, "from_phone", None)
         to_phone = getattr(call_config, "to_phone", None)
@@ -51,7 +60,23 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
             context_parts.append(f"- Caller number: {from_phone}")
         if to_phone:
             context_parts.append(f"- Dialed number: {to_phone}")
-        return "\n".join(context_parts)
+        context = "\n".join(context_parts)
+        self._call_context_cache[conversation_id] = context
+        return context
+
+    def _using_input_streaming_synthesizer(self) -> bool:
+        using_input_streaming_synthesizer = (
+            hasattr(self, "conversation_state_manager")
+            and self.conversation_state_manager.using_input_streaming_synthesizer()
+        )
+        if not self._logged_streaming_synthesizer_mode:
+            log_method = logger.info if using_input_streaming_synthesizer else logger.warning
+            log_method(
+                "Synthesizer mode for this conversation uses input streaming: {}",
+                using_input_streaming_synthesizer,
+            )
+            self._logged_streaming_synthesizer_mode = True
+        return using_input_streaming_synthesizer
 
     def _looks_like_handoff_request(self, human_input: str) -> bool:
         normalized = human_input.lower()
@@ -102,13 +127,11 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         )
 
         response_generator = collate_response_async
-        using_input_streaming_synthesizer = (
-            hasattr(self, "conversation_state_manager")
-            and self.conversation_state_manager.using_input_streaming_synthesizer()
-        )
+        using_input_streaming_synthesizer = self._using_input_streaming_synthesizer()
         if using_input_streaming_synthesizer:
             response_generator = stream_response_async
 
+        first_token_logged = False
         async for message in response_generator(
             conversation_id=conversation_id,
             gen=astream_text_tokens(stream),
@@ -117,6 +140,12 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
             message_type = LLMToken if using_input_streaming_synthesizer else BaseMessage
 
             if isinstance(message, str):
+                if not first_token_logged:
+                    conversation_latency_tracker.mark_first_llm_token(
+                        conversation_id,
+                        using_input_streaming_synthesizer=using_input_streaming_synthesizer,
+                    )
+                    first_token_logged = True
                 yield response_class(
                     message=message_type(text=message),
                     is_interruptible=True,

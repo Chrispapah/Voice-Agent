@@ -21,10 +21,10 @@ class ContactCenterSettings(BaseSettings):
 
     deepgram_api_key: str | None = None
     deepgram_model: str = "nova-2"
-    deepgram_vad_threshold_ms: int = 300
+    deepgram_vad_threshold_ms: int = 180
     deepgram_utterance_cutoff_ms: int = 1000
-    deepgram_time_cutoff_seconds: float = 0.3
-    deepgram_post_punctuation_time_seconds: float = 0.15
+    deepgram_time_cutoff_seconds: float = 0.18
+    deepgram_post_punctuation_time_seconds: float = 0.08
     deepgram_single_utterance_for_first_response: bool = True
 
     elevenlabs_api_key: str | None = None
@@ -36,7 +36,7 @@ class ContactCenterSettings(BaseSettings):
     langchain_provider: str = "openai"
     langchain_model_name: str = "gpt-4o-mini"
     langchain_temperature: float = 0.2
-    langchain_max_tokens: int = 96
+    langchain_max_tokens: int = 64
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None

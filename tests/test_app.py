@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from vocode.streaming.models.message import BaseMessage
@@ -93,3 +94,30 @@ def test_contact_center_agent_returns_fallback_for_handoff_request():
 
     assert "human agent" in message.lower()
     assert should_stop is False
+
+
+def test_contact_center_agent_caches_call_context_per_conversation():
+    class FakeConfigManager:
+        def __init__(self):
+            self.calls = 0
+
+        async def get_config(self, conversation_id):
+            self.calls += 1
+            return SimpleNamespace(from_phone="+1234567890", to_phone="+1098765432")
+
+    agent = ContactCenterAgent(
+        ContactCenterAgentConfig(
+            initial_message=BaseMessage(text="Hello"),
+            prompt_preamble="You are helpful.",
+            model_name="gpt-4o-mini",
+            provider="openai",
+        )
+    )
+    agent.config_manager = FakeConfigManager()
+
+    first_context = asyncio.run(agent._get_call_context("conversation-1"))
+    second_context = asyncio.run(agent._get_call_context("conversation-1"))
+
+    assert "Caller number: +1234567890" in first_context
+    assert first_context == second_context
+    assert agent.config_manager.calls == 1

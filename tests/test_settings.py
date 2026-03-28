@@ -77,3 +77,12 @@ def test_non_ssl_redis_url_disables_redisssl_flag():
     assert os.environ["REDISHOST"] == "redis.railway.internal"
     assert os.environ["REDISPORT"] == "6379"
     assert os.environ["REDISSSL"] == ""
+
+
+def test_latency_defaults_are_tuned_for_faster_turn_taking():
+    settings = ContactCenterSettings()
+
+    assert settings.deepgram_vad_threshold_ms == 180
+    assert settings.deepgram_time_cutoff_seconds == 0.18
+    assert settings.deepgram_post_punctuation_time_seconds == 0.08
+    assert settings.langchain_max_tokens == 64
