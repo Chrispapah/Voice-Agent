@@ -13,7 +13,10 @@ from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.models.transcriber import (
     DeepgramTranscriberConfig,
-    PunctuationEndpointingConfig,
+)
+from vocode.streaming.transcriber.deepgram_transcriber import (
+    DeepgramEndpointingConfig,
+    TimeSilentConfig,
 )
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
 from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboundCallConfig
@@ -90,7 +93,17 @@ def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundC
         url="/inbound_call",
         agent_config=build_agent_config(settings),
         transcriber_config=DeepgramTranscriberConfig.from_telephone_input_device(
-            endpointing_config=PunctuationEndpointingConfig(),
+            endpointing_config=DeepgramEndpointingConfig(
+                vad_threshold_ms=settings.deepgram_vad_threshold_ms,
+                utterance_cutoff_ms=settings.deepgram_utterance_cutoff_ms,
+                time_silent_config=TimeSilentConfig(
+                    time_cutoff_seconds=settings.deepgram_time_cutoff_seconds,
+                    post_punctuation_time_seconds=settings.deepgram_post_punctuation_time_seconds,
+                ),
+                use_single_utterance_endpointing_for_first_utterance=(
+                    settings.deepgram_single_utterance_for_first_response
+                ),
+            ),
             api_key=settings.deepgram_api_key,
             model=settings.deepgram_model,
         ),
@@ -98,7 +111,7 @@ def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundC
             api_key=settings.elevenlabs_api_key,
             voice_id=settings.elevenlabs_voice_id,
             model_id=settings.elevenlabs_model_id,
-            optimize_streaming_latency=3,
+            optimize_streaming_latency=settings.elevenlabs_optimize_streaming_latency,
             experimental_websocket=settings.elevenlabs_use_websocket,
         ),
         twilio_config=TwilioConfig(
