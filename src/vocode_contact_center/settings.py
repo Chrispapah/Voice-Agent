@@ -104,4 +104,6 @@ class ContactCenterSettings(BaseSettings):
             os.environ["REDISUSER"] = parsed.username
         if parsed.password:
             os.environ["REDISPASSWORD"] = parsed.password
-        os.environ["REDISSSL"] = "true" if parsed.scheme == "rediss" else "false"
+        # Vocode currently casts REDISSSL with bool(os.environ.get(...)), so any non-empty
+        # string becomes truthy. Use an empty string to disable SSL cleanly for redis:// URLs.
+        os.environ["REDISSSL"] = "1" if parsed.scheme == "rediss" else ""

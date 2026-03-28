@@ -64,4 +64,16 @@ def test_redis_url_is_split_into_vocode_redis_environment_variables():
     assert os.environ["REDISPORT"] == "6379"
     assert os.environ["REDISUSER"] == "default"
     assert os.environ["REDISPASSWORD"] == "secret"
-    assert os.environ["REDISSSL"] == "true"
+    assert os.environ["REDISSSL"] == "1"
+
+
+def test_non_ssl_redis_url_disables_redisssl_flag():
+    settings = ContactCenterSettings(
+        redis_url="redis://default:secret@redis.railway.internal:6379"
+    )
+
+    settings.apply_redis_env()
+
+    assert os.environ["REDISHOST"] == "redis.railway.internal"
+    assert os.environ["REDISPORT"] == "6379"
+    assert os.environ["REDISSSL"] == ""
