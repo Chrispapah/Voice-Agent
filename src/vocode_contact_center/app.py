@@ -25,12 +25,29 @@ from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
 from vocode_contact_center.langchain_support import build_chain
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
-from vocode_contact_center.realtime_worker import RealtimeSessionManager, create_realtime_router
+from vocode_contact_center.realtime_worker import (
+    RealtimeSessionManager,
+    RealtimeSnapshot,
+    create_realtime_router,
+)
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
 
 load_dotenv()
 configure_pretty_logging()
+
+
+class DisabledRealtimeSessionManager:
+    def __init__(self) -> None:
+        self.legacy_telephony_available = False
+
+    def snapshot(self) -> RealtimeSnapshot:
+        return RealtimeSnapshot(
+            total_sessions_created=0,
+            active_sessions=0,
+            total_interruptions=0,
+            completed_responses=0,
+        )
 
 
 def ensure_nltk_resources() -> None:
@@ -143,10 +160,20 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
     realtime_missing = settings.missing_realtime_values() if settings.realtime_enabled else ["REALTIME_DISABLED"]
     realtime_ready = settings.realtime_enabled and not realtime_missing
-    realtime_manager = RealtimeSessionManager(
-        settings,
-        legacy_telephony_available=False,
-    )
+    realtime_manager: RealtimeSessionManager | DisabledRealtimeSessionManager
+    if realtime_ready:
+        try:
+            realtime_manager = RealtimeSessionManager(
+                settings,
+                legacy_telephony_available=False,
+            )
+        except Exception as exc:
+            logger.exception("Realtime voice disabled due to initialization failure: {}", exc)
+            realtime_missing = ["REALTIME_INITIALIZATION_FAILED"]
+            realtime_ready = False
+            realtime_manager = DisabledRealtimeSessionManager()
+    else:
+        realtime_manager = DisabledRealtimeSessionManager()
     app.state.realtime_manager = realtime_manager
     app.state.realtime_ready = realtime_ready
     app.state.missing_realtime_values = [] if realtime_ready else realtime_missing
