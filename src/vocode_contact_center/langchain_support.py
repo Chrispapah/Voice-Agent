@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from functools import lru_cache
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, AsyncIterable
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages.base import BaseMessage as LangChainBaseMessage
@@ -163,3 +164,49 @@ async def astream_text_tokens(stream: AsyncGenerator[LangChainBaseMessage, None]
         text = extract_text_from_langchain_message(chunk)
         if text:
             yield text
+
+
+def _count_words(text: str) -> int:
+    return len(re.findall(r"\b\w+\b", text))
+
+
+async def burst_response_async(
+    gen: AsyncIterable[str],
+    *,
+    min_words: int,
+    max_words: int,
+    min_chars: int,
+) -> AsyncGenerator[str, None]:
+    """Yield smaller speech chunks for non-input-streaming phone TTS."""
+
+    punctuation_endings = (".", "?", "!", ";", ":")
+    buffer = ""
+
+    async for token in gen:
+        if not token:
+            continue
+
+        buffer += token
+        stripped_buffer = buffer.strip()
+        if not stripped_buffer:
+            continue
+
+        word_count = _count_words(stripped_buffer)
+        has_sentence_break = stripped_buffer.endswith(punctuation_endings)
+        has_safe_boundary = buffer[-1].isspace() or has_sentence_break
+        should_flush = False
+
+        if has_sentence_break and word_count >= 1:
+            should_flush = True
+        elif has_safe_boundary and word_count >= max(min_words, 1) and len(stripped_buffer) >= min_chars:
+            should_flush = True
+        elif has_safe_boundary and word_count >= max(max_words, 1):
+            should_flush = True
+
+        if should_flush:
+            yield stripped_buffer
+            buffer = ""
+
+    trailing = buffer.strip()
+    if trailing:
+        yield trailing

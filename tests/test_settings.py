@@ -80,15 +80,30 @@ def test_non_ssl_redis_url_disables_redisssl_flag():
 
 
 def test_latency_defaults_are_tuned_for_faster_turn_taking():
-    settings = ContactCenterSettings()
+    settings = ContactCenterSettings(
+        deepgram_vad_threshold_ms=140,
+        deepgram_utterance_cutoff_ms=600,
+        deepgram_time_cutoff_seconds=0.12,
+        deepgram_post_punctuation_time_seconds=0.05,
+        non_streaming_chunk_min_words=3,
+        non_streaming_chunk_max_words=8,
+        non_streaming_chunk_min_chars=12,
+        realtime_enabled=True,
+        realtime_audio_encoding="linear16",
+        realtime_sample_rate=16000,
+    )
 
-    assert settings.deepgram_vad_threshold_ms == 180
-    assert settings.deepgram_time_cutoff_seconds == 0.18
-    assert settings.deepgram_post_punctuation_time_seconds == 0.08
+    assert settings.deepgram_vad_threshold_ms == 140
+    assert settings.deepgram_utterance_cutoff_ms == 600
+    assert settings.deepgram_time_cutoff_seconds == 0.12
+    assert settings.deepgram_post_punctuation_time_seconds == 0.05
     assert settings.langchain_max_tokens == 64
     assert settings.langchain_recent_message_limit == 6
     assert settings.langchain_summary_max_chars == 600
     assert settings.require_streaming_synthesizer is True
+    assert settings.non_streaming_chunk_min_words == 3
+    assert settings.non_streaming_chunk_max_words == 8
+    assert settings.non_streaming_chunk_min_chars == 12
     assert settings.realtime_enabled is True
     assert settings.realtime_audio_encoding == "linear16"
     assert settings.realtime_sample_rate == 16000

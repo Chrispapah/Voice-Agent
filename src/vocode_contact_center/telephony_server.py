@@ -90,6 +90,11 @@ class LatencyTrackingCallsRouter(CallsRouter):
         events_manager: Optional[EventsManager] = None,
     ):
         if isinstance(call_config, TwilioCallConfig):
+            conversation_latency_tracker.mark_call_started(
+                conversation_id,
+                from_phone=call_config.from_phone,
+                to_phone=call_config.to_phone,
+            )
             agent_config = call_config.agent_config
             if isinstance(agent_config, ContactCenterAgentConfig):
                 agent_config = agent_config.copy(

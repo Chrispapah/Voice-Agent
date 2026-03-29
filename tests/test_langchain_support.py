@@ -1,7 +1,9 @@
+import asyncio
+
 from vocode.streaming.models.events import Sender
 from vocode.streaming.models.transcript import Message, Transcript
 
-from vocode_contact_center.langchain_support import build_prompt_inputs
+from vocode_contact_center.langchain_support import build_prompt_inputs, burst_response_async
 
 
 def test_build_prompt_inputs_compacts_older_history_into_summary():
@@ -28,3 +30,28 @@ def test_build_prompt_inputs_compacts_older_history_into_summary():
     assert prompt_inputs["chat_history"][1][0] == "human"
     assert "Conversation summary:" in prompt_inputs["conversation_summary"]
     assert "booking reference ABC123" in prompt_inputs["conversation_summary"]
+
+
+def test_burst_response_async_flushes_before_full_sentence_completion():
+    async def token_source():
+        for token in ["Yes", ", ", "I ", "can ", "hear ", "you", ". ", "How ", "can ", "I ", "help?"]:
+            yield token
+
+    chunks = asyncio.run(
+        _collect_chunks(
+            burst_response_async(
+                token_source(),
+                min_words=3,
+                max_words=8,
+                min_chars=12,
+            )
+        )
+    )
+
+    assert chunks[0] == "Yes, I can hear"
+    assert chunks[1] == "you."
+    assert chunks[-1] == "How can I help?"
+
+
+async def _collect_chunks(generator):
+    return [chunk async for chunk in generator]

@@ -21,10 +21,10 @@ class ContactCenterSettings(BaseSettings):
 
     deepgram_api_key: str | None = None
     deepgram_model: str = "nova-2"
-    deepgram_vad_threshold_ms: int = 180
-    deepgram_utterance_cutoff_ms: int = 1000
-    deepgram_time_cutoff_seconds: float = 0.18
-    deepgram_post_punctuation_time_seconds: float = 0.08
+    deepgram_vad_threshold_ms: int = 140
+    deepgram_utterance_cutoff_ms: int = 600
+    deepgram_time_cutoff_seconds: float = 0.12
+    deepgram_post_punctuation_time_seconds: float = 0.05
     deepgram_single_utterance_for_first_response: bool = True
 
     elevenlabs_api_key: str | None = None
@@ -41,6 +41,9 @@ class ContactCenterSettings(BaseSettings):
     langchain_summary_max_messages: int = 12
     langchain_summary_max_chars: int = 600
     require_streaming_synthesizer: bool = True
+    non_streaming_chunk_min_words: int = 3
+    non_streaming_chunk_max_words: int = 8
+    non_streaming_chunk_min_chars: int = 12
     realtime_enabled: bool = True
     realtime_transport: str = "websocket"
     realtime_input_mode: str = "partial_transcripts"

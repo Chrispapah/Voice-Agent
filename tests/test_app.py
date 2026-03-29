@@ -150,8 +150,14 @@ def test_healthz_reports_streaming_requirement_and_latency_endpoint_is_available
 def test_latency_tracker_snapshot_aggregates_segment_timings():
     tracker = ConversationLatencyTracker()
 
+    tracker.mark_call_started(
+        "conversation-1",
+        from_phone="+1234567890",
+        to_phone="+1098765432",
+    )
     tracker.mark_audio_received("conversation-1")
     tracker.mark_transcription_final("conversation-1", "hello there")
+    tracker.mark_first_model_token("conversation-1")
     tracker.mark_first_llm_token(
         "conversation-1",
         using_input_streaming_synthesizer=True,
@@ -161,6 +167,9 @@ def test_latency_tracker_snapshot_aggregates_segment_timings():
     snapshot = tracker.snapshot()
 
     assert snapshot["segments"]["audio_to_final_ms"]["count"] == 1
+    assert snapshot["segments"]["final_to_first_model_token_ms"]["count"] == 1
     assert snapshot["segments"]["final_to_first_llm_ms"]["count"] == 1
     assert snapshot["segments"]["first_llm_to_tts_ms"]["count"] == 1
     assert snapshot["segments"]["final_to_first_tts_ms"]["count"] == 1
+    assert snapshot["active_conversation_details"]["conversation-1"]["from_phone"] == "+1234567890"
+    assert snapshot["active_conversation_details"]["conversation-1"]["to_phone"] == "+1098765432"

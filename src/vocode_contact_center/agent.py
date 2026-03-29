@@ -6,13 +6,14 @@ from loguru import logger
 from langchain_core.runnables.base import Runnable
 from pydantic.v1 import Field
 from vocode.streaming.agent.base_agent import GeneratedResponse, RespondAgent, StreamedResponse
-from vocode.streaming.agent.streaming_utils import collate_response_async, stream_response_async
+from vocode.streaming.agent.streaming_utils import stream_response_async
 from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.message import BaseMessage, LLMToken
 
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.langchain_support import (
     astream_text_tokens,
+    burst_response_async,
     build_prompt_inputs,
     build_chain,
     extract_text_from_langchain_message,
@@ -30,6 +31,9 @@ class ContactCenterAgentConfig(AgentConfig, type="agent_contact_center"):  # typ
     recent_message_limit: int = 6
     summary_max_messages: int = 12
     summary_max_chars: int = 600
+    non_streaming_chunk_min_words: int = 3
+    non_streaming_chunk_max_words: int = 8
+    non_streaming_chunk_min_chars: int = 12
     transfer_phone_number: str | None = None
     escalation_keywords: list[str] = Field(
         default_factory=lambda: ["human", "agent", "representative", "manager"]
@@ -93,6 +97,19 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         normalized = human_input.lower()
         return any(keyword in normalized for keyword in self.agent_config.escalation_keywords)
 
+    async def _marking_token_stream(
+        self,
+        stream: AsyncGenerator,
+        *,
+        conversation_id: str,
+    ) -> AsyncGenerator[str, None]:
+        first_model_token_logged = False
+        async for token in astream_text_tokens(stream):
+            if not first_model_token_logged:
+                conversation_latency_tracker.mark_first_model_token(conversation_id)
+                first_model_token_logged = True
+            yield token
+
     async def respond(
         self,
         human_input: str,
@@ -129,15 +146,22 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         using_input_streaming_synthesizer = self._using_input_streaming_synthesizer()
         prompt_inputs = self._build_prompt_inputs()
         stream = self.chain.astream(prompt_inputs)
-        response_generator = (
-            stream_response_async if using_input_streaming_synthesizer else collate_response_async
-        )
+        token_stream = self._marking_token_stream(stream, conversation_id=conversation_id)
+        if using_input_streaming_synthesizer:
+            response_stream = stream_response_async(
+                conversation_id=conversation_id,
+                gen=token_stream,
+            )
+        else:
+            response_stream = burst_response_async(
+                token_stream,
+                min_words=self.agent_config.non_streaming_chunk_min_words,
+                max_words=self.agent_config.non_streaming_chunk_max_words,
+                min_chars=self.agent_config.non_streaming_chunk_min_chars,
+            )
 
         first_token_logged = False
-        async for message in response_generator(
-            conversation_id=conversation_id,
-            gen=astream_text_tokens(stream),
-        ):
+        async for message in response_stream:
             response_class = StreamedResponse if using_input_streaming_synthesizer else GeneratedResponse
             message_type = LLMToken if using_input_streaming_synthesizer else BaseMessage
 
