@@ -59,14 +59,19 @@ class ContactCenterSettings(BaseSettings):
     groq_api_key: str | None = None
 
     agent_name: str = "AI Contact Center"
-    agent_initial_message: str = "Thanks for calling. How can I help you today?"
+    agent_initial_message: str = (
+        "Thanks for calling. I can help with general information, account support like registration "
+        "or login, the latest announcements, or feedback and contact options. What would you like help with today?"
+    )
     agent_prompt_preamble: str = DEFAULT_AGENT_PROMPT
     transfer_phone_number: str | None = None
     information_store_website_url: str = "https://example.com/store-locations"
     information_products_pdf_url: str = "https://example.com/products.pdf"
-    announcements_message: str = "Here are the latest announcements for our customers."
+    announcements_message: str = (
+        "I can share the latest announcements with you."
+    )
     feedback_question_prompt: str = (
-        "Do you believe this answered your question? Say yes for Back to Chat or no to continue to contact options."
+        "Before we finish, would you like to return to the chat, or would you prefer contact options for more help?"
     )
     voicebot_adapter_mode: str = "stub"
 

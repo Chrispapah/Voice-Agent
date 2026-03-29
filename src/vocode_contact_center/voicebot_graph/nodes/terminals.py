@@ -51,14 +51,14 @@ def complete_path(
 
 def information_store_response(settings: ContactCenterSettings) -> tuple[str, dict[str, str]]:
     return (
-        f"You can find store information on our website: {settings.information_store_website_url}.",
+        f"Sure, the easiest place to check store information is on our website: {settings.information_store_website_url}.",
         {"website_url": settings.information_store_website_url},
     )
 
 
 def information_products_response(settings: ContactCenterSettings) -> tuple[str, dict[str, str]]:
     return (
-        f"I can direct you to the products PDF here: {settings.information_products_pdf_url}.",
+        f"Of course. You can review the product details in this PDF: {settings.information_products_pdf_url}.",
         {"pdf_reference": settings.information_products_pdf_url},
     )
 
@@ -66,27 +66,27 @@ def information_products_response(settings: ContactCenterSettings) -> tuple[str,
 def terminal_response_text(menu_name: str, choice: str) -> str:
     messages: dict[str, dict[str, str]] = {
         "registration_terminal": {
-            "perform_registration": "I will proceed with the registration path now.",
-            "registration_sms_confirmation": "I will send the registration SMS confirmation now.",
-            "generic_sms": "I will send a generic SMS with the next steps.",
+            "perform_registration": "Great, I'll continue with the registration for you now.",
+            "registration_sms_confirmation": "No problem, I'll send the registration confirmation by SMS.",
+            "generic_sms": "Sure, I'll send a general SMS with the next steps.",
         },
         "login_terminal": {
-            "perform_login": "I will continue with the login path now.",
-            "update_balance": "I will continue with the balance update request.",
-            "details": "I will share the account details path next.",
+            "perform_login": "Great, I'll continue with the login process now.",
+            "update_balance": "Sure, let's move ahead with the balance update.",
+            "details": "Of course, I'll go over the account details next.",
         },
         "fail_terminal": {
-            "communication": "I will move you to the general communication options.",
-            "generic_sms": "I will send a generic SMS with follow-up details.",
-            "details": "I will share the available details I can provide without authentication.",
+            "communication": "Of course, I'll move you to the general communication options.",
+            "generic_sms": "Sure, I'll send an SMS with the follow-up details.",
+            "details": "I'll share the details I can still provide without full authentication.",
         },
         "announcements_terminal": {
-            "human_agent": "I will connect you to a human agent.",
-            "call_back": "I will arrange a call back request for you.",
+            "human_agent": "Okay, I'll connect you to a human agent.",
+            "call_back": "No problem, I'll arrange a call back for you.",
         },
         "feedback_terminal": {
-            "human_agent": "I will connect you to a human agent from feedback.",
-            "contact": "I will submit a contact request for follow-up.",
+            "human_agent": "Of course, I'll connect you to a human agent.",
+            "contact": "Sure, I'll submit a contact request for follow-up.",
         },
     }
-    return messages.get(menu_name, {}).get(choice, "I will continue with that option.")
+    return messages.get(menu_name, {}).get(choice, "Of course, I'll continue with that option.")

@@ -195,5 +195,5 @@ def test_realtime_manager_default_voicebot_llm_uses_state_graph():
 
     turn_end_events = [event for event in captured_events if event["type"] == "assistant_turn_end"]
     assert turn_end_events
-    assert "store, products, or other" in turn_end_events[-1]["text"].lower()
+    assert "store information" in turn_end_events[-1]["text"].lower()
 

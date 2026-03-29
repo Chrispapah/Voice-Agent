@@ -36,7 +36,7 @@ def handle_announcements(
         if choice == "stop":
             return complete_path(
                 state,
-                response_text="Okay, I will stop after the announcements.",
+                response_text="Of course. I'll leave it there after the announcements.",
                 final_outcome="announcements_stopped",
             )
         return _prompt_continue(settings)
@@ -69,7 +69,7 @@ async def call_genesys(state: VoicebotGraphState, genesys_adapter: GenesysAdapte
 
 def _prompt_continue(settings: ContactCenterSettings) -> VoicebotGraphState:
     response_text = (
-        f"{settings.announcements_message} If you want to continue to contact center routing, say Continue."
+        f"{settings.announcements_message} If you'd like, I can also connect you to contact center support after that. Would you like me to continue?"
     )
     return set_menu(
         {},
@@ -84,5 +84,5 @@ def _prompt_terminal_menu() -> VoicebotGraphState:
         {},
         menu_name="announcements_terminal",
         menu_options=["human_agent", "call_back"],
-        response_text="Choose Human Agent or Call Back.",
+        response_text="I can connect you to a human agent, or I can arrange a call back instead. Which works better for you?",
     )

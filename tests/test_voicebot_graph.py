@@ -44,7 +44,7 @@ def test_information_path_loops_back_when_change_information_is_selected():
         )
     )
     assert third.active_menu == "info_selection"
-    assert "let's try again" in third.text.lower()
+    assert "would you like store information" in third.text.lower()
 
 
 def test_registration_path_loops_through_customer_input_then_sms_then_terminal_menu():

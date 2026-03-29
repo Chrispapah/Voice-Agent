@@ -34,7 +34,7 @@ def handle_feedback(
         if choice == "back_to_chat":
             return complete_path(
                 state,
-                response_text="Okay, I will send you back to chat.",
+                response_text="Absolutely. I'll send you back to the chat now.",
                 final_outcome="back_to_chat",
             )
         if choice == "genesys":
@@ -81,5 +81,5 @@ def _prompt_feedback_terminal() -> VoicebotGraphState:
         {},
         menu_name="feedback_terminal",
         menu_options=["human_agent", "contact"],
-        response_text="Choose Human Agent or Contact.",
+        response_text="I can connect you with a human agent, or I can submit a contact request for follow-up. Which would you prefer?",
     )

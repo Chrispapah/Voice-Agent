@@ -7,7 +7,7 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 
 
 ROOT_MENU_PROMPT = (
-    "Please choose one of the main paths: Information, Interaction, Announcements, or Feedback."
+    "I can help with general information, account support, announcements, or feedback and contact options. Which one would you like to start with?"
 )
 
 

@@ -15,10 +15,10 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 
 
 INFO_MENU_PROMPT = (
-    "For information, say Store, Products, or Other."
+    "I can help with store information, product information, or something else. Which would you like?"
 )
 CHANGE_INFORMATION_PROMPT = (
-    "You chose Other. If you want to change the information request, say Change Information."
+    "No problem. If you'd like, we can go back and choose a different type of information request."
 )
 
 
@@ -57,7 +57,7 @@ def handle_information(state: VoicebotGraphState, settings: ContactCenterSetting
             state,
             menu_name="change_information",
             menu_options=["change_information", "cancel"],
-            response_text=CHANGE_INFORMATION_PROMPT,
+            response_text=f"{CHANGE_INFORMATION_PROMPT} Just say Change Information to start again, or say cancel if you'd rather stop here.",
         )
 
     return set_menu(
@@ -75,17 +75,17 @@ def _handle_change_information(state: VoicebotGraphState) -> VoicebotGraphState:
             state,
             menu_name="info_selection",
             menu_options=["store", "products", "other"],
-            response_text="Okay, let's try again. Say Store, Products, or Other.",
+            response_text="Of course, let's try again. Would you like store information, product information, or something else?",
         )
     if choice == "cancel":
         return complete_path(
             state,
-            response_text="Okay, we can leave the information path here.",
+            response_text="That's absolutely fine. We can leave the information request there for now.",
             final_outcome="information_cancelled",
         )
     return set_menu(
         state,
         menu_name="change_information",
         menu_options=["change_information", "cancel"],
-        response_text=CHANGE_INFORMATION_PROMPT,
+        response_text=f"{CHANGE_INFORMATION_PROMPT} Just say Change Information to start again, or say cancel if you'd rather stop here.",
     )

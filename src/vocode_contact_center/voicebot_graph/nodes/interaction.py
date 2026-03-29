@@ -17,7 +17,9 @@ from vocode_contact_center.voicebot_graph.nodes.terminals import (
 from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 
 
-INTERACTION_ENTRY_PROMPT = "Please choose Registration or Login."
+INTERACTION_ENTRY_PROMPT = (
+    "I can help you create a new account or access an existing one. Would you like registration or login support?"
+)
 
 
 def handle_interaction_entry(state: VoicebotGraphState) -> VoicebotGraphState:
@@ -102,8 +104,8 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
     normalized_value = normalize_text(state.get("latest_user_input", ""))
     if not normalized_value:
         return {
-            "response_text": "I still need that detail to continue.",
-            "pending_prompt": "I still need that detail to continue.",
+            "response_text": "I still need that detail before I can continue. Take your time.",
+            "pending_prompt": "I still need that detail before I can continue. Take your time.",
             "route_decision": "complete",
         }
 
@@ -122,7 +124,7 @@ def sms_confirmation(state: VoicebotGraphState) -> VoicebotGraphState:
     return {
         "collected_data": updated_data,
         "auth_status": "success",
-        "response_prefix": "I have triggered the SMS confirmation step. ",
+        "response_prefix": "I've sent the SMS confirmation step through, so we can keep moving. ",
         "artifacts": {"sms_status": "sent"},
         "terminal_group": (
             "registration_terminal"
@@ -155,13 +157,13 @@ def handle_terminal_menu(state: VoicebotGraphState) -> VoicebotGraphState:
 def _prompt_for_terminal_menu(state: VoicebotGraphState, menu_name: str) -> VoicebotGraphState:
     prompts = {
         "registration_terminal": (
-            "What would you like next: perform Registration, SMS Confirmation of registration, or Send generic SMS?"
+            "You're all set to continue. I can complete the registration, send the registration SMS confirmation, or send a general SMS with the next steps. Which would you prefer?"
         ),
         "login_terminal": (
-            "What would you like next: perform Login, Update Balance, or Details?"
+            "You're verified. I can continue with login, help with a balance update, or go over the account details. What would you like to do next?"
         ),
         "fail_terminal": (
-            "Authentication did not complete. Choose Communication, SMS, or Details."
+            "It looks like authentication didn't fully complete. I can still help with general communication options, send an SMS, or share general details. Which would you like?"
         ),
     }
     prefix = state.get("response_prefix", "")
