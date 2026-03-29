@@ -3,19 +3,19 @@ from __future__ import annotations
 from typing import AsyncGenerator, Optional
 
 from loguru import logger
+from langchain_core.runnables.base import Runnable
 from pydantic.v1 import Field
 from vocode.streaming.agent.base_agent import GeneratedResponse, RespondAgent, StreamedResponse
 from vocode.streaming.agent.streaming_utils import collate_response_async, stream_response_async
 from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.message import BaseMessage, LLMToken
-from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
 
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.langchain_support import (
     astream_text_tokens,
+    build_prompt_inputs,
     build_chain,
     extract_text_from_langchain_message,
-    transcript_to_langchain_messages,
 )
 
 
@@ -25,6 +25,11 @@ class ContactCenterAgentConfig(AgentConfig, type="agent_contact_center"):  # typ
     provider: str
     temperature: float = 0.2
     max_tokens: int = 256
+    call_context: str = "Live call metadata is unavailable."
+    require_streaming_synthesizer: bool = True
+    recent_message_limit: int = 6
+    summary_max_messages: int = 12
+    summary_max_chars: int = 600
     transfer_phone_number: str | None = None
     escalation_keywords: list[str] = Field(
         default_factory=lambda: ["human", "agent", "representative", "manager"]
@@ -35,34 +40,31 @@ class ContactCenterAgentConfig(AgentConfig, type="agent_contact_center"):  # typ
 
 
 class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
-    def __init__(self, agent_config: ContactCenterAgentConfig, **kwargs):
+    def __init__(
+        self,
+        agent_config: ContactCenterAgentConfig,
+        *,
+        shared_chain: Runnable | None = None,
+        **kwargs,
+    ):
         super().__init__(agent_config=agent_config, **kwargs)
-        self.chain = build_chain(agent_config)
-        self.config_manager = RedisConfigManager()
-        self._call_context_cache: dict[str, str] = {}
+        self.chain = shared_chain or build_chain(agent_config)
+        self.call_context = agent_config.call_context
         self._logged_streaming_synthesizer_mode = False
 
-    async def _get_call_context(self, conversation_id: str) -> str:
-        cached_context = self._call_context_cache.get(conversation_id)
-        if cached_context is not None:
-            return cached_context
+    def _get_call_context(self) -> str:
+        return self.call_context or "Live call metadata is unavailable."
 
-        call_config = await self.config_manager.get_config(conversation_id)
-        if call_config is None:
-            context = "Call metadata is unavailable."
-            self._call_context_cache[conversation_id] = context
-            return context
-
-        from_phone = getattr(call_config, "from_phone", None)
-        to_phone = getattr(call_config, "to_phone", None)
-        context_parts = ["Live call metadata:"]
-        if from_phone:
-            context_parts.append(f"- Caller number: {from_phone}")
-        if to_phone:
-            context_parts.append(f"- Dialed number: {to_phone}")
-        context = "\n".join(context_parts)
-        self._call_context_cache[conversation_id] = context
-        return context
+    def _build_prompt_inputs(self) -> dict[str, str | list[tuple[str, str]]]:
+        if self.transcript is None:
+            raise ValueError("A transcript is required before generating responses.")
+        return build_prompt_inputs(
+            self.transcript,
+            call_context=self._get_call_context(),
+            recent_message_limit=self.agent_config.recent_message_limit,
+            summary_max_messages=self.agent_config.summary_max_messages,
+            summary_max_chars=self.agent_config.summary_max_chars,
+        )
 
     def _using_input_streaming_synthesizer(self) -> bool:
         using_input_streaming_synthesizer = (
@@ -76,6 +78,15 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
                 using_input_streaming_synthesizer,
             )
             self._logged_streaming_synthesizer_mode = True
+        if (
+            not using_input_streaming_synthesizer
+            and self.agent_config.require_streaming_synthesizer
+        ):
+            raise RuntimeError(
+                "This deployment requires an input-streaming synthesizer to avoid "
+                "response collation on live calls. Disable "
+                "REQUIRE_STREAMING_SYNTHESIZER to allow the slower fallback."
+            )
         return using_input_streaming_synthesizer
 
     def _looks_like_handoff_request(self, human_input: str) -> bool:
@@ -94,12 +105,8 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         if self.transcript is None:
             raise ValueError("A transcript is required before generating responses.")
 
-        result = await self.chain.ainvoke(
-            {
-                "chat_history": transcript_to_langchain_messages(self.transcript),
-                "call_context": await self._get_call_context(conversation_id),
-            }
-        )
+        prompt_inputs = self._build_prompt_inputs()
+        result = await self.chain.ainvoke(prompt_inputs)
         return extract_text_from_langchain_message(result), False
 
     async def generate_response(
@@ -119,17 +126,12 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         if self.transcript is None:
             raise ValueError("A transcript is required before generating responses.")
 
-        stream = self.chain.astream(
-            {
-                "chat_history": transcript_to_langchain_messages(self.transcript),
-                "call_context": await self._get_call_context(conversation_id),
-            }
-        )
-
-        response_generator = collate_response_async
         using_input_streaming_synthesizer = self._using_input_streaming_synthesizer()
-        if using_input_streaming_synthesizer:
-            response_generator = stream_response_async
+        prompt_inputs = self._build_prompt_inputs()
+        stream = self.chain.astream(prompt_inputs)
+        response_generator = (
+            stream_response_async if using_input_streaming_synthesizer else collate_response_async
+        )
 
         first_token_logged = False
         async for message in response_generator(
@@ -152,3 +154,14 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
                 )
             else:
                 logger.warning("Skipping unsupported non-text message from custom LangChain agent.")
+
+
+def build_call_context(*, from_phone: str | None, to_phone: str | None) -> str:
+    context_parts = ["Live call metadata:"]
+    if from_phone:
+        context_parts.append(f"- Caller number: {from_phone}")
+    if to_phone:
+        context_parts.append(f"- Dialed number: {to_phone}")
+    if len(context_parts) == 1:
+        context_parts.append("- Caller metadata was not available during call setup.")
+    return "\n".join(context_parts)

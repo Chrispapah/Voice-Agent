@@ -26,6 +26,7 @@ from vocode.streaming.transcriber.abstract_factory import AbstractTranscriberFac
 from vocode.streaming.transcriber.default_factory import DefaultTranscriberFactory
 from vocode.streaming.utils.events_manager import EventsManager
 
+from vocode_contact_center.agent import ContactCenterAgentConfig, build_call_context
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
 
 
@@ -89,12 +90,22 @@ class LatencyTrackingCallsRouter(CallsRouter):
         events_manager: Optional[EventsManager] = None,
     ):
         if isinstance(call_config, TwilioCallConfig):
+            agent_config = call_config.agent_config
+            if isinstance(agent_config, ContactCenterAgentConfig):
+                agent_config = agent_config.copy(
+                    update={
+                        "call_context": build_call_context(
+                            from_phone=call_config.from_phone,
+                            to_phone=call_config.to_phone,
+                        )
+                    }
+                )
             return LatencyTrackingTwilioPhoneConversation(
                 to_phone=call_config.to_phone,
                 from_phone=call_config.from_phone,
                 base_url=base_url,
                 config_manager=config_manager,
-                agent_config=call_config.agent_config,
+                agent_config=agent_config,
                 transcriber_config=call_config.transcriber_config,
                 synthesizer_config=call_config.synthesizer_config,
                 twilio_config=call_config.twilio_config,

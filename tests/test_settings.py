@@ -86,3 +86,6 @@ def test_latency_defaults_are_tuned_for_faster_turn_taking():
     assert settings.deepgram_time_cutoff_seconds == 0.18
     assert settings.deepgram_post_punctuation_time_seconds == 0.08
     assert settings.langchain_max_tokens == 64
+    assert settings.langchain_recent_message_limit == 6
+    assert settings.langchain_summary_max_chars == 600
+    assert settings.require_streaming_synthesizer is True

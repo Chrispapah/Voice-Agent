@@ -37,6 +37,10 @@ class ContactCenterSettings(BaseSettings):
     langchain_model_name: str = "gpt-4o-mini"
     langchain_temperature: float = 0.2
     langchain_max_tokens: int = 64
+    langchain_recent_message_limit: int = 6
+    langchain_summary_max_messages: int = 12
+    langchain_summary_max_chars: int = 600
+    require_streaming_synthesizer: bool = True
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None

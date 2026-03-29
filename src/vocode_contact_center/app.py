@@ -23,6 +23,8 @@ from vocode.streaming.telephony.server.base import TwilioInboundCallConfig
 
 from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
+from vocode_contact_center.langchain_support import build_chain
+from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
 
@@ -82,6 +84,10 @@ def build_agent_config(settings: ContactCenterSettings) -> AgentConfig:
         provider=settings.langchain_provider,
         temperature=settings.langchain_temperature,
         max_tokens=settings.langchain_max_tokens,
+        recent_message_limit=settings.langchain_recent_message_limit,
+        summary_max_messages=settings.langchain_summary_max_messages,
+        summary_max_chars=settings.langchain_summary_max_chars,
+        require_streaming_synthesizer=settings.require_streaming_synthesizer,
         transfer_phone_number=settings.transfer_phone_number,
         generate_responses=True,
         end_conversation_on_goodbye=True,
@@ -90,9 +96,10 @@ def build_agent_config(settings: ContactCenterSettings) -> AgentConfig:
 
 
 def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundCallConfig:
+    agent_config = build_agent_config(settings)
     return TwilioInboundCallConfig(
         url="/inbound_call",
-        agent_config=build_agent_config(settings),
+        agent_config=agent_config,
         transcriber_config=DeepgramTranscriberConfig.from_telephone_input_device(
             endpointing_config=DeepgramEndpointingConfig(
                 vad_threshold_ms=settings.deepgram_vad_threshold_ms,
@@ -141,8 +148,13 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "twilio_webhook_path": "/inbound_call",
             "twilio_sip_http_method": "POST",
             "stt_provider": "deepgram",
+            "require_streaming_synthesizer": settings.require_streaming_synthesizer,
             "stt_note": "Vocode docs support ElevenLabs for TTS, not STT/transcriber.",
         }
+
+    @app.get("/latencyz")
+    async def latencyz():
+        return conversation_latency_tracker.snapshot()
 
     missing = settings.missing_runtime_values()
     base_url = resolve_base_url(settings)
@@ -161,11 +173,13 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         return app
 
     config_manager = RedisConfigManager()
+    inbound_call_config = build_inbound_call_config(settings)
+    shared_chain = build_chain(inbound_call_config.agent_config)
     telephony_server = LatencyTrackingTelephonyServer(
         base_url=base_url,
         config_manager=config_manager,
-        inbound_call_configs=[build_inbound_call_config(settings)],
-        agent_factory=ContactCenterAgentFactory(),
+        inbound_call_configs=[inbound_call_config],
+        agent_factory=ContactCenterAgentFactory(shared_chain=shared_chain),
     )
     app.include_router(telephony_server.get_router())
 

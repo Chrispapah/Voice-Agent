@@ -1,13 +1,17 @@
 import asyncio
-from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from vocode.streaming.models.message import BaseMessage
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 
-from vocode_contact_center.agent import ContactCenterAgent, ContactCenterAgentConfig
+from vocode_contact_center.agent import (
+    ContactCenterAgent,
+    ContactCenterAgentConfig,
+    build_call_context,
+)
 from vocode_contact_center.app import build_inbound_call_config
 from vocode_contact_center.app import create_app
+from vocode_contact_center.latency_tracker import ConversationLatencyTracker
 from vocode_contact_center.settings import ContactCenterSettings
 
 
@@ -96,28 +100,63 @@ def test_contact_center_agent_returns_fallback_for_handoff_request():
     assert should_stop is False
 
 
-def test_contact_center_agent_caches_call_context_per_conversation():
-    class FakeConfigManager:
-        def __init__(self):
-            self.calls = 0
-
-        async def get_config(self, conversation_id):
-            self.calls += 1
-            return SimpleNamespace(from_phone="+1234567890", to_phone="+1098765432")
-
+def test_contact_center_agent_uses_preloaded_call_context():
     agent = ContactCenterAgent(
         ContactCenterAgentConfig(
             initial_message=BaseMessage(text="Hello"),
             prompt_preamble="You are helpful.",
             model_name="gpt-4o-mini",
             provider="openai",
+            call_context=build_call_context(
+                from_phone="+1234567890",
+                to_phone="+1098765432",
+            ),
         )
     )
-    agent.config_manager = FakeConfigManager()
 
-    first_context = asyncio.run(agent._get_call_context("conversation-1"))
-    second_context = asyncio.run(agent._get_call_context("conversation-1"))
+    assert "Caller number: +1234567890" in agent._get_call_context()
+    assert "Dialed number: +1098765432" in agent._get_call_context()
 
-    assert "Caller number: +1234567890" in first_context
-    assert first_context == second_context
-    assert agent.config_manager.calls == 1
+
+def test_healthz_reports_streaming_requirement_and_latency_endpoint_is_available():
+    app = create_app(
+        ContactCenterSettings(
+            base_url=None,
+            ngrok_auth_token=None,
+            twilio_account_sid=None,
+            twilio_auth_token=None,
+            deepgram_api_key=None,
+            elevenlabs_api_key=None,
+            elevenlabs_voice_id=None,
+            langchain_provider="openai",
+            openai_api_key=None,
+            require_streaming_synthesizer=True,
+        )
+    )
+
+    client = TestClient(app)
+    health_payload = client.get("/healthz").json()
+    latency_payload = client.get("/latencyz").json()
+
+    assert health_payload["require_streaming_synthesizer"] is True
+    assert "segments" in latency_payload
+    assert latency_payload["active_conversations"] == 0
+
+
+def test_latency_tracker_snapshot_aggregates_segment_timings():
+    tracker = ConversationLatencyTracker()
+
+    tracker.mark_audio_received("conversation-1")
+    tracker.mark_transcription_final("conversation-1", "hello there")
+    tracker.mark_first_llm_token(
+        "conversation-1",
+        using_input_streaming_synthesizer=True,
+    )
+    tracker.mark_first_tts_chunk("conversation-1")
+
+    snapshot = tracker.snapshot()
+
+    assert snapshot["segments"]["audio_to_final_ms"]["count"] == 1
+    assert snapshot["segments"]["final_to_first_llm_ms"]["count"] == 1
+    assert snapshot["segments"]["first_llm_to_tts_ms"]["count"] == 1
+    assert snapshot["segments"]["final_to_first_tts_ms"]["count"] == 1
