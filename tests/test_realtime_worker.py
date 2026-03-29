@@ -172,3 +172,28 @@ def test_realtime_voice_session_interrupts_and_restarts_on_barge_in():
     assert tts.cancel_calls >= 1
     assert sum(event["type"] == "assistant_response_started" for event in captured_events) >= 2
 
+
+def test_realtime_manager_default_voicebot_llm_uses_state_graph():
+    captured_events = []
+    settings = make_settings()
+    manager = RealtimeSessionManager(
+        settings,
+        tts_factory=FakeTTS,
+    )
+    session_response = manager.create_session(RealtimeSessionCreateRequest(call_context="Realtime"))
+    session = manager._sessions[session_response.session_id]
+
+    async def run_test():
+        async def send(payload):
+            captured_events.append(payload)
+
+        session.send_event = send
+        await session.handle_client_event({"type": "user_final", "text": "I need information"})
+        await session._assistant_task
+
+    asyncio.run(run_test())
+
+    turn_end_events = [event for event in captured_events if event["type"] == "assistant_turn_end"]
+    assert turn_end_events
+    assert "store, products, or other" in turn_end_events[-1]["text"].lower()
+

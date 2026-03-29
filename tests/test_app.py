@@ -147,6 +147,24 @@ def test_healthz_reports_streaming_requirement_and_latency_endpoint_is_available
     assert latency_payload["active_conversations"] == 0
 
 
+def test_app_initializes_shared_voicebot_service():
+    app = create_app(
+        ContactCenterSettings(
+            base_url=None,
+            ngrok_auth_token=None,
+            twilio_account_sid=None,
+            twilio_auth_token=None,
+            deepgram_api_key=None,
+            elevenlabs_api_key=None,
+            elevenlabs_voice_id=None,
+            langchain_provider="openai",
+            openai_api_key="openai",
+        )
+    )
+
+    assert hasattr(app.state, "voicebot_service")
+
+
 def test_latency_tracker_snapshot_aggregates_segment_timings():
     tracker = ConversationLatencyTracker()
 

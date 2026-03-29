@@ -12,12 +12,12 @@ from vocode.streaming.models.message import BaseMessage, LLMToken
 
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.langchain_support import (
-    astream_text_tokens,
     burst_response_async,
     build_prompt_inputs,
     build_chain,
     extract_text_from_langchain_message,
 )
+from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
 class ContactCenterAgentConfig(AgentConfig, type="agent_contact_center"):  # type: ignore[misc]
@@ -49,9 +49,11 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         agent_config: ContactCenterAgentConfig,
         *,
         shared_chain: Runnable | None = None,
+        voicebot_service: VoicebotGraphService | None = None,
         **kwargs,
     ):
         super().__init__(agent_config=agent_config, **kwargs)
+        self.voicebot_service = voicebot_service
         self.chain = shared_chain or build_chain(agent_config)
         self.call_context = agent_config.call_context
         self._logged_streaming_synthesizer_mode = False
@@ -99,12 +101,12 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
 
     async def _marking_token_stream(
         self,
-        stream: AsyncGenerator,
+        stream: AsyncGenerator[str, None],
         *,
         conversation_id: str,
     ) -> AsyncGenerator[str, None]:
         first_model_token_logged = False
-        async for token in astream_text_tokens(stream):
+        async for token in stream:
             if not first_model_token_logged:
                 conversation_latency_tracker.mark_first_model_token(conversation_id)
                 first_model_token_logged = True
@@ -118,6 +120,15 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
     ) -> tuple[Optional[str], bool]:
         if self._looks_like_handoff_request(human_input):
             return self.agent_config.fallback_handoff_message, False
+
+        if self.voicebot_service is not None:
+            result = await self.voicebot_service.run_turn(
+                conversation_id,
+                human_input,
+                call_context=self._get_call_context(),
+                metadata={"transport": "telephony"},
+            )
+            return result.text, False
 
         if self.transcript is None:
             raise ValueError("A transcript is required before generating responses.")
@@ -140,13 +151,27 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
             )
             return
 
-        if self.transcript is None:
-            raise ValueError("A transcript is required before generating responses.")
-
         using_input_streaming_synthesizer = self._using_input_streaming_synthesizer()
-        prompt_inputs = self._build_prompt_inputs()
-        stream = self.chain.astream(prompt_inputs)
-        token_stream = self._marking_token_stream(stream, conversation_id=conversation_id)
+        if self.voicebot_service is not None:
+            result = await self.voicebot_service.run_turn(
+                conversation_id,
+                human_input,
+                call_context=self._get_call_context(),
+                metadata={"transport": "telephony"},
+            )
+            token_stream = self._marking_token_stream(
+                self.voicebot_service.stream_text_response(result.text),
+                conversation_id=conversation_id,
+            )
+        else:
+            if self.transcript is None:
+                raise ValueError("A transcript is required before generating responses.")
+            prompt_inputs = self._build_prompt_inputs()
+            stream = self.chain.astream(prompt_inputs)
+            token_stream = self._marking_token_stream(
+                _langchain_text_stream(stream),
+                conversation_id=conversation_id,
+            )
         if using_input_streaming_synthesizer:
             response_stream = stream_response_async(
                 conversation_id=conversation_id,
@@ -178,6 +203,13 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
                 )
             else:
                 logger.warning("Skipping unsupported non-text message from custom LangChain agent.")
+
+
+async def _langchain_text_stream(stream: AsyncGenerator) -> AsyncGenerator[str, None]:
+    async for chunk in stream:
+        text = extract_text_from_langchain_message(chunk)
+        if text:
+            yield text
 
 
 def build_call_context(*, from_phone: str | None, to_phone: str | None) -> str:

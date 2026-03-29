@@ -23,7 +23,6 @@ from vocode.streaming.telephony.server.base import TwilioInboundCallConfig
 
 from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
-from vocode_contact_center.langchain_support import build_chain
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.realtime_worker import (
     RealtimeSessionManager,
@@ -32,6 +31,7 @@ from vocode_contact_center.realtime_worker import (
 )
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
+from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 load_dotenv()
 configure_pretty_logging()
@@ -158,6 +158,8 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     ensure_nltk_resources()
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
+    voicebot_service = VoicebotGraphService(settings)
+    app.state.voicebot_service = voicebot_service
     realtime_missing = settings.missing_realtime_values() if settings.realtime_enabled else ["REALTIME_DISABLED"]
     realtime_ready = settings.realtime_enabled and not realtime_missing
     realtime_manager: RealtimeSessionManager | DisabledRealtimeSessionManager
@@ -165,6 +167,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         try:
             realtime_manager = RealtimeSessionManager(
                 settings,
+                voicebot_service=voicebot_service,
                 legacy_telephony_available=False,
             )
         except Exception as exc:
@@ -230,13 +233,12 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
 
     config_manager = RedisConfigManager()
     inbound_call_config = build_inbound_call_config(settings)
-    shared_chain = build_chain(inbound_call_config.agent_config)
     app.state.realtime_manager.legacy_telephony_available = True
     telephony_server = LatencyTrackingTelephonyServer(
         base_url=base_url,
         config_manager=config_manager,
         inbound_call_configs=[inbound_call_config],
-        agent_factory=ContactCenterAgentFactory(shared_chain=shared_chain),
+        agent_factory=ContactCenterAgentFactory(voicebot_service=voicebot_service),
     )
     app.include_router(telephony_server.get_router())
 

@@ -16,12 +16,8 @@ from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.synthesizer.eleven_labs_websocket_synthesizer import ElevenLabsWSSynthesizer
 from vocode.streaming.utils import get_chunk_size_per_second
 
-from vocode_contact_center.langchain_support import (
-    astream_text_tokens,
-    build_chain,
-    build_prompt_inputs_from_messages,
-)
 from vocode_contact_center.settings import ContactCenterSettings
+from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
 class RealtimeSessionCreateRequest(BaseModel):
@@ -43,9 +39,11 @@ class StreamingLLM(Protocol):
     async def stream_response(
         self,
         *,
+        session_id: str,
         call_context: str,
         committed_messages: list[tuple[str, str]],
         current_user_text: str,
+        commit: bool = True,
     ) -> AsyncGenerator[str, None]:
         ...
 
@@ -66,33 +64,41 @@ class InputStreamingTTS(Protocol):
         ...
 
 
-class LangChainStreamingLLM:
-    def __init__(self, settings: ContactCenterSettings):
+class VoicebotStreamingLLM:
+    def __init__(
+        self,
+        settings: ContactCenterSettings,
+        *,
+        voicebot_service: VoicebotGraphService | None = None,
+    ):
         self.settings = settings
-        self.chain = build_chain(type("RealtimeAgentConfig", (), {
-            "prompt_preamble": settings.agent_prompt_preamble,
-            "model_name": settings.langchain_model_name,
-            "provider": settings.langchain_provider,
-            "temperature": settings.langchain_temperature,
-            "max_tokens": settings.langchain_max_tokens,
-        })())
+        self.voicebot_service = voicebot_service or VoicebotGraphService(settings)
 
     async def stream_response(
         self,
         *,
+        session_id: str,
         call_context: str,
         committed_messages: list[tuple[str, str]],
         current_user_text: str,
+        commit: bool = True,
     ) -> AsyncGenerator[str, None]:
-        prompt_inputs = build_prompt_inputs_from_messages(
-            committed_messages + [("human", current_user_text)],
-            call_context=call_context,
-            recent_message_limit=self.settings.langchain_recent_message_limit,
-            summary_max_messages=self.settings.langchain_summary_max_messages,
-            summary_max_chars=self.settings.langchain_summary_max_chars,
+        result = (
+            await self.voicebot_service.run_turn(
+                session_id,
+                current_user_text,
+                call_context=call_context,
+                metadata={"transport": "realtime"},
+            )
+            if commit
+            else await self.voicebot_service.preview_turn(
+                session_id,
+                current_user_text,
+                call_context=call_context,
+                metadata={"transport": "realtime"},
+            )
         )
-        stream = self.chain.astream(prompt_inputs)
-        async for token in astream_text_tokens(stream):
+        async for token in self.voicebot_service.stream_text_response(result.text):
             yield token
 
 
@@ -326,9 +332,11 @@ class RealtimeVoiceSession:
         try:
             await self.send_event({"type": "assistant_response_started", "response_mode": mode})
             async for token in self.llm.stream_response(
+                session_id=self.session_id,
                 call_context=self.call_context,
                 committed_messages=self.committed_messages,
                 current_user_text=source_text,
+                commit=mode == "final",
             ):
                 if generation != self._assistant_generation:
                     return
@@ -395,10 +403,15 @@ class RealtimeSessionManager:
         *,
         llm: StreamingLLM | None = None,
         tts_factory: Callable[[], InputStreamingTTS] | None = None,
+        voicebot_service: VoicebotGraphService | None = None,
         legacy_telephony_available: bool = False,
     ):
         self.settings = settings
-        self.llm = llm or LangChainStreamingLLM(settings)
+        self.voicebot_service = voicebot_service or VoicebotGraphService(settings)
+        self.llm = llm or VoicebotStreamingLLM(
+            settings,
+            voicebot_service=self.voicebot_service,
+        )
         self.tts_factory = tts_factory or (lambda: ElevenLabsInputStreamingTTS(settings))
         self.legacy_telephony_available = legacy_telephony_available
         self.metrics = RealtimeMetrics()
