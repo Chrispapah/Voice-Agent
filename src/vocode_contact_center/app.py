@@ -59,6 +59,8 @@ def apply_runtime_env(settings: ContactCenterSettings) -> None:
         os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key
     if settings.google_api_key:
         os.environ["GOOGLE_API_KEY"] = settings.google_api_key
+    if settings.groq_api_key:
+        os.environ["GROQ_API_KEY"] = settings.groq_api_key
     settings.apply_redis_env()
 
 

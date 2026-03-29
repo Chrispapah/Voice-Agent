@@ -33,8 +33,8 @@ class ContactCenterSettings(BaseSettings):
     elevenlabs_use_websocket: bool = True
     elevenlabs_optimize_streaming_latency: int = 4
 
-    langchain_provider: str = "openai"
-    langchain_model_name: str = "gpt-4o-mini"
+    langchain_provider: str = "groq"
+    langchain_model_name: str = "llama-3.3-70b-versatile"
     langchain_temperature: float = 0.2
     langchain_max_tokens: int = 64
     langchain_recent_message_limit: int = 6
@@ -56,6 +56,7 @@ class ContactCenterSettings(BaseSettings):
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     google_api_key: str | None = None
+    groq_api_key: str | None = None
 
     agent_name: str = "AI Contact Center"
     agent_initial_message: str = "Thanks for calling. How can I help you today?"
@@ -87,6 +88,7 @@ class ContactCenterSettings(BaseSettings):
             "openai": ("OPENAI_API_KEY", self.openai_api_key),
             "anthropic": ("ANTHROPIC_API_KEY", self.anthropic_api_key),
             "google_genai": ("GOOGLE_API_KEY", self.google_api_key),
+            "groq": ("GROQ_API_KEY", self.groq_api_key),
         }
         provider_key = self.langchain_provider.strip().lower()
         provider_requirement = provider_requirements.get(provider_key)
@@ -116,6 +118,7 @@ class ContactCenterSettings(BaseSettings):
             "openai": ("OPENAI_API_KEY", self.openai_api_key),
             "anthropic": ("ANTHROPIC_API_KEY", self.anthropic_api_key),
             "google_genai": ("GOOGLE_API_KEY", self.google_api_key),
+            "groq": ("GROQ_API_KEY", self.groq_api_key),
         }
         provider_key = self.langchain_provider.strip().lower()
         provider_requirement = provider_requirements.get(provider_key)
