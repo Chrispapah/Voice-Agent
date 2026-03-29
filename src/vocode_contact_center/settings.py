@@ -41,6 +41,14 @@ class ContactCenterSettings(BaseSettings):
     langchain_summary_max_messages: int = 12
     langchain_summary_max_chars: int = 600
     require_streaming_synthesizer: bool = True
+    realtime_enabled: bool = True
+    realtime_transport: str = "websocket"
+    realtime_input_mode: str = "partial_transcripts"
+    realtime_audio_encoding: str = "linear16"
+    realtime_sample_rate: int = 16000
+    realtime_allow_partial_responses: bool = True
+    realtime_partial_response_min_words: int = 3
+    realtime_partial_response_min_chars: int = 12
 
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
@@ -86,6 +94,32 @@ class ContactCenterSettings(BaseSettings):
 
         if not self.base_url and not self.ngrok_auth_token and not self.railway_public_domain:
             missing.append("BASE_URL or NGROK_AUTH_TOKEN")
+
+        return missing
+
+    def missing_realtime_values(self) -> list[str]:
+        missing = []
+
+        required = {
+            "ELEVENLABS_API_KEY": self.elevenlabs_api_key,
+            "ELEVENLABS_VOICE_ID": self.elevenlabs_voice_id,
+        }
+
+        for key, value in required.items():
+            if not value:
+                missing.append(key)
+
+        provider_requirements = {
+            "openai": ("OPENAI_API_KEY", self.openai_api_key),
+            "anthropic": ("ANTHROPIC_API_KEY", self.anthropic_api_key),
+            "google_genai": ("GOOGLE_API_KEY", self.google_api_key),
+        }
+        provider_key = self.langchain_provider.strip().lower()
+        provider_requirement = provider_requirements.get(provider_key)
+        if provider_requirement is not None:
+            name, value = provider_requirement
+            if not value:
+                missing.append(name)
 
         return missing
 

@@ -89,3 +89,20 @@ def test_latency_defaults_are_tuned_for_faster_turn_taking():
     assert settings.langchain_recent_message_limit == 6
     assert settings.langchain_summary_max_chars == 600
     assert settings.require_streaming_synthesizer is True
+    assert settings.realtime_enabled is True
+    assert settings.realtime_audio_encoding == "linear16"
+    assert settings.realtime_sample_rate == 16000
+
+
+def test_missing_realtime_values_ignore_telephony_dependencies():
+    settings = ContactCenterSettings(
+        elevenlabs_api_key="eleven",
+        elevenlabs_voice_id="voice",
+        langchain_provider="openai",
+        openai_api_key="openai",
+        twilio_account_sid=None,
+        twilio_auth_token=None,
+        deepgram_api_key=None,
+    )
+
+    assert settings.missing_realtime_values() == []

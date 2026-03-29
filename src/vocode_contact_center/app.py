@@ -25,6 +25,7 @@ from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
 from vocode_contact_center.langchain_support import build_chain
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
+from vocode_contact_center.realtime_worker import RealtimeSessionManager, create_realtime_router
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
 
@@ -135,6 +136,22 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     ensure_nltk_resources()
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
+    realtime_missing = settings.missing_realtime_values() if settings.realtime_enabled else ["REALTIME_DISABLED"]
+    realtime_ready = settings.realtime_enabled and not realtime_missing
+    realtime_manager = RealtimeSessionManager(
+        settings,
+        legacy_telephony_available=False,
+    )
+    app.state.realtime_manager = realtime_manager
+    app.state.realtime_ready = realtime_ready
+    app.state.missing_realtime_values = [] if realtime_ready else realtime_missing
+    app.include_router(
+        create_realtime_router(
+            settings,
+            manager=realtime_manager,
+            realtime_ready=realtime_ready,
+        )
+    )
 
     @app.get("/healthz")
     async def healthz():
@@ -149,12 +166,19 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "twilio_sip_http_method": "POST",
             "stt_provider": "deepgram",
             "require_streaming_synthesizer": settings.require_streaming_synthesizer,
+            "realtime_enabled": settings.realtime_enabled,
+            "realtime_ready": app.state.realtime_ready,
+            "realtime_transport": settings.realtime_transport,
+            "realtime_input_mode": settings.realtime_input_mode,
+            "missing_realtime_values": app.state.missing_realtime_values,
             "stt_note": "Vocode docs support ElevenLabs for TTS, not STT/transcriber.",
         }
 
     @app.get("/latencyz")
     async def latencyz():
-        return conversation_latency_tracker.snapshot()
+        snapshot = conversation_latency_tracker.snapshot()
+        snapshot["realtime"] = app.state.realtime_manager.snapshot().model_dump()
+        return snapshot
 
     missing = settings.missing_runtime_values()
     base_url = resolve_base_url(settings)
@@ -175,6 +199,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     config_manager = RedisConfigManager()
     inbound_call_config = build_inbound_call_config(settings)
     shared_chain = build_chain(inbound_call_config.agent_config)
+    app.state.realtime_manager.legacy_telephony_available = True
     telephony_server = LatencyTrackingTelephonyServer(
         base_url=base_url,
         config_manager=config_manager,
@@ -190,6 +215,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "message": "Twilio can post inbound SIP call webhooks to /inbound_call.",
             "inbound_call_url": settings.inbound_call_url(app.state.public_base_url),
             "twilio_sip_domain": settings.twilio_sip_domain,
+            "realtime_session_endpoint": "/realtime/sessions",
         }
 
     return app

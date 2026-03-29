@@ -69,7 +69,24 @@ def build_prompt_inputs(
     summary_max_messages: int,
     summary_max_chars: int,
 ) -> dict[str, str | list[tuple[str, str]]]:
-    all_messages = transcript_to_langchain_messages(transcript)
+    return build_prompt_inputs_from_messages(
+        transcript_to_langchain_messages(transcript),
+        call_context=call_context,
+        recent_message_limit=recent_message_limit,
+        summary_max_messages=summary_max_messages,
+        summary_max_chars=summary_max_chars,
+    )
+
+
+def build_prompt_inputs_from_messages(
+    messages: list[tuple[str, str]],
+    *,
+    call_context: str,
+    recent_message_limit: int,
+    summary_max_messages: int,
+    summary_max_chars: int,
+) -> dict[str, str | list[tuple[str, str]]]:
+    all_messages = messages
     recent_limit = max(recent_message_limit, 1)
     recent_messages = all_messages[-recent_limit:]
     older_messages = all_messages[:-recent_limit]

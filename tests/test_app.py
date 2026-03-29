@@ -39,6 +39,8 @@ def test_app_starts_in_degraded_mode_without_provider_keys():
     assert "TWILIO_ACCOUNT_SID" in payload["missing_runtime_values"]
     assert payload["stt_provider"] == "deepgram"
     assert payload["inbound_call_url"] is None
+    assert payload["realtime_enabled"] is True
+    assert payload["realtime_ready"] is False
 
 
 def test_inbound_call_config_uses_elevenlabs_telephone_synthesizer():
@@ -139,7 +141,9 @@ def test_healthz_reports_streaming_requirement_and_latency_endpoint_is_available
     latency_payload = client.get("/latencyz").json()
 
     assert health_payload["require_streaming_synthesizer"] is True
+    assert health_payload["realtime_transport"] == "websocket"
     assert "segments" in latency_payload
+    assert "realtime" in latency_payload
     assert latency_payload["active_conversations"] == 0
 
 
