@@ -33,6 +33,7 @@ class ContactCenterSettings(BaseSettings):
     elevenlabs_use_websocket: bool = True
     elevenlabs_optimize_streaming_latency: int = 4
 
+    conversation_orchestrator: str = "graph"
     langchain_provider: str = "groq"
     langchain_model_name: str = "llama-3.3-70b-versatile"
     langchain_temperature: float = 0.2

@@ -24,6 +24,10 @@ from vocode.streaming.telephony.server.base import TwilioInboundCallConfig
 from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
+from vocode_contact_center.orchestration import (
+    ConversationOrchestrator,
+    LLMConversationOrchestratorService,
+)
 from vocode_contact_center.realtime_worker import (
     RealtimeSessionManager,
     RealtimeSnapshot,
@@ -152,14 +156,23 @@ def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundC
     )
 
 
+def build_conversation_orchestrator(
+    settings: ContactCenterSettings,
+) -> ConversationOrchestrator:
+    if settings.conversation_orchestrator.strip().lower() == "llm_orchestrator":
+        return LLMConversationOrchestratorService(settings)
+    return VoicebotGraphService(settings)
+
+
 def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     settings = settings or ContactCenterSettings()
     apply_runtime_env(settings)
     ensure_nltk_resources()
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
-    voicebot_service = VoicebotGraphService(settings)
-    app.state.voicebot_service = voicebot_service
+    conversation_orchestrator = build_conversation_orchestrator(settings)
+    app.state.voicebot_service = conversation_orchestrator
+    app.state.conversation_orchestrator = conversation_orchestrator
     realtime_missing = settings.missing_realtime_values() if settings.realtime_enabled else ["REALTIME_DISABLED"]
     realtime_ready = settings.realtime_enabled and not realtime_missing
     realtime_manager: RealtimeSessionManager | DisabledRealtimeSessionManager
@@ -167,7 +180,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         try:
             realtime_manager = RealtimeSessionManager(
                 settings,
-                voicebot_service=voicebot_service,
+                conversation_orchestrator=conversation_orchestrator,
                 legacy_telephony_available=False,
             )
         except Exception as exc:
@@ -207,6 +220,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "realtime_input_mode": settings.realtime_input_mode,
             "missing_realtime_values": app.state.missing_realtime_values,
             "stt_note": "Vocode docs support ElevenLabs for TTS, not STT/transcriber.",
+            "conversation_orchestrator": settings.conversation_orchestrator,
         }
 
     @app.get("/latencyz")
@@ -238,7 +252,9 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         base_url=base_url,
         config_manager=config_manager,
         inbound_call_configs=[inbound_call_config],
-        agent_factory=ContactCenterAgentFactory(voicebot_service=voicebot_service),
+        agent_factory=ContactCenterAgentFactory(
+            conversation_orchestrator=conversation_orchestrator
+        ),
     )
     app.include_router(telephony_server.get_router())
 

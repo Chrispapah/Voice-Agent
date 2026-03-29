@@ -16,8 +16,8 @@ from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.synthesizer.eleven_labs_websocket_synthesizer import ElevenLabsWSSynthesizer
 from vocode.streaming.utils import get_chunk_size_per_second
 
+from vocode_contact_center.orchestration import ConversationOrchestrator
 from vocode_contact_center.settings import ContactCenterSettings
-from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
 class RealtimeSessionCreateRequest(BaseModel):
@@ -69,10 +69,14 @@ class VoicebotStreamingLLM:
         self,
         settings: ContactCenterSettings,
         *,
-        voicebot_service: VoicebotGraphService | None = None,
+        conversation_orchestrator: ConversationOrchestrator | None = None,
     ):
         self.settings = settings
-        self.voicebot_service = voicebot_service or VoicebotGraphService(settings)
+        if conversation_orchestrator is None:
+            from vocode_contact_center.app import build_conversation_orchestrator
+
+            conversation_orchestrator = build_conversation_orchestrator(settings)
+        self.conversation_orchestrator = conversation_orchestrator
 
     async def stream_response(
         self,
@@ -84,21 +88,21 @@ class VoicebotStreamingLLM:
         commit: bool = True,
     ) -> AsyncGenerator[str, None]:
         result = (
-            await self.voicebot_service.run_turn(
+            await self.conversation_orchestrator.run_turn(
                 session_id,
                 current_user_text,
                 call_context=call_context,
                 metadata={"transport": "realtime"},
             )
             if commit
-            else await self.voicebot_service.preview_turn(
+            else await self.conversation_orchestrator.preview_turn(
                 session_id,
                 current_user_text,
                 call_context=call_context,
                 metadata={"transport": "realtime"},
             )
         )
-        async for token in self.voicebot_service.stream_text_response(result.text):
+        async for token in self.conversation_orchestrator.stream_text_response(result.text):
             yield token
 
 
@@ -403,14 +407,18 @@ class RealtimeSessionManager:
         *,
         llm: StreamingLLM | None = None,
         tts_factory: Callable[[], InputStreamingTTS] | None = None,
-        voicebot_service: VoicebotGraphService | None = None,
+        conversation_orchestrator: ConversationOrchestrator | None = None,
         legacy_telephony_available: bool = False,
     ):
         self.settings = settings
-        self.voicebot_service = voicebot_service or VoicebotGraphService(settings)
+        if conversation_orchestrator is None:
+            from vocode_contact_center.app import build_conversation_orchestrator
+
+            conversation_orchestrator = build_conversation_orchestrator(settings)
+        self.conversation_orchestrator = conversation_orchestrator
         self.llm = llm or VoicebotStreamingLLM(
             settings,
-            voicebot_service=self.voicebot_service,
+            conversation_orchestrator=self.conversation_orchestrator,
         )
         self.tts_factory = tts_factory or (lambda: ElevenLabsInputStreamingTTS(settings))
         self.legacy_telephony_available = legacy_telephony_available
