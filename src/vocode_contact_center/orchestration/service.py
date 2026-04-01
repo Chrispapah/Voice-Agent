@@ -146,7 +146,7 @@ class LLMConversationOrchestratorService:
     ) -> None:
         self.settings = settings
         self.policy = policy or LangChainConversationPolicy(settings)
-        self.auth_adapter = auth_adapter or StubAuthenticationAdapter()
+        self.auth_adapter = auth_adapter or StubAuthenticationAdapter(settings)
         self.genesys_adapter = genesys_adapter or StubGenesysAdapter()
         self.sms_sender = sms_sender or StubSmsSender()
         self._sessions: dict[str, ConversationSessionState] = {}

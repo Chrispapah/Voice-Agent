@@ -20,6 +20,7 @@ class ContactCenterSettings(BaseSettings):
     sms_adapter_mode: str = "stub"
     twilio_sms_from_number: str | None = None
     twilio_messaging_service_sid: str | None = None
+    sms_default_region: str | None = None
     registration_confirmation_sms_template: str = (
         "Hi {full_name}, your registration request has been confirmed. "
         "We'll follow up with the next steps shortly."

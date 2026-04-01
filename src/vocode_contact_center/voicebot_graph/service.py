@@ -46,7 +46,7 @@ class VoicebotGraphService:
         sms_sender: SmsSender | None = None,
     ) -> None:
         self.settings = settings
-        self.auth_adapter = auth_adapter or StubAuthenticationAdapter()
+        self.auth_adapter = auth_adapter or StubAuthenticationAdapter(settings)
         self.genesys_adapter = genesys_adapter or StubGenesysAdapter()
         self.sms_sender = sms_sender or StubSmsSender()
         self._graph = build_voicebot_graph(

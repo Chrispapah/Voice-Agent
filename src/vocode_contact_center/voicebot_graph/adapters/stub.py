@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from vocode_contact_center.phone_numbers import normalize_phone_number
+from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     AuthenticationRequest,
@@ -14,6 +16,9 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
 
 
 class StubAuthenticationAdapter(AuthenticationAdapter):
+    def __init__(self, settings: ContactCenterSettings | None = None) -> None:
+        self._settings = settings or ContactCenterSettings()
+
     async def authenticate(self, request: AuthenticationRequest) -> AuthenticationResult:
         data = dict(request.collected_data)
         context = request.interaction_context or "login"
@@ -31,6 +36,20 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
                     prompt="Please share the phone number we should use for registration.",
                     requested_field="phone_number",
                 )
+            normalized_phone_number = normalize_phone_number(
+                data.get("phone_number", ""),
+                default_region=self._settings.sms_default_region,
+            )
+            if not normalized_phone_number:
+                return AuthenticationResult(
+                    status="needs_customer_input",
+                    prompt=(
+                        "That phone number did not sound valid. Please say it again slowly, "
+                        "including the country code."
+                    ),
+                    requested_field="phone_number",
+                )
+            data["phone_number"] = normalized_phone_number
             if data.get("phone_number", "").endswith("0000"):
                 return AuthenticationResult(
                     status="failure",

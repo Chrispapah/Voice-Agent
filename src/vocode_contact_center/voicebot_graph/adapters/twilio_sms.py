@@ -4,6 +4,7 @@ import asyncio
 
 from twilio.rest import Client
 
+from vocode_contact_center.phone_numbers import normalize_phone_number
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     SmsRequest,
@@ -17,10 +18,26 @@ class TwilioSmsSender(SmsSender):
         self._client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
         self._from_number = settings.twilio_sms_from_number
         self._messaging_service_sid = settings.twilio_messaging_service_sid
+        self._default_region = settings.sms_default_region
 
     async def send(self, request: SmsRequest) -> SmsResult:
+        normalized_phone_number = normalize_phone_number(
+            request.recipient_phone_number,
+            default_region=self._default_region,
+        )
+        if not normalized_phone_number:
+            return SmsResult(
+                status="failed",
+                error_message="The destination phone number was not valid.",
+                metadata={"provider": "twilio", "reason": "invalid_destination_number"},
+            )
+
         try:
-            message = await asyncio.to_thread(self._create_message, request)
+            message = await asyncio.to_thread(
+                self._create_message,
+                request,
+                normalized_phone_number,
+            )
         except Exception as exc:
             return SmsResult(
                 status="failed",
@@ -43,9 +60,9 @@ class TwilioSmsSender(SmsSender):
             metadata=metadata,
         )
 
-    def _create_message(self, request: SmsRequest):
+    def _create_message(self, request: SmsRequest, normalized_phone_number: str):
         payload = {
-            "to": request.recipient_phone_number,
+            "to": normalized_phone_number,
             "body": request.message,
         }
         if self._messaging_service_sid:
