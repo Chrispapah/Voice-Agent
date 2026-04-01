@@ -6,6 +6,7 @@ from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     GenesysAdapter,
+    SmsSender,
 )
 from vocode_contact_center.voicebot_graph.nodes import announcements, feedback, information, interaction, root
 from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
@@ -16,6 +17,7 @@ def build_voicebot_graph(
     settings: ContactCenterSettings,
     auth_adapter: AuthenticationAdapter,
     genesys_adapter: GenesysAdapter,
+    sms_sender: SmsSender,
 ):
     async def run_authentication(state: VoicebotGraphState) -> VoicebotGraphState:
         return await interaction.authenticate(state, auth_adapter)
@@ -26,6 +28,9 @@ def build_voicebot_graph(
     async def run_feedback_genesys(state: VoicebotGraphState) -> VoicebotGraphState:
         return await feedback.call_genesys(state, genesys_adapter)
 
+    async def run_sms_confirmation(state: VoicebotGraphState) -> VoicebotGraphState:
+        return await interaction.sms_confirmation(state, sms_sender, settings)
+
     builder = StateGraph(VoicebotGraphState)
 
     builder.add_node("route_turn", root.route_turn)
@@ -34,7 +39,7 @@ def build_voicebot_graph(
     builder.add_node("interaction_entry", interaction.handle_interaction_entry)
     builder.add_node("interaction_authenticate", run_authentication)
     builder.add_node("interaction_customer_input", interaction.collect_customer_input)
-    builder.add_node("interaction_sms_confirmation", interaction.sms_confirmation)
+    builder.add_node("interaction_sms_confirmation", run_sms_confirmation)
     builder.add_node("interaction_terminal", interaction.handle_terminal_menu)
     builder.add_node("announcements", lambda state: announcements.handle_announcements(state, settings))
     builder.add_node("announcements_genesys", run_announcements_genesys)

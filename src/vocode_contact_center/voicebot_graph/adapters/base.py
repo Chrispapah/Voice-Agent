@@ -38,6 +38,23 @@ class GenesysResult:
     metadata: dict[str, str] = field(default_factory=dict)
 
 
+@dataclass
+class SmsRequest:
+    session_id: str
+    recipient_phone_number: str
+    message: str
+    context: str
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class SmsResult:
+    status: str
+    provider_message_id: str | None = None
+    error_message: str | None = None
+    metadata: dict[str, str] = field(default_factory=dict)
+
+
 class AuthenticationAdapter(Protocol):
     async def authenticate(self, request: AuthenticationRequest) -> AuthenticationResult:
         ...
@@ -45,4 +62,9 @@ class AuthenticationAdapter(Protocol):
 
 class GenesysAdapter(Protocol):
     async def connect(self, request: GenesysRequest) -> GenesysResult:
+        ...
+
+
+class SmsSender(Protocol):
+    async def send(self, request: SmsRequest) -> SmsResult:
         ...

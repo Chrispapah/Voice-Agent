@@ -8,10 +8,12 @@ from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     GenesysAdapter,
+    SmsSender,
 )
 from vocode_contact_center.voicebot_graph.adapters.stub import (
     StubAuthenticationAdapter,
     StubGenesysAdapter,
+    StubSmsSender,
 )
 from vocode_contact_center.voicebot_graph.graph import build_voicebot_graph
 from vocode_contact_center.voicebot_graph.state import (
@@ -41,16 +43,22 @@ class VoicebotGraphService:
         *,
         auth_adapter: AuthenticationAdapter | None = None,
         genesys_adapter: GenesysAdapter | None = None,
+        sms_sender: SmsSender | None = None,
     ) -> None:
         self.settings = settings
         self.auth_adapter = auth_adapter or StubAuthenticationAdapter()
         self.genesys_adapter = genesys_adapter or StubGenesysAdapter()
+        self.sms_sender = sms_sender or StubSmsSender()
         self._graph = build_voicebot_graph(
             settings=settings,
             auth_adapter=self.auth_adapter,
             genesys_adapter=self.genesys_adapter,
+            sms_sender=self.sms_sender,
         )
         self._sessions: dict[str, VoicebotGraphState] = {}
+
+    def clear_session(self, session_id: str) -> None:
+        self._sessions.pop(session_id, None)
 
     async def run_turn(
         self,

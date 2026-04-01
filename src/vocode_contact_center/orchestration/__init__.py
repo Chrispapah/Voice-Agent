@@ -6,6 +6,9 @@ from vocode_contact_center.orchestration.models import (
     ConversationTurnResult,
     PolicyAction,
 )
+from vocode_contact_center.orchestration.hybrid_service import (
+    HybridConversationOrchestratorService,
+)
 from vocode_contact_center.orchestration.service import (
     LLMConversationOrchestratorService,
 )
@@ -16,6 +19,7 @@ __all__ = [
     "ConversationSessionState",
     "ConversationStage",
     "ConversationTurnResult",
+    "HybridConversationOrchestratorService",
     "LLMConversationOrchestratorService",
     "PolicyAction",
 ]

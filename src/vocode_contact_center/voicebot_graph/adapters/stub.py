@@ -7,6 +7,9 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
     GenesysAdapter,
     GenesysRequest,
     GenesysResult,
+    SmsRequest,
+    SmsResult,
+    SmsSender,
 )
 
 
@@ -74,5 +77,18 @@ class StubGenesysAdapter(GenesysAdapter):
             metadata={
                 "queue": queue_name,
                 "path_name": request.path_name,
+            },
+        )
+
+
+class StubSmsSender(SmsSender):
+    async def send(self, request: SmsRequest) -> SmsResult:
+        return SmsResult(
+            status="sent",
+            provider_message_id=f"stub-{request.session_id}",
+            metadata={
+                "provider": "stub",
+                "recipient_phone_number": request.recipient_phone_number,
+                "context": request.context,
             },
         )

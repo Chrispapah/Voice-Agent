@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from vocode_contact_center.settings import ContactCenterSettings
+from vocode_contact_center.sms import build_registration_confirmation_message
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     AuthenticationRequest,
+    SmsRequest,
+    SmsSender,
 )
 from vocode_contact_center.voicebot_graph.intents import (
     classify_interaction_context,
@@ -118,14 +122,84 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
     }
 
 
-def sms_confirmation(state: VoicebotGraphState) -> VoicebotGraphState:
+async def sms_confirmation(
+    state: VoicebotGraphState,
+    sms_sender: SmsSender,
+    settings: ContactCenterSettings,
+) -> VoicebotGraphState:
     updated_data = dict(state.get("collected_data", {}))
-    updated_data["sms_confirmed"] = "true"
+    phone_number = updated_data.get("phone_number", "").strip()
+    adapter_results = dict(state.get("adapter_results", {}))
+
+    if not phone_number:
+        adapter_results["sms"] = {
+            "status": "failed",
+            "metadata": {
+                "provider": "application",
+                "error_message": "No phone number was available for the confirmation SMS.",
+            },
+        }
+        return {
+            "auth_status": "sms_failed",
+            "response_prefix": (
+                "I couldn't send the SMS confirmation because I don't have a phone number on file yet. "
+            ),
+            "artifacts": {"sms_status": "failed"},
+            "adapter_results": adapter_results,
+            "terminal_group": (
+                "registration_terminal"
+                if state.get("interaction_context") == "registration"
+                else "login_terminal"
+            ),
+            "route_decision": "interaction_terminal",
+        }
+
+    sms_result = await sms_sender.send(
+        SmsRequest(
+            session_id=state["session_id"],
+            recipient_phone_number=phone_number,
+            message=build_registration_confirmation_message(settings, updated_data),
+            context="registration_confirmation",
+            metadata=dict(state.get("metadata", {})),
+        )
+    )
+    adapter_results["sms"] = {
+        "status": sms_result.status,
+        "metadata": {
+            **sms_result.metadata,
+            **(
+                {"provider_message_id": sms_result.provider_message_id}
+                if sms_result.provider_message_id
+                else {}
+            ),
+            **(
+                {"error_message": sms_result.error_message}
+                if sms_result.error_message
+                else {}
+            ),
+        },
+    }
+
+    if sms_result.status == "sent":
+        updated_data["sms_confirmed"] = "true"
+        artifacts = {"sms_status": "sent"}
+        if sms_result.provider_message_id:
+            artifacts["sms_message_id"] = sms_result.provider_message_id
+        response_prefix = "I've sent the SMS confirmation step through, so we can keep moving. "
+        auth_status = "success"
+    else:
+        artifacts = {"sms_status": "failed"}
+        response_prefix = (
+            "I couldn't send the SMS confirmation just yet, but I can still help with the next step here. "
+        )
+        auth_status = "sms_failed"
+
     return {
         "collected_data": updated_data,
-        "auth_status": "success",
-        "response_prefix": "I've sent the SMS confirmation step through, so we can keep moving. ",
-        "artifacts": {"sms_status": "sent"},
+        "auth_status": auth_status,
+        "response_prefix": response_prefix,
+        "artifacts": artifacts,
+        "adapter_results": adapter_results,
         "terminal_group": (
             "registration_terminal"
             if state.get("interaction_context") == "registration"

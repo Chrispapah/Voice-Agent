@@ -17,6 +17,13 @@ class ContactCenterSettings(BaseSettings):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_sip_domain: str | None = None
+    sms_adapter_mode: str = "stub"
+    twilio_sms_from_number: str | None = None
+    twilio_messaging_service_sid: str | None = None
+    registration_confirmation_sms_template: str = (
+        "Hi {full_name}, your registration request has been confirmed. "
+        "We'll follow up with the next steps shortly."
+    )
     redis_url: str | None = None
 
     deepgram_api_key: str | None = None
@@ -33,6 +40,7 @@ class ContactCenterSettings(BaseSettings):
     elevenlabs_use_websocket: bool = True
     elevenlabs_optimize_streaming_latency: int = 4
 
+    conversation_orchestrator: str = "graph"
     langchain_provider: str = "groq"
     langchain_model_name: str = "llama-3.3-70b-versatile"
     langchain_temperature: float = 0.2
@@ -138,6 +146,25 @@ class ContactCenterSettings(BaseSettings):
             name, value = provider_requirement
             if not value:
                 missing.append(name)
+
+        return missing
+
+    def missing_sms_values(self) -> list[str]:
+        if self.sms_adapter_mode.strip().lower() != "twilio":
+            return []
+
+        missing = []
+        required = {
+            "TWILIO_ACCOUNT_SID": self.twilio_account_sid,
+            "TWILIO_AUTH_TOKEN": self.twilio_auth_token,
+        }
+
+        for key, value in required.items():
+            if not value:
+                missing.append(key)
+
+        if not self.twilio_sms_from_number and not self.twilio_messaging_service_sid:
+            missing.append("TWILIO_SMS_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID")
 
         return missing
 

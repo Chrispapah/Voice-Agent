@@ -22,16 +22,21 @@ from vocode_contact_center.orchestration.prompts import (
     DEFAULT_ORCHESTRATOR_SYSTEM_PROMPT,
     STAGE_GUIDANCE,
 )
+from vocode_contact_center.sms import build_registration_confirmation_message
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     AuthenticationRequest,
     GenesysAdapter,
     GenesysRequest,
+    SmsRequest,
+    SmsResult,
+    SmsSender,
 )
 from vocode_contact_center.voicebot_graph.adapters.stub import (
     StubAuthenticationAdapter,
     StubGenesysAdapter,
+    StubSmsSender,
 )
 from vocode_contact_center.voicebot_graph.nodes.terminals import (
     information_products_response,
@@ -137,11 +142,13 @@ class LLMConversationOrchestratorService:
         policy: ConversationPolicy | None = None,
         auth_adapter: AuthenticationAdapter | None = None,
         genesys_adapter: GenesysAdapter | None = None,
+        sms_sender: SmsSender | None = None,
     ) -> None:
         self.settings = settings
         self.policy = policy or LangChainConversationPolicy(settings)
         self.auth_adapter = auth_adapter or StubAuthenticationAdapter()
         self.genesys_adapter = genesys_adapter or StubGenesysAdapter()
+        self.sms_sender = sms_sender or StubSmsSender()
         self._sessions: dict[str, ConversationSessionState] = {}
 
     async def run_turn(
@@ -566,16 +573,40 @@ class LLMConversationOrchestratorService:
             return state
 
         if result.status == "needs_sms_confirmation":
-            updated_data = dict(state.collected_data)
-            updated_data["sms_confirmed"] = "true"
-            state.collected_data = updated_data
-            state.artifacts = {"sms_status": "sent"}
+            sms_result = await self._send_registration_confirmation_sms(state)
+            state.adapter_results["sms"] = {
+                "status": sms_result.status,
+                "metadata": {
+                    **sms_result.metadata,
+                    **(
+                        {"provider_message_id": sms_result.provider_message_id}
+                        if sms_result.provider_message_id
+                        else {}
+                    ),
+                    **(
+                        {"error_message": sms_result.error_message}
+                        if sms_result.error_message
+                        else {}
+                    ),
+                },
+            }
+            if sms_result.status == "sent":
+                updated_data = dict(state.collected_data)
+                updated_data["sms_confirmed"] = "true"
+                state.collected_data = updated_data
+                state.artifacts = {"sms_status": "sent"}
+                if sms_result.provider_message_id:
+                    state.artifacts["sms_message_id"] = sms_result.provider_message_id
+                response_prefix = "I've sent the SMS confirmation step through, so we can keep moving. "
+            else:
+                state.artifacts = {"sms_status": "failed"}
+                response_prefix = (
+                    "I couldn't send the SMS confirmation just yet, but I can still help with the next step here. "
+                )
             return self._move_to_terminal_stage(
                 state,
-                response_text=(
-                    "I've sent the SMS confirmation step through, so we can keep moving. "
-                    f"{self._terminal_prompt_for_context(state.interaction_context)}"
-                ),
+                response_text=response_prefix
+                + self._terminal_prompt_for_context(state.interaction_context),
             )
 
         if result.status == "success":
@@ -611,6 +642,30 @@ class LLMConversationOrchestratorService:
             state.available_options = ["perform_login", "update_balance", "details"]
         state.response_text = response_text
         return state
+
+    async def _send_registration_confirmation_sms(
+        self,
+        state: ConversationSessionState,
+    ) -> SmsResult:
+        phone_number = state.collected_data.get("phone_number", "").strip()
+        if not phone_number:
+            return SmsResult(
+                status="failed",
+                error_message="No phone number was available for the confirmation SMS.",
+                metadata={"provider": "application"},
+            )
+        return await self.sms_sender.send(
+            SmsRequest(
+                session_id=state.session_id,
+                recipient_phone_number=phone_number,
+                message=build_registration_confirmation_message(
+                    self.settings,
+                    state.collected_data,
+                ),
+                context="registration_confirmation",
+                metadata=dict(state.metadata),
+            )
+        )
 
     async def _connect_genesys(
         self,

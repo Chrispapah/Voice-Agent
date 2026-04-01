@@ -8,6 +8,7 @@ class VoicebotArtifacts(TypedDict, total=False):
     website_url: str
     pdf_reference: str
     sms_status: str
+    sms_message_id: str
     announcements_status: str
 
 

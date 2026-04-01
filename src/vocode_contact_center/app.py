@@ -24,6 +24,11 @@ from vocode.streaming.telephony.server.base import TwilioInboundCallConfig
 from vocode_contact_center.agent import ContactCenterAgentConfig
 from vocode_contact_center.agent_factory import ContactCenterAgentFactory
 from vocode_contact_center.latency_tracker import conversation_latency_tracker
+from vocode_contact_center.orchestration import (
+    ConversationOrchestrator,
+    HybridConversationOrchestratorService,
+    LLMConversationOrchestratorService,
+)
 from vocode_contact_center.realtime_worker import (
     RealtimeSessionManager,
     RealtimeSnapshot,
@@ -31,6 +36,8 @@ from vocode_contact_center.realtime_worker import (
 )
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
+from vocode_contact_center.voicebot_graph.adapters.stub import StubSmsSender
+from vocode_contact_center.voicebot_graph.adapters.twilio_sms import TwilioSmsSender
 from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 load_dotenv()
@@ -152,14 +159,42 @@ def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundC
     )
 
 
+def build_conversation_orchestrator(
+    settings: ContactCenterSettings,
+) -> ConversationOrchestrator:
+    sms_sender = build_sms_sender(settings)
+    orchestrator_name = settings.conversation_orchestrator.strip().lower()
+    if orchestrator_name == "llm_orchestrator":
+        return LLMConversationOrchestratorService(settings, sms_sender=sms_sender)
+    if orchestrator_name == "hybrid":
+        return HybridConversationOrchestratorService(settings, sms_sender=sms_sender)
+    return VoicebotGraphService(settings, sms_sender=sms_sender)
+
+
+def build_sms_sender(settings: ContactCenterSettings):
+    if settings.sms_adapter_mode.strip().lower() != "twilio":
+        return StubSmsSender()
+
+    missing = settings.missing_sms_values()
+    if missing:
+        logger.warning(
+            "SMS sender is configured for Twilio but missing values: {}. Falling back to stub sender.",
+            ", ".join(missing),
+        )
+        return StubSmsSender()
+
+    return TwilioSmsSender(settings)
+
+
 def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     settings = settings or ContactCenterSettings()
     apply_runtime_env(settings)
     ensure_nltk_resources()
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
-    voicebot_service = VoicebotGraphService(settings)
-    app.state.voicebot_service = voicebot_service
+    conversation_orchestrator = build_conversation_orchestrator(settings)
+    app.state.voicebot_service = conversation_orchestrator
+    app.state.conversation_orchestrator = conversation_orchestrator
     realtime_missing = settings.missing_realtime_values() if settings.realtime_enabled else ["REALTIME_DISABLED"]
     realtime_ready = settings.realtime_enabled and not realtime_missing
     realtime_manager: RealtimeSessionManager | DisabledRealtimeSessionManager
@@ -167,7 +202,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         try:
             realtime_manager = RealtimeSessionManager(
                 settings,
-                voicebot_service=voicebot_service,
+                conversation_orchestrator=conversation_orchestrator,
                 legacy_telephony_available=False,
             )
         except Exception as exc:
@@ -207,6 +242,9 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "realtime_input_mode": settings.realtime_input_mode,
             "missing_realtime_values": app.state.missing_realtime_values,
             "stt_note": "Vocode docs support ElevenLabs for TTS, not STT/transcriber.",
+            "conversation_orchestrator": settings.conversation_orchestrator,
+            "sms_adapter_mode": settings.sms_adapter_mode,
+            "missing_sms_values": settings.missing_sms_values(),
         }
 
     @app.get("/latencyz")
@@ -238,7 +276,9 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         base_url=base_url,
         config_manager=config_manager,
         inbound_call_configs=[inbound_call_config],
-        agent_factory=ContactCenterAgentFactory(voicebot_service=voicebot_service),
+        agent_factory=ContactCenterAgentFactory(
+            conversation_orchestrator=conversation_orchestrator
+        ),
     )
     app.include_router(telephony_server.get_router())
 
