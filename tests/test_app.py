@@ -9,11 +9,8 @@ from vocode_contact_center.agent import (
     ContactCenterAgentConfig,
     build_call_context,
 )
-from vocode_contact_center.app import (
-    build_conversation_orchestrator,
-    build_inbound_call_config,
-    create_app,
-)
+from vocode_contact_center.app import build_inbound_call_config
+from vocode_contact_center.app import create_app
 from vocode_contact_center.latency_tracker import ConversationLatencyTracker
 from vocode_contact_center.settings import ContactCenterSettings
 
@@ -150,30 +147,6 @@ def test_healthz_reports_streaming_requirement_and_latency_endpoint_is_available
     assert latency_payload["active_conversations"] == 0
 
 
-def test_build_conversation_orchestrator_can_select_llm_service(monkeypatch):
-    captured = {}
-
-    class FakeLLMOrchestrator:
-        def __init__(self, settings):
-            captured["settings"] = settings
-
-    monkeypatch.setattr(
-        "vocode_contact_center.app.LLMConversationOrchestratorService",
-        FakeLLMOrchestrator,
-    )
-
-    orchestrator = build_conversation_orchestrator(
-        ContactCenterSettings(
-            conversation_orchestrator="llm_orchestrator",
-            langchain_provider="openai",
-            openai_api_key="openai",
-        )
-    )
-
-    assert isinstance(orchestrator, FakeLLMOrchestrator)
-    assert captured["settings"].conversation_orchestrator == "llm_orchestrator"
-
-
 def test_app_initializes_shared_voicebot_service():
     app = create_app(
         ContactCenterSettings(
@@ -190,7 +163,6 @@ def test_app_initializes_shared_voicebot_service():
     )
 
     assert hasattr(app.state, "voicebot_service")
-    assert hasattr(app.state, "conversation_orchestrator")
 
 
 def test_latency_tracker_snapshot_aggregates_segment_timings():

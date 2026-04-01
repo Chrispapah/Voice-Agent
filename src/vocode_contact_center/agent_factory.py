@@ -9,7 +9,7 @@ from vocode.streaming.agent.base_agent import BaseAgent
 from vocode.streaming.models.agent import AgentConfig
 
 from vocode_contact_center.agent import ContactCenterAgent, ContactCenterAgentConfig
-from vocode_contact_center.orchestration import ConversationOrchestrator
+from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
 class ContactCenterAgentFactory(AbstractAgentFactory):
@@ -17,10 +17,10 @@ class ContactCenterAgentFactory(AbstractAgentFactory):
         self,
         shared_chain: Runnable | None = None,
         *,
-        conversation_orchestrator: ConversationOrchestrator | None = None,
+        voicebot_service: VoicebotGraphService | None = None,
     ):
         self.shared_chain = shared_chain
-        self.conversation_orchestrator = conversation_orchestrator
+        self.voicebot_service = voicebot_service
 
     def create_agent(
         self, agent_config: AgentConfig, logger: Optional[logging.Logger] = None
@@ -29,6 +29,6 @@ class ContactCenterAgentFactory(AbstractAgentFactory):
             return ContactCenterAgent(
                 agent_config=agent_config,
                 shared_chain=self.shared_chain,
-                conversation_orchestrator=self.conversation_orchestrator,
+                voicebot_service=self.voicebot_service,
             )
         raise ValueError(f"Unsupported agent config type: {type(agent_config)!r}")

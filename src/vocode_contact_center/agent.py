@@ -17,7 +17,7 @@ from vocode_contact_center.langchain_support import (
     build_chain,
     extract_text_from_langchain_message,
 )
-from vocode_contact_center.orchestration import ConversationOrchestrator
+from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
 class ContactCenterAgentConfig(AgentConfig, type="agent_contact_center"):  # type: ignore[misc]
@@ -49,11 +49,11 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         agent_config: ContactCenterAgentConfig,
         *,
         shared_chain: Runnable | None = None,
-        conversation_orchestrator: ConversationOrchestrator | None = None,
+        voicebot_service: VoicebotGraphService | None = None,
         **kwargs,
     ):
         super().__init__(agent_config=agent_config, **kwargs)
-        self.conversation_orchestrator = conversation_orchestrator
+        self.voicebot_service = voicebot_service
         self.chain = shared_chain or build_chain(agent_config)
         self.call_context = agent_config.call_context
         self._logged_streaming_synthesizer_mode = False
@@ -121,8 +121,8 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
         if self._looks_like_handoff_request(human_input):
             return self.agent_config.fallback_handoff_message, False
 
-        if self.conversation_orchestrator is not None:
-            result = await self.conversation_orchestrator.run_turn(
+        if self.voicebot_service is not None:
+            result = await self.voicebot_service.run_turn(
                 conversation_id,
                 human_input,
                 call_context=self._get_call_context(),
@@ -152,15 +152,15 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
             return
 
         using_input_streaming_synthesizer = self._using_input_streaming_synthesizer()
-        if self.conversation_orchestrator is not None:
-            result = await self.conversation_orchestrator.run_turn(
+        if self.voicebot_service is not None:
+            result = await self.voicebot_service.run_turn(
                 conversation_id,
                 human_input,
                 call_context=self._get_call_context(),
                 metadata={"transport": "telephony"},
             )
             token_stream = self._marking_token_stream(
-                self.conversation_orchestrator.stream_text_response(result.text),
+                self.voicebot_service.stream_text_response(result.text),
                 conversation_id=conversation_id,
             )
         else:
