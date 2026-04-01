@@ -1,6 +1,7 @@
 import asyncio
 
 from vocode_contact_center.settings import ContactCenterSettings
+from vocode_contact_center.voicebot_graph.adapters.base import SmsRequest, SmsResult
 from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
@@ -8,11 +9,32 @@ def make_settings() -> ContactCenterSettings:
     return ContactCenterSettings(
         langchain_provider="openai",
         openai_api_key="openai",
+        sms_default_region="US",
         information_store_website_url="https://demo.example.com/store",
         information_products_pdf_url="https://demo.example.com/products.pdf",
         announcements_message="These are today's announcements.",
         feedback_question_prompt="Do you believe this answered your question? Say yes for Back to Chat or no for contact options.",
     )
+
+
+class FakeSmsSender:
+    def __init__(self, *, status: str = "sent"):
+        self.status = status
+        self.requests: list[SmsRequest] = []
+
+    async def send(self, request: SmsRequest) -> SmsResult:
+        self.requests.append(request)
+        if self.status == "sent":
+            return SmsResult(
+                status="sent",
+                provider_message_id="SM123",
+                metadata={"provider": "fake"},
+            )
+        return SmsResult(
+            status="failed",
+            error_message="simulated failure",
+            metadata={"provider": "fake"},
+        )
 
 
 def test_information_path_loops_back_when_change_information_is_selected():
@@ -48,7 +70,8 @@ def test_information_path_loops_back_when_change_information_is_selected():
 
 
 def test_registration_path_loops_through_customer_input_then_sms_then_terminal_menu():
-    service = VoicebotGraphService(make_settings())
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
 
     first = asyncio.run(service.run_turn("registration", "I want to register", call_context="test"))
     assert first.state_snapshot["pending_auth_field"] == "full_name"
@@ -56,14 +79,51 @@ def test_registration_path_loops_through_customer_input_then_sms_then_terminal_m
     second = asyncio.run(service.run_turn("registration", "Chris Example", call_context="test"))
     assert second.state_snapshot["pending_auth_field"] == "phone_number"
 
-    third = asyncio.run(service.run_turn("registration", "+123456789", call_context="test"))
+    third = asyncio.run(service.run_turn("registration", "(415) 555-2671", call_context="test"))
     assert third.active_menu == "registration_terminal"
     assert third.artifacts["sms_status"] == "sent"
+    assert third.artifacts["sms_message_id"] == "SM123"
+    assert third.adapter_results["sms"]["status"] == "sent"
+    assert sms_sender.requests[0].recipient_phone_number == "+14155552671"
 
     fourth = asyncio.run(
         service.run_turn("registration", "sms confirmation", call_context="test")
     )
     assert fourth.final_outcome == "registration_sms_confirmation"
+
+
+def test_registration_sms_failure_is_truthful_in_graph_flow():
+    service = VoicebotGraphService(
+        make_settings(),
+        sms_sender=FakeSmsSender(status="failed"),
+    )
+
+    asyncio.run(service.run_turn("registration-failure", "I want to register", call_context="test"))
+    asyncio.run(service.run_turn("registration-failure", "Chris Example", call_context="test"))
+    third = asyncio.run(
+        service.run_turn("registration-failure", "(415) 555-2671", call_context="test")
+    )
+
+    assert third.active_menu == "registration_terminal"
+    assert third.artifacts["sms_status"] == "failed"
+    assert third.adapter_results["sms"]["status"] == "failed"
+    assert "couldn't send the sms confirmation" in third.text.lower()
+
+
+def test_registration_reprompts_when_phone_number_is_invalid():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+
+    asyncio.run(service.run_turn("registration-invalid", "I want to register", call_context="test"))
+    asyncio.run(service.run_turn("registration-invalid", "Chris Example", call_context="test"))
+    third = asyncio.run(
+        service.run_turn("registration-invalid", "call me maybe", call_context="test")
+    )
+
+    assert third.active_menu is None
+    assert third.state_snapshot["pending_auth_field"] == "phone_number"
+    assert "including the country code" in third.text.lower()
+    assert sms_sender.requests == []
 
 
 def test_login_failure_routes_to_fallback_terminal_menu():

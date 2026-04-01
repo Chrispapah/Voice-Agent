@@ -6,6 +6,7 @@ from vocode_contact_center.orchestration import (
     PolicyAction,
 )
 from vocode_contact_center.settings import ContactCenterSettings
+from vocode_contact_center.voicebot_graph.adapters.base import SmsRequest, SmsResult
 
 
 def make_settings() -> ContactCenterSettings:
@@ -13,6 +14,7 @@ def make_settings() -> ContactCenterSettings:
         conversation_orchestrator="llm_orchestrator",
         langchain_provider="openai",
         openai_api_key="openai",
+        sms_default_region="US",
         information_store_website_url="https://demo.example.com/store",
         information_products_pdf_url="https://demo.example.com/products.pdf",
         announcements_message="These are today's announcements.",
@@ -28,6 +30,26 @@ class QueuePolicy:
         if not self._decisions:
             raise AssertionError("No queued policy decision remained for this turn.")
         return self._decisions.pop(0)
+
+
+class FakeSmsSender:
+    def __init__(self, *, status: str = "sent"):
+        self.status = status
+        self.requests: list[SmsRequest] = []
+
+    async def send(self, request: SmsRequest) -> SmsResult:
+        self.requests.append(request)
+        if self.status == "sent":
+            return SmsResult(
+                status="sent",
+                provider_message_id="SM456",
+                metadata={"provider": "fake"},
+            )
+        return SmsResult(
+            status="failed",
+            error_message="simulated failure",
+            metadata={"provider": "fake"},
+        )
 
 
 def test_llm_orchestrator_can_complete_store_information_from_root():
@@ -61,8 +83,10 @@ def test_llm_orchestrator_can_complete_store_information_from_root():
 
 
 def test_llm_orchestrator_keeps_authentication_and_sms_as_explicit_app_actions():
+    sms_sender = FakeSmsSender()
     service = LLMConversationOrchestratorService(
         make_settings(),
+        sms_sender=sms_sender,
         policy=QueuePolicy(
             [
                 ConversationPolicyDecision(
@@ -86,15 +110,71 @@ def test_llm_orchestrator_keeps_authentication_and_sms_as_explicit_app_actions()
     second = asyncio.run(service.run_turn("registration", "Chris Example", call_context="test"))
     assert second.state_snapshot["pending_auth_field"] == "phone_number"
 
-    third = asyncio.run(service.run_turn("registration", "+123456789", call_context="test"))
+    third = asyncio.run(service.run_turn("registration", "(415) 555-2671", call_context="test"))
     assert third.active_menu == "registration_terminal"
     assert third.artifacts["sms_status"] == "sent"
+    assert third.artifacts["sms_message_id"] == "SM456"
     assert third.adapter_results["authentication"]["status"] == "needs_sms_confirmation"
+    assert third.adapter_results["sms"]["status"] == "sent"
+    assert sms_sender.requests[0].recipient_phone_number == "+14155552671"
 
     fourth = asyncio.run(
         service.run_turn("registration", "send the registration sms", call_context="test")
     )
     assert fourth.final_outcome == "registration_sms_confirmation"
+
+
+def test_llm_orchestrator_reports_sms_failures_without_claiming_success():
+    service = LLMConversationOrchestratorService(
+        make_settings(),
+        sms_sender=FakeSmsSender(status="failed"),
+        policy=QueuePolicy(
+            [
+                ConversationPolicyDecision(
+                    action=PolicyAction.SELECT_OPTION,
+                    selected_option="registration",
+                    response_text="I can help you get registered.",
+                ),
+            ]
+        ),
+    )
+
+    asyncio.run(service.run_turn("registration-failure", "I want to sign up", call_context="test"))
+    asyncio.run(service.run_turn("registration-failure", "Chris Example", call_context="test"))
+    third = asyncio.run(
+        service.run_turn("registration-failure", "(415) 555-2671", call_context="test")
+    )
+
+    assert third.active_menu == "registration_terminal"
+    assert third.artifacts["sms_status"] == "failed"
+    assert third.adapter_results["sms"]["status"] == "failed"
+    assert "couldn't send the sms confirmation" in third.text.lower()
+
+
+def test_llm_orchestrator_reprompts_for_invalid_registration_phone_number():
+    service = LLMConversationOrchestratorService(
+        make_settings(),
+        sms_sender=FakeSmsSender(),
+        policy=QueuePolicy(
+            [
+                ConversationPolicyDecision(
+                    action=PolicyAction.SELECT_OPTION,
+                    selected_option="registration",
+                    response_text="I can help you get registered.",
+                ),
+            ]
+        ),
+    )
+
+    asyncio.run(service.run_turn("registration-invalid", "I want to sign up", call_context="test"))
+    asyncio.run(service.run_turn("registration-invalid", "Chris Example", call_context="test"))
+    third = asyncio.run(
+        service.run_turn("registration-invalid", "call me maybe", call_context="test")
+    )
+
+    assert third.active_menu == "authentication"
+    assert third.state_snapshot["pending_auth_field"] == "phone_number"
+    assert "including the country code" in third.text.lower()
 
 
 def test_llm_orchestrator_uses_genesys_adapter_for_announcements_support():

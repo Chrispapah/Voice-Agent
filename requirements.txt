@@ -4,6 +4,7 @@ langgraph==0.2.71
 langchain-groq==0.1.10
 langchain-openai==0.1.25
 loguru
+phonenumbers
 pydantic-settings
 pyngrok
 python-dotenv
