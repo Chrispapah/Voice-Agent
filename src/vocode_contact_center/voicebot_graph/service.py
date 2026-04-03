@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import AsyncGenerator
 
+from loguru import logger
+
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
@@ -75,7 +77,26 @@ class VoicebotGraphService:
             call_context=call_context,
             metadata=metadata,
         )
+        logger.info(
+            "Graph run_turn session={} commit={} input={!r} current_path={} active_menu={} pending_auth_field={} conversation_memory_keys={}",
+            session_id,
+            commit,
+            user_text,
+            state.get("current_path"),
+            state.get("active_menu"),
+            state.get("pending_auth_field"),
+            sorted(state.get("conversation_memory", {}).keys()),
+        )
         result_state = await self._graph.ainvoke(state)
+        logger.info(
+            "Graph run_turn result session={} final_outcome={} active_menu={} next_route={} pending_auth_field={} conversation_memory_keys={}",
+            session_id,
+            result_state.get("final_outcome"),
+            result_state.get("active_menu"),
+            result_state.get("route_decision"),
+            result_state.get("pending_auth_field"),
+            sorted(result_state.get("conversation_memory", {}).keys()),
+        )
         if commit:
             self._sessions[session_id] = clone_state(result_state)
         return VoicebotTurnResult(

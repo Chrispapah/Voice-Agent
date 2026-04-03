@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from loguru import logger
+
 from vocode_contact_center.voicebot_graph.intents import (
     classify_global_navigation,
     classify_root_intent,
@@ -15,17 +17,50 @@ ROOT_MENU_OPTIONS = ["information", "interaction", "announcements", "feedback"]
 
 def route_turn(state: VoicebotGraphState) -> VoicebotGraphState:
     latest_user_input = state.get("latest_user_input", "")
-    if classify_global_navigation(latest_user_input) == "main_menu":
-        return {"route_decision": "global_main_menu"}
-
+    navigation = classify_global_navigation(latest_user_input)
     root_intent = classify_root_intent(latest_user_input)
-    if _should_redirect_to_main_menu(state, requested_root_intent=root_intent):
+    current_path = state.get("current_path")
+    pending_auth_field = state.get("pending_auth_field")
+    active_menu = state.get("active_menu")
+
+    logger.info(
+        "Graph route_turn session={} input={!r} current_path={} active_menu={} pending_auth_field={} navigation={} root_intent={}",
+        state.get("session_id"),
+        latest_user_input,
+        current_path,
+        active_menu,
+        pending_auth_field,
+        navigation,
+        root_intent,
+    )
+
+    if navigation == "main_menu":
+        logger.info(
+            "Graph route_turn redirecting to main menu from explicit navigation session={} input={!r}",
+            state.get("session_id"),
+            latest_user_input,
+        )
         return {"route_decision": "global_main_menu"}
 
-    if state.get("pending_auth_field"):
+    if _should_redirect_to_main_menu(state, requested_root_intent=root_intent):
+        logger.info(
+            "Graph route_turn redirecting to main menu from cross-flow request session={} current_path={} requested_root_intent={} input={!r}",
+            state.get("session_id"),
+            current_path,
+            root_intent,
+            latest_user_input,
+        )
+        return {"route_decision": "global_main_menu"}
+
+    if pending_auth_field:
+        logger.info(
+            "Graph route_turn continuing auth field collection session={} pending_auth_field={} input={!r}",
+            state.get("session_id"),
+            pending_auth_field,
+            latest_user_input,
+        )
         return {"route_decision": "interaction_customer_input"}
 
-    active_menu = state.get("active_menu")
     if active_menu == "root_intent":
         return {"route_decision": "root_intent"}
     if active_menu == "interaction_entry":
@@ -44,6 +79,12 @@ def route_turn(state: VoicebotGraphState) -> VoicebotGraphState:
 
 def resolve_root_intent(state: VoicebotGraphState) -> VoicebotGraphState:
     root_intent = classify_root_intent(state.get("latest_user_input", ""))
+    logger.info(
+        "Graph resolve_root_intent session={} input={!r} classified_root_intent={}",
+        state.get("session_id"),
+        state.get("latest_user_input", ""),
+        root_intent,
+    )
     if root_intent is None:
         return {
             "active_menu": "root_intent",
@@ -71,6 +112,14 @@ def resolve_root_intent(state: VoicebotGraphState) -> VoicebotGraphState:
 
 
 def return_to_main_menu(state: VoicebotGraphState) -> VoicebotGraphState:
+    logger.info(
+        "Graph return_to_main_menu session={} previous_path={} previous_menu={} pending_auth_field={} conversation_memory_keys={}",
+        state.get("session_id"),
+        state.get("current_path"),
+        state.get("active_menu"),
+        state.get("pending_auth_field"),
+        sorted(state.get("conversation_memory", {}).keys()),
+    )
     return reset_to_root_menu(
         state,
         response_text=(

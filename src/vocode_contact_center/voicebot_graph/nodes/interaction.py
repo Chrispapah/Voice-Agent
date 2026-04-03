@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from loguru import logger
+
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.sms import build_registration_confirmation_message
 from vocode_contact_center.voicebot_graph.adapters.base import (
@@ -51,6 +53,15 @@ async def authenticate(
     state: VoicebotGraphState,
     auth_adapter: AuthenticationAdapter,
 ) -> VoicebotGraphState:
+    logger.info(
+        "Graph authenticate session={} interaction_context={} pending_auth_field={} auth_attempts={} collected_data_keys={} latest_input={!r}",
+        state.get("session_id"),
+        state.get("interaction_context"),
+        state.get("pending_auth_field"),
+        state.get("auth_attempts", 0),
+        sorted(state.get("collected_data", {}).keys()),
+        state.get("latest_user_input", ""),
+    )
     request = AuthenticationRequest(
         session_id=state["session_id"],
         call_context=state.get("call_context", ""),
@@ -60,6 +71,14 @@ async def authenticate(
         auth_attempts=state.get("auth_attempts", 0),
     )
     result = await auth_adapter.authenticate(request)
+    logger.info(
+        "Graph authenticate result session={} status={} requested_field={} normalized_data_keys={} metadata={}",
+        state.get("session_id"),
+        result.status,
+        result.requested_field,
+        sorted(result.normalized_data.keys()),
+        result.metadata,
+    )
     updates: VoicebotGraphState = {
         "auth_status": result.status,
         "auth_attempts": state.get("auth_attempts", 0) + 1,
@@ -108,10 +127,26 @@ async def authenticate(
 def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
     pending_field = state.get("pending_auth_field")
     if not pending_field:
+        logger.warning(
+            "Graph collect_customer_input session={} called without pending_auth_field; re-entering authenticate",
+            state.get("session_id"),
+        )
         return {"route_decision": "interaction_authenticate"}
 
     normalized_value = normalize_text(state.get("latest_user_input", ""))
+    logger.info(
+        "Graph collect_customer_input session={} pending_field={} raw_input={!r} normalized_input={!r}",
+        state.get("session_id"),
+        pending_field,
+        state.get("latest_user_input", ""),
+        normalized_value,
+    )
     if not normalized_value:
+        logger.info(
+            "Graph collect_customer_input session={} pending_field={} received empty normalized input; staying on current prompt",
+            state.get("session_id"),
+            pending_field,
+        )
         return {
             "response_text": "I still need that detail before I can continue. Take your time.",
             "pending_prompt": "I still need that detail before I can continue. Take your time.",
@@ -125,10 +160,21 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
         "pending_auth_field": None,
         "route_decision": "interaction_authenticate",
     }
+    logger.info(
+        "Graph collect_customer_input session={} stored pending_field={} collected_data_keys={} will_reenter_authenticate=True",
+        state.get("session_id"),
+        pending_field,
+        sorted(updated_data.keys()),
+    )
     if pending_field in SAFE_MEMORY_FIELDS:
         updates["conversation_memory"] = _merge_safe_memory(
             state.get("conversation_memory", {}),
             {pending_field: normalized_value},
+        )
+        logger.info(
+            "Graph collect_customer_input session={} updated conversation_memory keys={}",
+            state.get("session_id"),
+            sorted(updates["conversation_memory"].keys()),
         )
     return updates
 
