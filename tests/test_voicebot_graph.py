@@ -182,6 +182,45 @@ def test_cancel_after_sms_prompt_returns_to_root_and_keeps_normalized_phone():
     assert restarted.state_snapshot["conversation_memory"]["phone_number"] == "+14155552671"
 
 
+def test_cross_function_request_during_auth_redirects_to_main_menu():
+    service = VoicebotGraphService(make_settings())
+
+    asyncio.run(service.run_turn("registration-switch", "I want to register", call_context="test"))
+    second = asyncio.run(
+        service.run_turn("registration-switch", "Chris Example", call_context="test")
+    )
+    assert second.state_snapshot["pending_auth_field"] == "phone_number"
+
+    redirected = asyncio.run(
+        service.run_turn("registration-switch", "Actually I need announcements", call_context="test")
+    )
+
+    assert redirected.active_menu == "root_intent"
+    assert redirected.final_outcome == "cancelled_to_main_menu"
+    assert redirected.state_snapshot["pending_auth_field"] is None
+    assert redirected.state_snapshot["current_path"] is None
+    assert redirected.state_snapshot["conversation_memory"]["full_name"] == "chris example"
+
+
+def test_cross_function_request_from_active_terminal_redirects_to_main_menu():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+
+    asyncio.run(service.run_turn("announcements-switch", "announcements", call_context="test"))
+    second = asyncio.run(
+        service.run_turn("announcements-switch", "continue", call_context="test")
+    )
+    assert second.active_menu == "announcements_terminal"
+
+    redirected = asyncio.run(
+        service.run_turn("announcements-switch", "I need information instead", call_context="test")
+    )
+
+    assert redirected.active_menu == "root_intent"
+    assert redirected.final_outcome == "cancelled_to_main_menu"
+    assert redirected.state_snapshot["current_path"] is None
+
+
 def test_login_failure_routes_to_fallback_terminal_menu():
     service = VoicebotGraphService(make_settings())
 

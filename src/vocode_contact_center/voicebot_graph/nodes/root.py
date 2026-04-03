@@ -14,7 +14,12 @@ ROOT_MENU_OPTIONS = ["information", "interaction", "announcements", "feedback"]
 
 
 def route_turn(state: VoicebotGraphState) -> VoicebotGraphState:
-    if classify_global_navigation(state.get("latest_user_input", "")) == "main_menu":
+    latest_user_input = state.get("latest_user_input", "")
+    if classify_global_navigation(latest_user_input) == "main_menu":
+        return {"route_decision": "global_main_menu"}
+
+    root_intent = classify_root_intent(latest_user_input)
+    if _should_redirect_to_main_menu(state, requested_root_intent=root_intent):
         return {"route_decision": "global_main_menu"}
 
     if state.get("pending_auth_field"):
@@ -73,3 +78,18 @@ def return_to_main_menu(state: VoicebotGraphState) -> VoicebotGraphState:
             f"{ROOT_MENU_PROMPT}"
         ),
     )
+
+
+def _should_redirect_to_main_menu(
+    state: VoicebotGraphState,
+    *,
+    requested_root_intent: str | None,
+) -> bool:
+    if requested_root_intent is None:
+        return False
+
+    current_path = state.get("current_path")
+    if not current_path:
+        return False
+
+    return requested_root_intent != current_path
