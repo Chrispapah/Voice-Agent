@@ -26,6 +26,7 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
     GenesysAdapter,
     SmsSender,
 )
+from vocode_contact_center.voicebot_graph.state import clone_state as clone_graph_state
 from vocode_contact_center.voicebot_graph.service import (
     VoicebotGraphService,
     VoicebotTurnResult,
@@ -322,6 +323,145 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
     async def stream_text_response(self, text: str) -> AsyncGenerator[str, None]:
         for token in _text_to_tokens(text):
             yield token
+
+    async def stream_generate_response(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        call_context: str,
+        metadata: dict[str, str] | None = None,
+        commit: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        state = self._prepare_state(
+            session_id=session_id,
+            call_context=call_context,
+            metadata=metadata,
+        )
+        decision = await self.route_policy.decide(
+            state=state,
+            latest_user_input=user_text,
+        )
+
+        if state.mode == "graph":
+            if decision.action == HybridRouteAction.ESCAPE_TO_GENERIC:
+                text = decision.response_text.strip() or (
+                    "Sure, we can step out of that. How else can I help?"
+                )
+                async for tok in self.stream_text_response(text):
+                    yield tok
+                if commit:
+                    next_state = deepcopy(state)
+                    next_state.mode = "generic"
+                    next_state.last_graph_menu = None
+                    self.graph_service.clear_session(state.session_id)
+                    self._commit_state(next_state, user_text=user_text, response_text=text)
+                return
+
+            if decision.action == HybridRouteAction.ANSWER_DIRECTLY:
+                response_text = await self.generic_responder.respond(
+                    state=state,
+                    latest_user_input=user_text,
+                    response_prefix=decision.response_text,
+                )
+                async for tok in self.stream_text_response(response_text):
+                    yield tok
+                if commit:
+                    next_state = deepcopy(state)
+                    next_state.mode = "generic"
+                    next_state.last_graph_menu = None
+                    self.graph_service.clear_session(state.session_id)
+                    self._commit_state(
+                        next_state,
+                        user_text=user_text,
+                        response_text=response_text,
+                    )
+                return
+
+            async for tok in self.graph_service.stream_generate_response(
+                state.session_id,
+                user_text,
+                call_context=call_context,
+                metadata=metadata,
+                commit=commit,
+            ):
+                yield tok
+            if commit:
+                self._commit_hybrid_after_graph_stream(
+                    state=state,
+                    user_text=user_text,
+                    session_id=session_id,
+                )
+            return
+
+        if decision.action == HybridRouteAction.ENTER_GRAPH_FLOW:
+            async for tok in self.graph_service.stream_generate_response(
+                session_id,
+                user_text,
+                call_context=call_context,
+                metadata=metadata,
+                commit=commit,
+            ):
+                yield tok
+            if commit:
+                self._commit_hybrid_after_graph_stream(
+                    state=state,
+                    user_text=user_text,
+                    session_id=session_id,
+                )
+            return
+
+        response_text = await self.generic_responder.respond(
+            state=state,
+            latest_user_input=user_text,
+            response_prefix=decision.response_text,
+        )
+        async for tok in self.stream_text_response(response_text):
+            yield tok
+        if commit:
+            next_state = deepcopy(state)
+            next_state.mode = "generic"
+            self._commit_state(next_state, user_text=user_text, response_text=response_text)
+
+    def _commit_hybrid_after_graph_stream(
+        self,
+        *,
+        state: HybridSessionState,
+        user_text: str,
+        session_id: str,
+    ) -> None:
+        snap = self.graph_service.export_session(session_id)
+        if not snap:
+            graph_result = VoicebotTurnResult(
+                text="",
+                final_outcome=None,
+                active_menu=None,
+                menu_options=[],
+                artifacts={},
+                adapter_results={},
+                state_snapshot={},
+            )
+        else:
+            graph_result = VoicebotTurnResult(
+                text=snap.get("response_text") or "",
+                final_outcome=snap.get("final_outcome"),
+                active_menu=snap.get("active_menu"),
+                menu_options=list(snap.get("menu_options", [])),
+                artifacts=dict(snap.get("artifacts", {})),
+                adapter_results=dict(snap.get("adapter_results", {})),
+                state_snapshot=clone_graph_state(snap),
+            )
+        next_state = deepcopy(state)
+        next_state.last_graph_outcome = graph_result.final_outcome
+        next_state.last_graph_menu = _active_graph_menu(graph_result)
+        next_state.mode = "graph" if _graph_result_is_active(graph_result) else "generic"
+        if next_state.mode == "generic":
+            self.graph_service.clear_session(state.session_id)
+        self._commit_state(
+            next_state,
+            user_text=user_text,
+            response_text=graph_result.text,
+        )
 
     def _prepare_state(
         self,

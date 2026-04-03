@@ -193,6 +193,25 @@ class LLMConversationOrchestratorService:
         for token in _text_to_tokens(text):
             yield token
 
+    async def stream_generate_response(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        call_context: str,
+        metadata: dict[str, str] | None = None,
+        commit: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        result = await self.run_turn(
+            session_id,
+            user_text,
+            call_context=call_context,
+            metadata=metadata,
+            commit=commit,
+        )
+        async for token in self.stream_text_response(result.text):
+            yield token
+
     def _prepare_state(
         self,
         session_id: str,

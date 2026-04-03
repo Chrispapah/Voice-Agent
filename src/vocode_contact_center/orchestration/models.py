@@ -105,3 +105,14 @@ class ConversationOrchestrator(Protocol):
 
     async def stream_text_response(self, text: str) -> AsyncGenerator[str, None]:
         ...
+
+    async def stream_generate_response(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        call_context: str,
+        metadata: dict[str, str] | None = None,
+        commit: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        ...

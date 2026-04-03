@@ -87,20 +87,22 @@ class VoicebotStreamingLLM:
         current_user_text: str,
         commit: bool = True,
     ) -> AsyncGenerator[str, None]:
-        result = (
-            await self.conversation_orchestrator.run_turn(
+        if commit:
+            async for token in self.conversation_orchestrator.stream_generate_response(
                 session_id,
                 current_user_text,
                 call_context=call_context,
                 metadata={"transport": "realtime"},
-            )
-            if commit
-            else await self.conversation_orchestrator.preview_turn(
-                session_id,
-                current_user_text,
-                call_context=call_context,
-                metadata={"transport": "realtime"},
-            )
+                commit=True,
+            ):
+                yield token
+            return
+
+        result = await self.conversation_orchestrator.preview_turn(
+            session_id,
+            current_user_text,
+            call_context=call_context,
+            metadata={"transport": "realtime"},
         )
         async for token in self.conversation_orchestrator.stream_text_response(result.text):
             yield token

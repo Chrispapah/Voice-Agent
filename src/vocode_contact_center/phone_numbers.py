@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import re
 
 import phonenumbers
@@ -65,6 +66,15 @@ def normalize_phone_number(
     if not phonenumbers.is_valid_number(parsed):
         return None
     return phonenumbers.format_number(parsed, PhoneNumberFormat.E164)
+
+
+@functools.lru_cache(maxsize=256)
+def normalize_phone_number_cached(
+    raw_phone_number: str,
+    default_region: str | None,
+) -> str | None:
+    """LRU-cached E.164 normalization for repeated inputs (e.g. auth re-prompts)."""
+    return normalize_phone_number(raw_phone_number, default_region=default_region)
 
 
 def _clean_phone_number(raw_phone_number: str) -> str:

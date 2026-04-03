@@ -153,14 +153,14 @@ class ContactCenterAgent(RespondAgent[ContactCenterAgentConfig]):
 
         using_input_streaming_synthesizer = self._using_input_streaming_synthesizer()
         if self.conversation_orchestrator is not None:
-            result = await self.conversation_orchestrator.run_turn(
-                conversation_id,
-                human_input,
-                call_context=self._get_call_context(),
-                metadata={"transport": "telephony"},
-            )
             token_stream = self._marking_token_stream(
-                self.conversation_orchestrator.stream_text_response(result.text),
+                self.conversation_orchestrator.stream_generate_response(
+                    conversation_id,
+                    human_input,
+                    call_context=self._get_call_context(),
+                    metadata={"transport": "telephony"},
+                    commit=True,
+                ),
                 conversation_id=conversation_id,
             )
         else:

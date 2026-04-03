@@ -19,6 +19,7 @@ class TwilioSmsSender(SmsSender):
         self._from_number = settings.twilio_sms_from_number
         self._messaging_service_sid = settings.twilio_messaging_service_sid
         self._default_region = settings.sms_default_region
+        self._timeout = max(1.0, float(settings.twilio_sms_timeout_seconds))
 
     async def send(self, request: SmsRequest) -> SmsResult:
         normalized_phone_number = normalize_phone_number(
@@ -33,10 +34,19 @@ class TwilioSmsSender(SmsSender):
             )
 
         try:
-            message = await asyncio.to_thread(
-                self._create_message,
-                request,
-                normalized_phone_number,
+            message = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._create_message,
+                    request,
+                    normalized_phone_number,
+                ),
+                timeout=self._timeout,
+            )
+        except asyncio.TimeoutError:
+            return SmsResult(
+                status="failed",
+                error_message="SMS request timed out.",
+                metadata={"provider": "twilio", "reason": "timeout"},
             )
         except Exception as exc:
             return SmsResult(

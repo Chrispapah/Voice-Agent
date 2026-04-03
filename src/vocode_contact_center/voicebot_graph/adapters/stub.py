@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from vocode_contact_center.phone_numbers import normalize_phone_number
+from vocode_contact_center.phone_numbers import normalize_phone_number_cached
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
@@ -36,9 +36,9 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
                     prompt="Please share the phone number we should use for registration.",
                     requested_field="phone_number",
                 )
-            normalized_phone_number = normalize_phone_number(
+            normalized_phone_number = normalize_phone_number_cached(
                 data.get("phone_number", ""),
-                default_region=self._settings.sms_default_region,
+                self._settings.sms_default_region,
             )
             if not normalized_phone_number:
                 return AuthenticationResult(

@@ -84,6 +84,13 @@ class ContactCenterSettings(BaseSettings):
     )
     voicebot_adapter_mode: str = "stub"
 
+    # Adapter / telephony timeouts (seconds). Co-locate services with Twilio/STT/TTS for lower tail latency.
+    adapter_authentication_timeout_seconds: float = 12.0
+    adapter_genesys_timeout_seconds: float = 10.0
+    twilio_sms_timeout_seconds: float = 8.0
+    # When True and SMS uses Twilio, the send runs in the background after the verbal ack is returned.
+    defer_sms_send_in_background: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

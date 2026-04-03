@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from loguru import logger
 
 from vocode_contact_center.settings import ContactCenterSettings
@@ -183,6 +185,9 @@ async def sms_confirmation(
     state: VoicebotGraphState,
     sms_sender: SmsSender,
     settings: ContactCenterSettings,
+    *,
+    defer_sms: bool = False,
+    schedule_background_sms: Callable[[SmsRequest], None] | None = None,
 ) -> VoicebotGraphState:
     updated_data = dict(state.get("collected_data", {}))
     phone_number = updated_data.get("phone_number", "").strip()
@@ -211,15 +216,38 @@ async def sms_confirmation(
             "route_decision": "interaction_terminal",
         }
 
-    sms_result = await sms_sender.send(
-        SmsRequest(
-            session_id=state["session_id"],
-            recipient_phone_number=phone_number,
-            message=build_registration_confirmation_message(settings, updated_data),
-            context="registration_confirmation",
-            metadata=dict(state.get("metadata", {})),
-        )
+    sms_request = SmsRequest(
+        session_id=state["session_id"],
+        recipient_phone_number=phone_number,
+        message=build_registration_confirmation_message(settings, updated_data),
+        context="registration_confirmation",
+        metadata=dict(state.get("metadata", {})),
     )
+
+    if defer_sms and schedule_background_sms is not None:
+        schedule_background_sms(sms_request)
+        adapter_results["sms"] = {
+            "status": "pending",
+            "metadata": {
+                "provider": "deferred",
+                "note": "SMS send runs in the background after the verbal acknowledgment.",
+            },
+        }
+        return {
+            "collected_data": updated_data,
+            "auth_status": "success",
+            "response_prefix": "I'm sending a confirmation text to your phone now. ",
+            "artifacts": {"sms_status": "pending"},
+            "adapter_results": adapter_results,
+            "terminal_group": (
+                "registration_terminal"
+                if state.get("interaction_context") == "registration"
+                else "login_terminal"
+            ),
+            "route_decision": "interaction_terminal",
+        }
+
+    sms_result = await sms_sender.send(sms_request)
     adapter_results["sms"] = {
         "status": sms_result.status,
         "metadata": {
