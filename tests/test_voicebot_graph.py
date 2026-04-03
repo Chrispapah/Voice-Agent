@@ -78,6 +78,7 @@ def test_registration_path_loops_through_customer_input_then_sms_then_terminal_m
 
     second = asyncio.run(service.run_turn("registration", "Chris Example", call_context="test"))
     assert second.state_snapshot["pending_auth_field"] == "phone_number"
+    assert second.state_snapshot["conversation_memory"]["full_name"] == "chris example"
 
     third = asyncio.run(service.run_turn("registration", "(415) 555-2671", call_context="test"))
     assert third.active_menu == "registration_terminal"
@@ -85,6 +86,7 @@ def test_registration_path_loops_through_customer_input_then_sms_then_terminal_m
     assert third.artifacts["sms_message_id"] == "SM123"
     assert third.adapter_results["sms"]["status"] == "sent"
     assert sms_sender.requests[0].recipient_phone_number == "+14155552671"
+    assert third.state_snapshot["conversation_memory"]["phone_number"] == "+14155552671"
 
     fourth = asyncio.run(
         service.run_turn("registration", "sms confirmation", call_context="test")
@@ -124,6 +126,60 @@ def test_registration_reprompts_when_phone_number_is_invalid():
     assert third.state_snapshot["pending_auth_field"] == "phone_number"
     assert "including the country code" in third.text.lower()
     assert sms_sender.requests == []
+
+
+def test_cancel_during_pending_auth_returns_to_root_and_preserves_safe_memory():
+    service = VoicebotGraphService(make_settings())
+
+    asyncio.run(service.run_turn("registration-cancel", "I want to register", call_context="test"))
+    second = asyncio.run(
+        service.run_turn("registration-cancel", "Chris Example", call_context="test")
+    )
+    assert second.state_snapshot["pending_auth_field"] == "phone_number"
+
+    cancelled = asyncio.run(
+        service.run_turn("registration-cancel", "cancel verification", call_context="test")
+    )
+
+    assert cancelled.active_menu == "root_intent"
+    assert cancelled.final_outcome == "cancelled_to_main_menu"
+    assert cancelled.state_snapshot["pending_auth_field"] is None
+    assert cancelled.state_snapshot["interaction_context"] is None
+    assert cancelled.state_snapshot["current_path"] is None
+    assert cancelled.state_snapshot["collected_data"] == {}
+    assert cancelled.state_snapshot["auth_attempts"] == 0
+    assert cancelled.state_snapshot["conversation_memory"]["full_name"] == "chris example"
+    assert "main menu" in cancelled.text.lower()
+
+
+def test_cancel_after_sms_prompt_returns_to_root_and_keeps_normalized_phone():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+
+    asyncio.run(service.run_turn("registration-root", "I want to register", call_context="test"))
+    asyncio.run(service.run_turn("registration-root", "Chris Example", call_context="test"))
+    third = asyncio.run(
+        service.run_turn("registration-root", "(415) 555-2671", call_context="test")
+    )
+    assert third.active_menu == "registration_terminal"
+
+    cancelled = asyncio.run(
+        service.run_turn("registration-root", "main menu", call_context="test")
+    )
+
+    assert cancelled.active_menu == "root_intent"
+    assert cancelled.final_outcome == "cancelled_to_main_menu"
+    assert cancelled.state_snapshot["terminal_group"] is None
+    assert cancelled.state_snapshot["pending_auth_field"] is None
+    assert cancelled.state_snapshot["conversation_memory"]["full_name"] == "chris example"
+    assert cancelled.state_snapshot["conversation_memory"]["phone_number"] == "+14155552671"
+
+    restarted = asyncio.run(
+        service.run_turn("registration-root", "I want to register", call_context="test")
+    )
+    assert restarted.state_snapshot["pending_auth_field"] == "full_name"
+    assert restarted.state_snapshot["collected_data"] == {}
+    assert restarted.state_snapshot["conversation_memory"]["phone_number"] == "+14155552671"
 
 
 def test_login_failure_routes_to_fallback_terminal_menu():

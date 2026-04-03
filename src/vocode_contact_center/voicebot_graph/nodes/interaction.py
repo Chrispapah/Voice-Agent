@@ -24,6 +24,7 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 INTERACTION_ENTRY_PROMPT = (
     "I can help you create a new account or access an existing one. Would you like registration or login support?"
 )
+SAFE_MEMORY_FIELDS = {"full_name", "phone_number"}
 
 
 def handle_interaction_entry(state: VoicebotGraphState) -> VoicebotGraphState:
@@ -74,6 +75,10 @@ async def authenticate(
         updated_data = dict(state.get("collected_data", {}))
         updated_data.update(result.normalized_data)
         updates["collected_data"] = updated_data
+        updates["conversation_memory"] = _merge_safe_memory(
+            state.get("conversation_memory", {}),
+            result.normalized_data,
+        )
 
     if result.status == "needs_customer_input":
         updates["pending_auth_field"] = result.requested_field
@@ -115,11 +120,17 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
 
     updated_data = dict(state.get("collected_data", {}))
     updated_data[pending_field] = normalized_value
-    return {
+    updates: VoicebotGraphState = {
         "collected_data": updated_data,
         "pending_auth_field": None,
         "route_decision": "interaction_authenticate",
     }
+    if pending_field in SAFE_MEMORY_FIELDS:
+        updates["conversation_memory"] = _merge_safe_memory(
+            state.get("conversation_memory", {}),
+            {pending_field: normalized_value},
+        )
+    return updates
 
 
 async def sms_confirmation(
@@ -260,3 +271,14 @@ def _terminal_options(menu_name: str) -> tuple[str, ...]:
         "fail_terminal": ("communication", "generic_sms", "details"),
     }
     return options[menu_name]
+
+
+def _merge_safe_memory(
+    existing_memory: dict[str, str],
+    values: dict[str, str],
+) -> dict[str, str]:
+    updated_memory = dict(existing_memory)
+    for field_name, field_value in values.items():
+        if field_name in SAFE_MEMORY_FIELDS and field_value:
+            updated_memory[field_name] = field_value
+    return updated_memory

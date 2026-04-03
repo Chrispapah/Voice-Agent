@@ -32,6 +32,7 @@ class VoicebotGraphState(TypedDict, total=False):
     response_prefix: str
     route_decision: str
     collected_data: dict[str, str]
+    conversation_memory: dict[str, str]
     adapter_results: dict[str, Any]
     artifacts: VoicebotArtifacts
     announcements_played: bool
@@ -66,6 +67,7 @@ def initial_graph_state(
         "response_prefix": "",
         "route_decision": "root_intent",
         "collected_data": {},
+        "conversation_memory": {},
         "adapter_results": {},
         "artifacts": {},
         "announcements_played": False,
@@ -97,6 +99,7 @@ def reset_path_state(state: VoicebotGraphState) -> VoicebotGraphState:
     updated["root_intent"] = None
     updated["interaction_context"] = None
     updated["auth_status"] = None
+    updated["auth_attempts"] = 0
     updated["pending_auth_field"] = None
     updated["active_menu"] = None
     updated["menu_options"] = []
@@ -105,4 +108,22 @@ def reset_path_state(state: VoicebotGraphState) -> VoicebotGraphState:
     updated["collected_data"] = {}
     updated["announcements_played"] = False
     updated["genesys_requested"] = False
+    return updated
+
+
+def reset_to_root_menu(
+    state: VoicebotGraphState,
+    *,
+    response_text: str,
+    final_outcome: str = "cancelled_to_main_menu",
+) -> VoicebotGraphState:
+    updated = reset_path_state(state)
+    updated["active_menu"] = "root_intent"
+    updated["menu_options"] = ["information", "interaction", "announcements", "feedback"]
+    updated["final_outcome"] = final_outcome
+    updated["response_text"] = response_text
+    updated["pending_prompt"] = response_text
+    updated["route_decision"] = "complete"
+    updated["adapter_results"] = {}
+    updated["artifacts"] = {}
     return updated

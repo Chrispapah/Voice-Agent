@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 from vocode_contact_center.voicebot_graph.intents import (
+    classify_global_navigation,
     classify_root_intent,
 )
-from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
+from vocode_contact_center.voicebot_graph.state import VoicebotGraphState, reset_to_root_menu
 
 
 ROOT_MENU_PROMPT = (
     "I can help with general information, account support, announcements, or feedback and contact options. Which one would you like to start with?"
 )
+ROOT_MENU_OPTIONS = ["information", "interaction", "announcements", "feedback"]
 
 
 def route_turn(state: VoicebotGraphState) -> VoicebotGraphState:
+    if classify_global_navigation(state.get("latest_user_input", "")) == "main_menu":
+        return {"route_decision": "global_main_menu"}
+
     if state.get("pending_auth_field"):
         return {"route_decision": "interaction_customer_input"}
 
@@ -37,7 +42,7 @@ def resolve_root_intent(state: VoicebotGraphState) -> VoicebotGraphState:
     if root_intent is None:
         return {
             "active_menu": "root_intent",
-            "menu_options": ["information", "interaction", "announcements", "feedback"],
+            "menu_options": ROOT_MENU_OPTIONS,
             "response_text": ROOT_MENU_PROMPT,
             "pending_prompt": ROOT_MENU_PROMPT,
             "route_decision": "complete",
@@ -58,3 +63,13 @@ def resolve_root_intent(state: VoicebotGraphState) -> VoicebotGraphState:
     else:
         updates["route_decision"] = "feedback"
     return updates
+
+
+def return_to_main_menu(state: VoicebotGraphState) -> VoicebotGraphState:
+    return reset_to_root_menu(
+        state,
+        response_text=(
+            "No problem. I've cancelled that process and taken you back to the main menu. "
+            f"{ROOT_MENU_PROMPT}"
+        ),
+    )

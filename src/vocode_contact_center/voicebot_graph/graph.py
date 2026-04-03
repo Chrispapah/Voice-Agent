@@ -35,6 +35,7 @@ def build_voicebot_graph(
 
     builder.add_node("route_turn", root.route_turn)
     builder.add_node("root_intent_node", root.resolve_root_intent)
+    builder.add_node("global_main_menu", root.return_to_main_menu)
     builder.add_node("information", lambda state: information.handle_information(state, settings))
     builder.add_node("interaction_entry", interaction.handle_interaction_entry)
     builder.add_node("interaction_authenticate", run_authentication)
@@ -51,6 +52,7 @@ def build_voicebot_graph(
 
     route_map = {
         "root_intent": "root_intent_node",
+        "global_main_menu": "global_main_menu",
         "information": "information",
         "interaction_entry": "interaction_entry",
         "interaction_authenticate": "interaction_authenticate",
@@ -72,6 +74,7 @@ def build_voicebot_graph(
     for node_name in (
         "route_turn",
         "root_intent_node",
+        "global_main_menu",
         "information",
         "interaction_entry",
         "interaction_authenticate",

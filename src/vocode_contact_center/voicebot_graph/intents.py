@@ -94,6 +94,34 @@ def classify_root_intent(text: str) -> str | None:
     return None
 
 
+def classify_global_navigation(text: str) -> str | None:
+    normalized = normalize_text(text)
+    if contains_any(
+        normalized,
+        (
+            "cancel",
+            "cancel verification",
+            "cancel registration",
+            "never mind",
+            "forget it",
+            "go back",
+            "main menu",
+            "menu",
+            "start over",
+            "abort",
+            "exit",
+            "home",
+            "ακυρο",
+            "σταματα",
+            "σταματησε",
+            "πισω",
+            "κεντρικο μενου",
+        ),
+    ):
+        return "main_menu"
+    return None
+
+
 def classify_interaction_context(text: str) -> str | None:
     normalized = normalize_text(text)
     if contains_any(
