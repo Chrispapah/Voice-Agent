@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 import threading
 from dataclasses import dataclass
 from typing import AsyncGenerator
@@ -42,12 +41,6 @@ class VoicebotTurnResult:
     artifacts: dict[str, str]
     adapter_results: dict[str, object]
     state_snapshot: VoicebotGraphState
-
-
-def _text_to_tokens(text: str) -> list[str]:
-    if not text:
-        return []
-    return re.findall(r"\S+\s*", text)
 
 
 def _spoken_delta(last_emitted: str, new_full: str) -> tuple[str, str]:
@@ -221,8 +214,11 @@ class VoicebotGraphService:
             final_state = values
             spoken = spoken_preview_from_state(values)
             last_spoken, delta = _spoken_delta(last_spoken, spoken)
-            for tok in _text_to_tokens(delta):
-                yield tok
+            # Emit each graph delta as one chunk. Word-by-word streaming makes Vocode's
+            # stream_response_async flush early (e.g. after "for this "), starting TTS
+            # before the rest of the sentence arrives; barge-in then drops the remainder.
+            if delta:
+                yield delta
         if final_state is None:
             logger.warning("Graph stream ended with no state session={}", session_id)
             return
@@ -253,8 +249,8 @@ class VoicebotGraphService:
         )
 
     async def stream_text_response(self, text: str) -> AsyncGenerator[str, None]:
-        for token in _text_to_tokens(text):
-            yield token
+        if text:
+            yield text
 
     def _prepare_state(
         self,
