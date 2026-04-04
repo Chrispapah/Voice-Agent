@@ -80,6 +80,7 @@ class ContactCenterSettings(BaseSettings):
     information_products_chunk_chars: int = 1200
     information_products_retrieval_chunks: int = 4
     information_products_answer_max_tokens: int = 220
+    information_products_answer_language: str = "English"
     announcements_message: str = (
         "I can share the latest announcements with you."
     )

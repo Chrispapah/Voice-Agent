@@ -13,7 +13,11 @@ from urllib.request import urlopen
 from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
-from pypdf import PdfReader
+
+try:
+    from pypdf import PdfReader
+except ModuleNotFoundError:
+    PdfReader = None
 
 from vocode_contact_center.langchain_support import extract_text_from_langchain_message
 from vocode_contact_center.settings import ContactCenterSettings
@@ -24,6 +28,7 @@ You answer product questions for a banking contact center using only the provide
 
 Rules:
 - Use only the PDF excerpts. Never invent product details.
+- Always answer in {response_language}. Translate faithfully when the PDF excerpts are written in another language.
 - If the excerpts do not answer the caller's question, say that you cannot confirm it from the product PDF.
 - Keep the answer concise and natural for live voice, at most three short sentences.
 - Do not mention that you are looking at chunks or retrieval results.
@@ -51,7 +56,7 @@ class ProductKnowledgeService:
         self._cached_chunks: tuple[ProductKnowledgeChunk, ...] = ()
 
     def is_configured(self) -> bool:
-        return self._source_reference() is not None
+        return self._source_reference() is not None and PdfReader is not None
 
     def source_reference(self) -> str | None:
         return self._source_reference()
@@ -64,6 +69,20 @@ class ProductKnowledgeService:
                     "I don't have a product PDF configured yet, so I can't answer product questions from it right now."
                 ),
                 artifacts={},
+                found_match=False,
+            )
+
+        if PdfReader is None:
+            logger.warning(
+                "Product PDF support is unavailable because pypdf is not installed source={}",
+                reference,
+            )
+            return ProductKnowledgeAnswer(
+                text=(
+                    "I can share the product PDF link, but the system isn't ready to read product answers from the document right now. "
+                    f"You can review it here: {reference}."
+                ),
+                artifacts={"pdf_reference": reference},
                 found_match=False,
             )
 
@@ -112,6 +131,7 @@ class ProductKnowledgeService:
         )
 
     async def _answer_from_context(self, *, question: str, context: str, reference: str) -> str:
+        response_language = self._response_language()
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", PRODUCT_QA_SYSTEM_PROMPT),
@@ -138,6 +158,7 @@ class ProductKnowledgeService:
                     "pdf_reference": reference,
                     "question": question,
                     "context": context,
+                    "response_language": response_language,
                 }
             )
             text = extract_text_from_langchain_message(result).strip()
@@ -291,6 +312,12 @@ class ProductKnowledgeService:
         return [chunk for _, chunk in scored]
 
     def _extractive_fallback(self, context: str, reference: str) -> str:
+        response_language = self._response_language().lower()
+        if response_language.startswith("english") and self._contains_non_latin_script(context):
+            return (
+                "I found relevant product details in the PDF, but I couldn't turn them into a clean English voice answer just now. "
+                f"You can review the full document here: {reference}."
+            )
         sentences = [
             sentence.strip()
             for sentence in re.split(r"(?<=[.!?])\s+", self._normalize_whitespace(context))
@@ -335,6 +362,13 @@ class ProductKnowledgeService:
             for token in re.findall(r"\b[a-z0-9]{3,}\b", text.lower())
             if token not in {"the", "and", "for", "with", "that", "this", "from"}
         }
+
+    def _response_language(self) -> str:
+        language = self.settings.information_products_answer_language.strip()
+        return language or "English"
+
+    def _contains_non_latin_script(self, text: str) -> bool:
+        return any(ord(ch) > 127 and ch.isalpha() for ch in text)
 
     def _normalize_whitespace(self, text: str) -> str:
         lines = [" ".join(line.split()) for line in text.splitlines()]
