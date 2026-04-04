@@ -27,7 +27,10 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
             if "full_name" not in data:
                 return AuthenticationResult(
                     status="needs_customer_input",
-                    prompt="To continue with registration, please tell me your full name.",
+                    prompt=(
+                        "I need your first and last name for this registration. "
+                        "Please say both names clearly."
+                    ),
                     requested_field="full_name",
                 )
             if "phone_number" not in data:

@@ -30,6 +30,66 @@ INTERACTION_ENTRY_PROMPT = (
 )
 SAFE_MEMORY_FIELDS = {"full_name", "phone_number"}
 
+_FULL_NAME_BLOCKLIST = frozenset(
+    {
+        "hello",
+        "hi",
+        "hey",
+        "yes",
+        "no",
+        "yeah",
+        "yep",
+        "nope",
+        "ok",
+        "okay",
+        "sure",
+        "what",
+        "help",
+        "please",
+        "thanks",
+        "thank",
+        "sorry",
+        "pardon",
+        "repeat",
+        "uh",
+        "um",
+        "hmm",
+        "huh",
+        "still",
+        "here",
+        "listening",
+    }
+)
+
+_FULL_NAME_REPROMPT = (
+    "I need your real first and last name for registration. "
+    "Please say both names clearly, for example, Jane Smith."
+)
+
+
+def _name_tokens(text: str) -> list[str]:
+    """Letter-only tokens (hyphenated parts count as one token each)."""
+    normalized = normalize_text(text)
+    tokens: list[str] = []
+    for raw in normalized.split():
+        for part in raw.split("-"):
+            letters_only = "".join(c for c in part if c.isalpha())
+            if len(letters_only) >= 2:
+                tokens.append(letters_only)
+    return tokens
+
+
+def is_plausible_full_name(user_text: str) -> bool:
+    """Reject greetings, backchannels, and other non-name utterances."""
+    tokens = _name_tokens(user_text)
+    if len(tokens) < 2:
+        return False
+    if tokens[0] in _FULL_NAME_BLOCKLIST:
+        return False
+    if all(t in _FULL_NAME_BLOCKLIST for t in tokens):
+        return False
+    return True
+
 
 def handle_interaction_entry(state: VoicebotGraphState) -> VoicebotGraphState:
     context = state.get("interaction_context") or classify_interaction_context(
@@ -152,6 +212,19 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
         return {
             "response_text": "I still need that detail before I can continue. Take your time.",
             "pending_prompt": "I still need that detail before I can continue. Take your time.",
+            "route_decision": "complete",
+        }
+
+    if pending_field == "full_name" and not is_plausible_full_name(state.get("latest_user_input", "")):
+        logger.info(
+            "Graph collect_customer_input session={} rejected implausible full_name input={!r}",
+            state.get("session_id"),
+            state.get("latest_user_input", ""),
+        )
+        return {
+            "response_text": _FULL_NAME_REPROMPT,
+            "pending_prompt": _FULL_NAME_REPROMPT,
+            "pending_auth_field": pending_field,
             "route_decision": "complete",
         }
 

@@ -112,6 +112,19 @@ def test_registration_sms_failure_is_truthful_in_graph_flow():
     assert "couldn't send the sms confirmation" in third.text.lower()
 
 
+def test_registration_reprompts_when_full_name_is_greeting_or_filler():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+    asyncio.run(service.run_turn("registration-name", "I want to register", call_context="test"))
+    bad = asyncio.run(service.run_turn("registration-name", "Hello?", call_context="test"))
+    assert bad.state_snapshot["pending_auth_field"] == "full_name"
+    assert "full_name" not in bad.state_snapshot.get("collected_data", {})
+    assert "first" in bad.text.lower() and "last" in bad.text.lower()
+    good = asyncio.run(service.run_turn("registration-name", "Chris Example", call_context="test"))
+    assert good.state_snapshot["conversation_memory"]["full_name"] == "chris example"
+    assert good.state_snapshot["pending_auth_field"] == "phone_number"
+
+
 def test_registration_reprompts_when_phone_number_is_invalid():
     sms_sender = FakeSmsSender()
     service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
