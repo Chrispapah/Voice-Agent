@@ -7,6 +7,7 @@ from typing import Any, TypedDict
 class VoicebotArtifacts(TypedDict, total=False):
     website_url: str
     pdf_reference: str
+    product_source_pages: str
     sms_status: str
     sms_message_id: str
     announcements_status: str

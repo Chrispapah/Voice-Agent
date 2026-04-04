@@ -76,7 +76,7 @@ def route_turn(state: VoicebotGraphState) -> VoicebotGraphState:
         return {"route_decision": "root_intent"}
     if active_menu == "interaction_entry":
         return {"route_decision": "interaction_entry"}
-    if active_menu in {"info_selection", "change_information"}:
+    if active_menu in {"info_selection", "change_information", "information_products"}:
         return {"route_decision": "information"}
     if active_menu in {"registration_terminal", "login_terminal", "fail_terminal"}:
         return {"route_decision": "interaction_terminal"}

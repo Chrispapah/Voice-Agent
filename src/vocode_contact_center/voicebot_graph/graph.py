@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from loguru import logger
 
 from vocode_contact_center.settings import ContactCenterSettings
+from vocode_contact_center.product_knowledge import ProductKnowledgeService
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     GenesysAdapter,
@@ -20,6 +21,7 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 def build_voicebot_graph(
     *,
     settings: ContactCenterSettings,
+    product_knowledge: ProductKnowledgeService,
     auth_adapter: AuthenticationAdapter,
     genesys_adapter: GenesysAdapter,
     sms_sender: SmsSender,
@@ -113,12 +115,15 @@ def build_voicebot_graph(
             schedule_background_sms=schedule_background_sms if defer_sms else None,
         )
 
+    async def run_information(state: VoicebotGraphState) -> VoicebotGraphState:
+        return await information.handle_information(state, settings, product_knowledge)
+
     builder = StateGraph(VoicebotGraphState)
 
     builder.add_node("route_turn", root.route_turn)
     builder.add_node("root_intent_node", root.resolve_root_intent)
     builder.add_node("global_main_menu", root.return_to_main_menu)
-    builder.add_node("information", lambda state: information.handle_information(state, settings))
+    builder.add_node("information", run_information)
     builder.add_node("interaction_entry", interaction.handle_interaction_entry)
     builder.add_node("interaction_authenticate", run_authentication)
     builder.add_node("interaction_customer_input", interaction.collect_customer_input)

@@ -7,6 +7,7 @@ from typing import AsyncGenerator
 
 from loguru import logger
 
+from vocode_contact_center.product_knowledge import ProductKnowledgeService
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
@@ -76,17 +77,22 @@ class VoicebotGraphService:
         auth_adapter: AuthenticationAdapter | None = None,
         genesys_adapter: GenesysAdapter | None = None,
         sms_sender: SmsSender | None = None,
+        product_information_service: ProductKnowledgeService | None = None,
     ) -> None:
         self.settings = settings
         self.auth_adapter = auth_adapter or StubAuthenticationAdapter(settings)
         self.genesys_adapter = genesys_adapter or StubGenesysAdapter()
         self.sms_sender = sms_sender or StubSmsSender()
+        self.product_information_service = product_information_service or ProductKnowledgeService(
+            settings
+        )
         self._session_lock = threading.Lock()
         schedule_sms = None
         if settings.defer_sms_send_in_background and isinstance(self.sms_sender, TwilioSmsSender):
             schedule_sms = self._enqueue_background_sms
         self._graph = build_voicebot_graph(
             settings=settings,
+            product_knowledge=self.product_information_service,
             auth_adapter=self.auth_adapter,
             genesys_adapter=self.genesys_adapter,
             sms_sender=self.sms_sender,

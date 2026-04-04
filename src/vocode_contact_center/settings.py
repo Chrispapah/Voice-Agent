@@ -75,7 +75,11 @@ class ContactCenterSettings(BaseSettings):
     agent_prompt_preamble: str = DEFAULT_AGENT_PROMPT
     transfer_phone_number: str | None = None
     information_store_website_url: str = "https://example.com/store-locations"
+    information_products_pdf_path: str | None = None
     information_products_pdf_url: str = "https://example.com/products.pdf"
+    information_products_chunk_chars: int = 1200
+    information_products_retrieval_chunks: int = 4
+    information_products_answer_max_tokens: int = 220
     announcements_message: str = (
         "I can share the latest announcements with you."
     )

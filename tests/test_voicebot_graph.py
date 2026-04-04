@@ -1,5 +1,6 @@
 import asyncio
 
+from vocode_contact_center.product_knowledge import ProductKnowledgeAnswer
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import SmsRequest, SmsResult
 from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
@@ -37,6 +38,26 @@ class FakeSmsSender:
         )
 
 
+class FakeProductInformationService:
+    def __init__(self, *, configured: bool = True):
+        self.configured = configured
+        self.questions: list[str] = []
+
+    def is_configured(self) -> bool:
+        return self.configured
+
+    async def answer_question(self, question: str) -> ProductKnowledgeAnswer:
+        self.questions.append(question)
+        return ProductKnowledgeAnswer(
+            text="The product PDF says the savings account includes online access and monthly statements.",
+            artifacts={
+                "pdf_reference": "https://demo.example.com/products.pdf",
+                "product_source_pages": "2",
+            },
+            found_match=True,
+        )
+
+
 def test_information_path_loops_back_when_change_information_is_selected():
     service = VoicebotGraphService(make_settings())
 
@@ -67,6 +88,59 @@ def test_information_path_loops_back_when_change_information_is_selected():
     )
     assert third.active_menu == "info_selection"
     assert "would you like store information" in third.text.lower()
+
+
+def test_product_information_path_answers_from_pdf_service_and_stays_active():
+    product_service = FakeProductInformationService()
+    service = VoicebotGraphService(
+        make_settings(),
+        product_information_service=product_service,
+    )
+
+    first = asyncio.run(
+        service.run_turn(
+            "product-info",
+            "I need information",
+            call_context="test",
+        )
+    )
+    assert first.active_menu == "info_selection"
+
+    second = asyncio.run(
+        service.run_turn(
+            "product-info",
+            "products",
+            call_context="test",
+        )
+    )
+    assert second.active_menu == "information_products"
+    assert "product pdf" in second.text.lower()
+
+    third = asyncio.run(
+        service.run_turn(
+            "product-info",
+            "Tell me about the savings account",
+            call_context="test",
+        )
+    )
+    assert third.active_menu == "information_products"
+    assert "savings account" in third.text.lower()
+    assert third.artifacts["pdf_reference"] == "https://demo.example.com/products.pdf"
+    assert third.artifacts["product_source_pages"] == "2"
+    assert product_service.questions == ["Tell me about the savings account"]
+
+
+def test_product_information_falls_back_to_pdf_link_when_pdf_service_is_not_configured():
+    service = VoicebotGraphService(
+        make_settings(),
+        product_information_service=FakeProductInformationService(configured=False),
+    )
+
+    asyncio.run(service.run_turn("product-link", "I need information", call_context="test"))
+    result = asyncio.run(service.run_turn("product-link", "products", call_context="test"))
+
+    assert result.final_outcome == "pdf"
+    assert result.artifacts["pdf_reference"] == "https://demo.example.com/products.pdf"
 
 
 def test_registration_path_loops_through_customer_input_then_sms_then_terminal_menu():

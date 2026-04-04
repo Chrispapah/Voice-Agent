@@ -5,8 +5,10 @@ from vocode_contact_center.orchestration.hybrid_service import (
     HybridRouteAction,
     HybridRouteDecision,
 )
+from vocode_contact_center.product_knowledge import ProductKnowledgeAnswer
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import SmsRequest, SmsResult
+from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
 
 
 def make_settings() -> ContactCenterSettings:
@@ -58,6 +60,22 @@ class FakeSmsSender:
             status="failed",
             error_message="simulated failure",
             metadata={"provider": "fake"},
+        )
+
+
+class FakeProductInformationService:
+    def __init__(self):
+        self.questions: list[str] = []
+
+    def is_configured(self) -> bool:
+        return True
+
+    async def answer_question(self, question: str) -> ProductKnowledgeAnswer:
+        self.questions.append(question)
+        return ProductKnowledgeAnswer(
+            text="The PDF says the platinum account includes a debit card and online banking.",
+            artifacts={"pdf_reference": "https://demo.example.com/products.pdf"},
+            found_match=True,
         )
 
 
@@ -235,3 +253,38 @@ def test_hybrid_orchestrator_returns_to_generic_mode_after_graph_completion():
     )
     assert third.text == "We offer general support, account help, and announcements."
     assert third.state_snapshot["hybrid_mode"] == "generic"
+
+
+def test_hybrid_product_information_menu_stays_in_graph_when_router_tries_direct_answer():
+    product_service = FakeProductInformationService()
+    graph_service = VoicebotGraphService(
+        make_settings(),
+        product_information_service=product_service,
+    )
+    service = HybridConversationOrchestratorService(
+        make_settings(),
+        graph_service=graph_service,
+        route_policy=QueueRoutePolicy(
+            [
+                HybridRouteDecision(action=HybridRouteAction.ENTER_GRAPH_FLOW),
+                HybridRouteDecision(action=HybridRouteAction.CONTINUE_GRAPH),
+                HybridRouteDecision(action=HybridRouteAction.ANSWER_DIRECTLY),
+            ]
+        ),
+        generic_responder=QueueGenericResponder(["This should not be used."]),
+    )
+
+    first = asyncio.run(service.run_turn("product-sticky", "I need information", call_context="test"))
+    assert first.state_snapshot["hybrid_mode"] == "graph"
+
+    second = asyncio.run(service.run_turn("product-sticky", "products", call_context="test"))
+    assert second.active_menu == "information_products"
+    assert second.state_snapshot["hybrid_mode"] == "graph"
+
+    third = asyncio.run(
+        service.run_turn("product-sticky", "Tell me about the platinum account", call_context="test")
+    )
+    assert third.active_menu == "information_products"
+    assert third.state_snapshot["hybrid_mode"] == "graph"
+    assert "platinum account" in third.text.lower()
+    assert product_service.questions == ["Tell me about the platinum account"]

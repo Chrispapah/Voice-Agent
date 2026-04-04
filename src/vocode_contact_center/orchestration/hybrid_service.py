@@ -77,6 +77,7 @@ STICKY_ACTIVE_MENUS: frozenset[str] = frozenset(
         "interaction_entry",
         "info_selection",
         "change_information",
+        "information_products",
         "announcements_continue",
         "announcements_terminal",
         "feedback_question",
