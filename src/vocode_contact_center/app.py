@@ -118,7 +118,7 @@ def build_agent_config(settings: ContactCenterSettings) -> AgentConfig:
         transfer_phone_number=settings.transfer_phone_number,
         generate_responses=True,
         end_conversation_on_goodbye=True,
-        interrupt_sensitivity="high",
+        interrupt_sensitivity="low",
     )
 
 
