@@ -66,6 +66,20 @@ _FULL_NAME_REPROMPT = (
     "Please say both names clearly, for example, Jane Smith."
 )
 
+# Phrases that often appear when the transcriber picks up the bot's own TTS (echo)
+# or the user repeats the prompt — not a real name.
+_FULL_NAME_ECHO_SUBSTRINGS = (
+    "i need your",
+    "please tell me your",
+    "please say both",
+    "say both names",
+    "your first and last name",
+    "your full name",
+    "for this registration",
+    "continue with registration",
+    "speaking clearly",
+)
+
 
 def _name_tokens(text: str) -> list[str]:
     """Letter-only tokens (hyphenated parts count as one token each)."""
@@ -81,6 +95,9 @@ def _name_tokens(text: str) -> list[str]:
 
 def is_plausible_full_name(user_text: str) -> bool:
     """Reject greetings, backchannels, and other non-name utterances."""
+    normalized = normalize_text(user_text)
+    if any(fragment in normalized for fragment in _FULL_NAME_ECHO_SUBSTRINGS):
+        return False
     tokens = _name_tokens(user_text)
     if len(tokens) < 2:
         return False
