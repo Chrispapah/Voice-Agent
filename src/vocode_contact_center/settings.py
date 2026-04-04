@@ -91,6 +91,10 @@ class ContactCenterSettings(BaseSettings):
     # When True and SMS uses Twilio, the send runs in the background after the verbal ack is returned.
     defer_sms_send_in_background: bool = True
 
+    # Coalesce graph streaming TTS chunks so Vocode flushes fewer partial sentences (fewer cut-off prompts).
+    voicebot_graph_stream_min_flush_chars: int = 48
+    voicebot_graph_stream_flush_on_sentence_end: bool = True
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

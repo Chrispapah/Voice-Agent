@@ -49,6 +49,25 @@ def _spoken_delta(last_emitted: str, new_full: str) -> tuple[str, str]:
     return new_full, new_full
 
 
+def _take_flushed_spoken_buffer(buffer: str, settings: ContactCenterSettings) -> tuple[str, str]:
+    """Split buffer into (remaining, chunk_to_emit) for fewer partial TTS flushes."""
+    min_c = max(8, int(settings.voicebot_graph_stream_min_flush_chars))
+    max_c = max(min_c * 3, 160)
+    if not buffer:
+        return "", ""
+    if settings.voicebot_graph_stream_flush_on_sentence_end:
+        for i, ch in enumerate(buffer):
+            if ch in ".!?":
+                chunk = buffer[: i + 1]
+                if len(chunk) >= min_c:
+                    return buffer[i + 1 :].lstrip(), chunk
+    if len(buffer) >= max_c:
+        return "", buffer
+    if not settings.voicebot_graph_stream_flush_on_sentence_end and len(buffer) >= min_c:
+        return "", buffer
+    return buffer, ""
+
+
 class VoicebotGraphService:
     def __init__(
         self,
@@ -209,16 +228,19 @@ class VoicebotGraphService:
             state.get("pending_auth_field"),
         )
         last_spoken = ""
+        emit_buffer = ""
         final_state: VoicebotGraphState | None = None
         async for values in self._graph.astream(state, stream_mode="values"):
             final_state = values
             spoken = spoken_preview_from_state(values)
             last_spoken, delta = _spoken_delta(last_spoken, spoken)
-            # Emit each graph delta as one chunk. Word-by-word streaming makes Vocode's
-            # stream_response_async flush early (e.g. after "for this "), starting TTS
-            # before the rest of the sentence arrives; barge-in then drops the remainder.
             if delta:
-                yield delta
+                emit_buffer += delta
+                while True:
+                    emit_buffer, chunk = _take_flushed_spoken_buffer(emit_buffer, self.settings)
+                    if not chunk:
+                        break
+                    yield chunk
         if final_state is None:
             logger.warning("Graph stream ended with no state session={}", session_id)
             return
@@ -228,6 +250,8 @@ class VoicebotGraphService:
             final_state.get("final_outcome"),
             final_state.get("active_menu"),
         )
+        if emit_buffer:
+            yield emit_buffer
         if commit:
             with self._session_lock:
                 self._sessions[session_id] = clone_state(final_state)

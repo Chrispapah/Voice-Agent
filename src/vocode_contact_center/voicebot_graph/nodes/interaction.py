@@ -14,6 +14,7 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
 )
 from vocode_contact_center.voicebot_graph.intents import (
     classify_interaction_context,
+    classify_root_intent,
     classify_terminal_choice,
     normalize_text,
 )
@@ -80,6 +81,111 @@ _FULL_NAME_ECHO_SUBSTRINGS = (
     "speaking clearly",
 )
 
+_REG_PART_FIRST = "_reg_part_first"
+_REG_PART_LAST = "_reg_part_last"
+
+
+def _segment_after_name_label(normalized: str, label: str) -> str | None:
+    if label not in normalized:
+        return None
+    start = normalized.index(label) + len(label)
+    rest = normalized[start:].strip().lstrip(":,").strip()
+    if not rest:
+        return None
+    for stop in (" last name", " first name", " given name"):
+        cut = rest.find(stop)
+        if cut > 0:
+            rest = rest[:cut].strip()
+            break
+    if "," in rest:
+        rest = rest.split(",")[0].strip()
+    return rest or None
+
+
+def _parsed_first_last_from_utterance(normalized: str) -> tuple[str | None, str | None]:
+    first = _segment_after_name_label(normalized, "first name")
+    if first is None:
+        first = _segment_after_name_label(normalized, "given name")
+    last = _segment_after_name_label(normalized, "last name")
+    return first, last
+
+
+def _strip_registration_name_parts(data: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in data.items() if k not in (_REG_PART_FIRST, _REG_PART_LAST)}
+
+
+def _try_collect_full_name_in_parts(state: VoicebotGraphState) -> VoicebotGraphState | None:
+    """Handle 'first name …' / 'last name …' (possibly across turns); return None to use single-utterance logic."""
+    raw = state.get("latest_user_input", "")
+    normalized = normalize_text(raw)
+    data = dict(state.get("collected_data", {}))
+    prev_f = data.get(_REG_PART_FIRST)
+    prev_l = data.get(_REG_PART_LAST)
+
+    has_explicit = any(
+        phrase in normalized for phrase in ("first name", "last name", "given name")
+    )
+    if not has_explicit and not prev_f and not prev_l:
+        return None
+
+    pf, pl = _parsed_first_last_from_utterance(normalized)
+    new_f = pf if pf is not None else prev_f
+    new_l = pl if pl is not None else prev_l
+
+    if (prev_f or prev_l) and not has_explicit and pf is None and pl is None:
+        toks = _name_tokens(raw)
+        if len(toks) == 1 and toks[0] not in _FULL_NAME_BLOCKLIST:
+            if prev_f and not new_l:
+                new_l = toks[0]
+            elif prev_l and not new_f:
+                new_f = toks[0]
+
+    if new_f and new_l:
+        combined_raw = f"{new_f} {new_l}"
+        if not is_plausible_full_name(combined_raw):
+            return {
+                "response_text": _FULL_NAME_REPROMPT,
+                "pending_prompt": _FULL_NAME_REPROMPT,
+                "pending_auth_field": "full_name",
+                "route_decision": "complete",
+                "collected_data": _strip_registration_name_parts(data),
+            }
+        cd = _strip_registration_name_parts(data)
+        full_norm = normalize_text(combined_raw)
+        cd["full_name"] = full_norm
+        updates: VoicebotGraphState = {
+            "collected_data": cd,
+            "pending_auth_field": None,
+            "route_decision": "interaction_authenticate",
+        }
+        updates["conversation_memory"] = _merge_safe_memory(
+            state.get("conversation_memory", {}),
+            {"full_name": full_norm},
+        )
+        return updates
+
+    if new_f or new_l:
+        cd = dict(data)
+        if new_f:
+            cd[_REG_PART_FIRST] = new_f
+        if new_l:
+            cd[_REG_PART_LAST] = new_l
+        if new_f and not new_l:
+            msg = "Thanks, I have your first name. What's your last name?"
+        elif new_l and not new_f:
+            msg = "Thanks, I have your last name. What's your first name?"
+        else:
+            msg = _FULL_NAME_REPROMPT
+        return {
+            "collected_data": cd,
+            "pending_auth_field": "full_name",
+            "response_text": msg,
+            "pending_prompt": msg,
+            "route_decision": "complete",
+        }
+
+    return None
+
 
 def _name_tokens(text: str) -> list[str]:
     """Letter-only tokens (hyphenated parts count as one token each)."""
@@ -97,6 +203,9 @@ def is_plausible_full_name(user_text: str) -> bool:
     """Reject greetings, backchannels, and other non-name utterances."""
     normalized = normalize_text(user_text)
     if any(fragment in normalized for fragment in _FULL_NAME_ECHO_SUBSTRINGS):
+        return False
+    switch_intent = classify_root_intent(user_text)
+    if switch_intent in ("information", "announcements", "feedback"):
         return False
     tokens = _name_tokens(user_text)
     if len(tokens) < 2:
@@ -231,6 +340,11 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
             "pending_prompt": "I still need that detail before I can continue. Take your time.",
             "route_decision": "complete",
         }
+
+    if pending_field == "full_name":
+        partial = _try_collect_full_name_in_parts(state)
+        if partial is not None:
+            return partial
 
     if pending_field == "full_name" and not is_plausible_full_name(state.get("latest_user_input", "")):
         logger.info(

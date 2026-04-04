@@ -158,6 +158,32 @@ def test_hybrid_orchestrator_can_escape_from_graph_and_resume_generic_mode():
     assert third.state_snapshot["hybrid_mode"] == "generic"
 
 
+def test_hybrid_sticky_overrides_answer_directly_during_full_name_collection():
+    sms_sender = FakeSmsSender()
+    service = HybridConversationOrchestratorService(
+        make_settings(),
+        sms_sender=sms_sender,
+        route_policy=QueueRoutePolicy(
+            [
+                HybridRouteDecision(action=HybridRouteAction.ENTER_GRAPH_FLOW),
+                HybridRouteDecision(action=HybridRouteAction.ANSWER_DIRECTLY),
+            ]
+        ),
+        generic_responder=QueueGenericResponder(["This generic line should not run."]),
+    )
+
+    first = asyncio.run(service.run_turn("sticky-name", "I want to register", call_context="test"))
+    assert first.state_snapshot["pending_auth_field"] == "full_name"
+    assert first.state_snapshot["hybrid_mode"] == "graph"
+
+    second = asyncio.run(
+        service.run_turn("sticky-name", "Jane Example Person", call_context="test")
+    )
+    assert second.state_snapshot["hybrid_mode"] == "graph"
+    assert second.state_snapshot["pending_auth_field"] == "phone_number"
+    assert "This generic line" not in second.text
+
+
 def test_hybrid_orchestrator_can_answer_directly_while_graph_is_active():
     service = HybridConversationOrchestratorService(
         make_settings(),

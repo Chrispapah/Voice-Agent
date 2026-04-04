@@ -42,6 +42,17 @@ def route_turn(state: VoicebotGraphState) -> VoicebotGraphState:
         )
         return {"route_decision": "global_main_menu"}
 
+    # Collect full name before keyword cross-flow detection so substrings like "other"
+    # (information intent) do not cancel registration mid-prompt.
+    if pending_auth_field == "full_name":
+        logger.info(
+            "Graph route_turn continuing auth field collection session={} pending_auth_field={} input={!r}",
+            state.get("session_id"),
+            pending_auth_field,
+            latest_user_input,
+        )
+        return {"route_decision": "interaction_customer_input"}
+
     if _should_redirect_to_main_menu(state, requested_root_intent=root_intent):
         logger.info(
             "Graph route_turn redirecting to main menu from cross-flow request session={} current_path={} requested_root_intent={} input={!r}",

@@ -26,7 +26,8 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
     GenesysAdapter,
     SmsSender,
 )
-from vocode_contact_center.voicebot_graph.state import clone_state as clone_graph_state
+from vocode_contact_center.voicebot_graph.intents import classify_global_navigation
+from vocode_contact_center.voicebot_graph.state import VoicebotGraphState, clone_state as clone_graph_state
 from vocode_contact_center.voicebot_graph.service import (
     VoicebotGraphService,
     VoicebotTurnResult,
@@ -38,36 +39,105 @@ You route a **banking-only** phone contact center. The freeform assistant is a
 (self-storage, retail, restaurants, travel, medical or legal advice, etc.).
 
 Choose exactly one action:
-- `answer_directly`: use when the caller should hear a conversational reply from
-  the banking assistant. Use this for **banking-related** or **in-scope** questions,
-  for clarifying what this line can do, and **when the caller goes off-topic** so
-  the assistant can politely say this is a banking bot and steer back to banking
-  services. If a graph workflow is active but the caller switches to a new
-  in-scope general question, use this to leave the workflow and answer. If the
-  caller is clearly **not** answering the current graph prompt (e.g. random
-  off-topic request while being asked for a name), use `answer_directly` so the
-  banking assistant can redirect.
+- `answer_directly`: use when **mode is generic** and the caller should hear a
+  conversational reply, including off-topic **banking-only** steering. When **mode
+  is graph**, avoid this action unless the structured-flow context explicitly
+  says the step is finished and a generic reply is appropriate.
 - `enter_graph_flow`: use when the caller wants a structured workflow: information
   lookup, registration, login/account support, announcements, or feedback/contact
   handling—all **banking** contact center flows.
-- `continue_graph`: use only when a graph workflow is already active and the caller
-  is **plausibly** continuing that workflow (answering the asked field, picking a
-  menu option, or confirming a banking-related step).
-- `escape_to_generic`: use only when a graph workflow is active and the caller
-  wants to cancel, start over, or return to general conversation without a new
-  substantive question. When you use this action, provide a brief plain-speech
-  `response_text`.
+- `continue_graph`: use when **mode is graph** and the caller is **plausibly**
+  continuing the active workflow: answering a requested field (including noisy,
+  partial, or split phrases), picking a menu option, confirming a step, or
+  repeating or clarifying within the same step. **Default to this** when a field
+  is being collected or a structured menu is shown, even if the transcript is
+  imperfect.
+- `escape_to_generic`: use when **mode is graph** and the caller clearly wants to
+  cancel, start over, or leave the workflow without answering the current step
+  (e.g. never mind, main menu, stop). When you use this action, provide a brief
+  plain-speech `response_text`.
 
 Rules:
 - Keep `response_text` empty unless the action is `answer_directly` only when you
   want to bias the downstream banking response, or `escape_to_generic`.
-- Prefer `enter_graph_flow` for structured banking operations.
-- Prefer `answer_directly` for off-topic or out-of-domain requests so the caller
-  gets an explicit **banking-only** correction, not a made-up answer about the
-  other topic.
-- Prefer `continue_graph` only when the utterance fits the current banking step.
+- Prefer `enter_graph_flow` for new structured banking operations when mode is generic.
+- Prefer `continue_graph` whenever the structured-flow context shows an active
+  collection step or menu, unless the caller is clearly exiting via cancel/main menu.
+- Prefer `answer_directly` for off-topic or out-of-domain requests **when mode is
+  generic** so the caller gets an explicit **banking-only** correction.
+- Follow the **Structured flow context** block when it conflicts with a loose
+  reading of the latest utterance.
 - Keep any provided `response_text` short, natural, and suitable for live voice.
 """.strip()
+
+STICKY_PENDING_AUTH_FIELDS: frozenset[str] = frozenset({"full_name", "phone_number"})
+STICKY_ACTIVE_MENUS: frozenset[str] = frozenset(
+    {
+        "root_intent",
+        "interaction_entry",
+        "info_selection",
+        "change_information",
+        "announcements_continue",
+        "announcements_terminal",
+        "feedback_question",
+        "feedback_terminal",
+        "registration_terminal",
+        "login_terminal",
+        "fail_terminal",
+    }
+)
+
+
+def _graph_snapshot_is_sticky(snap: VoicebotGraphState | dict[str, object] | None) -> bool:
+    if not snap:
+        return False
+    if snap.get("pending_auth_field") in STICKY_PENDING_AUTH_FIELDS:
+        return True
+    if snap.get("active_menu") in STICKY_ACTIVE_MENUS:
+        return True
+    return False
+
+
+def _structured_flow_context_from_graph(snap: VoicebotGraphState | dict[str, object] | None) -> str:
+    if not snap:
+        return "No in-memory graph session (caller is not in a committed structured workflow)."
+    lines = [
+        f"Graph active_menu={snap.get('active_menu')!r}",
+        f"Graph pending_auth_field={snap.get('pending_auth_field')!r}",
+        f"Graph interaction_context={snap.get('interaction_context')!r}",
+        f"Graph current_path={snap.get('current_path')!r}",
+    ]
+    pending = snap.get("pending_auth_field")
+    if pending:
+        lines.append(
+            "Structured step is active: prefer continue_graph so the graph can interpret the "
+            f"utterance against the pending field {pending!r} (including STT noise or partial answers), "
+            "unless the caller is clearly asking to cancel or return to the main menu."
+        )
+    elif snap.get("active_menu") in STICKY_ACTIVE_MENUS:
+        lines.append(
+            "Structured menu or terminal is active: prefer continue_graph so the graph can "
+            "handle the utterance as a menu choice or follow-up unless the caller clearly cancels."
+        )
+    return "\n".join(lines)
+
+
+def _apply_sticky_route_override(
+    decision: HybridRouteDecision,
+    snap: VoicebotGraphState | dict[str, object] | None,
+    user_text: str,
+) -> HybridRouteDecision:
+    if not _graph_snapshot_is_sticky(snap):
+        return decision
+    navigation = classify_global_navigation(user_text)
+    if navigation == "main_menu":
+        # Let escape_to_generic use the router's brief wording; only correct answer_directly.
+        if decision.action == HybridRouteAction.ANSWER_DIRECTLY:
+            return HybridRouteDecision(action=HybridRouteAction.CONTINUE_GRAPH)
+        return decision
+    if decision.action == HybridRouteAction.ANSWER_DIRECTLY:
+        return HybridRouteDecision(action=HybridRouteAction.CONTINUE_GRAPH)
+    return decision
 
 
 class HybridRouteAction(str, Enum):
@@ -102,6 +172,7 @@ class HybridRoutePolicy(Protocol):
         *,
         state: HybridSessionState,
         latest_user_input: str,
+        structured_flow_context: str = "",
     ) -> HybridRouteDecision:
         ...
 
@@ -138,7 +209,8 @@ class LangChainHybridRoutePolicy:
                     "Current mode: {mode}\n"
                     "Active graph menu: {active_graph_menu}\n"
                     "Last graph outcome: {last_graph_outcome}\n"
-                    "Allowed actions: {allowed_actions}",
+                    "Allowed actions: {allowed_actions}\n"
+                    "Structured flow context:\n{structured_flow_context}",
                 ),
                 ("system", "{call_context}"),
                 ("system", "{conversation_summary}"),
@@ -154,6 +226,7 @@ class LangChainHybridRoutePolicy:
         *,
         state: HybridSessionState,
         latest_user_input: str,
+        structured_flow_context: str = "",
     ) -> HybridRouteDecision:
         prompt_inputs = build_prompt_inputs_from_messages(
             state.history,
@@ -185,6 +258,7 @@ class LangChainHybridRoutePolicy:
                 "active_graph_menu": state.last_graph_menu or "none",
                 "last_graph_outcome": state.last_graph_outcome or "none",
                 "allowed_actions": allowed_actions,
+                "structured_flow_context": structured_flow_context or "(not provided)",
                 "latest_user_input": latest_user_input,
             }
         )
@@ -254,6 +328,21 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
         )
         self._sessions: dict[str, HybridSessionState] = {}
 
+    async def _route_decision(
+        self,
+        *,
+        state: HybridSessionState,
+        user_text: str,
+    ) -> HybridRouteDecision:
+        graph_snap = self.graph_service.export_session(state.session_id)
+        ctx = _structured_flow_context_from_graph(graph_snap)
+        decision = await self.route_policy.decide(
+            state=state,
+            latest_user_input=user_text,
+            structured_flow_context=ctx,
+        )
+        return _apply_sticky_route_override(decision, graph_snap, user_text)
+
     async def run_turn(
         self,
         session_id: str,
@@ -268,10 +357,7 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
             call_context=call_context,
             metadata=metadata,
         )
-        decision = await self.route_policy.decide(
-            state=state,
-            latest_user_input=user_text,
-        )
+        decision = await self._route_decision(state=state, user_text=user_text)
 
         if state.mode == "graph":
             if decision.action == HybridRouteAction.ESCAPE_TO_GENERIC:
@@ -346,10 +432,7 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
             call_context=call_context,
             metadata=metadata,
         )
-        decision = await self.route_policy.decide(
-            state=state,
-            latest_user_input=user_text,
-        )
+        decision = await self._route_decision(state=state, user_text=user_text)
 
         if state.mode == "graph":
             if decision.action == HybridRouteAction.ESCAPE_TO_GENERIC:

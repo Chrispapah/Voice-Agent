@@ -123,6 +123,44 @@ def test_registration_rejects_transcriber_echo_of_bot_prompt_as_name():
     assert "full_name" not in bad.state_snapshot.get("collected_data", {})
 
 
+def test_registration_accepts_split_first_and_last_name_in_two_turns():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+    asyncio.run(service.run_turn("split-name", "I want to register", call_context="test"))
+    asyncio.run(
+        service.run_turn("split-name", "First name, Christos", call_context="test")
+    )
+    third = asyncio.run(
+        service.run_turn("split-name", "Last name, Pappas", call_context="test")
+    )
+    assert third.state_snapshot["pending_auth_field"] == "phone_number"
+    assert third.state_snapshot["conversation_memory"]["full_name"] == "christos pappas"
+
+
+def test_registration_accepts_first_and_last_name_in_one_utterance():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+    asyncio.run(service.run_turn("one-utt-name", "I want to register", call_context="test"))
+    second = asyncio.run(
+        service.run_turn(
+            "one-utt-name",
+            "First name Jane last name Smith",
+            call_context="test",
+        )
+    )
+    assert second.state_snapshot["pending_auth_field"] == "phone_number"
+    assert second.state_snapshot["conversation_memory"]["full_name"] == "jane smith"
+
+
+def test_registration_full_name_step_reprompts_on_other_keyword_instead_of_main_menu():
+    service = VoicebotGraphService(make_settings())
+    asyncio.run(service.run_turn("reg-other", "I want to register", call_context="test"))
+    second = asyncio.run(service.run_turn("reg-other", "other", call_context="test"))
+    assert second.state_snapshot["pending_auth_field"] == "full_name"
+    assert second.active_menu is None
+    assert second.state_snapshot["current_path"] == "interaction"
+
+
 def test_registration_reprompts_when_full_name_is_greeting_or_filler():
     sms_sender = FakeSmsSender()
     service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
