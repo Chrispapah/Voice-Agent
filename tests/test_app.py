@@ -150,33 +150,7 @@ def test_healthz_reports_streaming_requirement_and_latency_endpoint_is_available
     assert latency_payload["active_conversations"] == 0
 
 
-def test_build_conversation_orchestrator_can_select_llm_service(monkeypatch):
-    captured = {}
-
-    class FakeLLMOrchestrator:
-        def __init__(self, settings, *, sms_sender=None):
-            captured["settings"] = settings
-            captured["sms_sender"] = sms_sender
-
-    monkeypatch.setattr(
-        "vocode_contact_center.app.LLMConversationOrchestratorService",
-        FakeLLMOrchestrator,
-    )
-
-    orchestrator = build_conversation_orchestrator(
-        ContactCenterSettings(
-            conversation_orchestrator="llm_orchestrator",
-            langchain_provider="openai",
-            openai_api_key="openai",
-        )
-    )
-
-    assert isinstance(orchestrator, FakeLLMOrchestrator)
-    assert captured["settings"].conversation_orchestrator == "llm_orchestrator"
-    assert captured["sms_sender"] is not None
-
-
-def test_build_conversation_orchestrator_can_select_hybrid_service(monkeypatch):
+def test_build_conversation_orchestrator_uses_hybrid_service(monkeypatch):
     captured = {}
 
     class FakeHybridOrchestrator:
@@ -191,14 +165,12 @@ def test_build_conversation_orchestrator_can_select_hybrid_service(monkeypatch):
 
     orchestrator = build_conversation_orchestrator(
         ContactCenterSettings(
-            conversation_orchestrator="hybrid",
             langchain_provider="openai",
             openai_api_key="openai",
         )
     )
 
     assert isinstance(orchestrator, FakeHybridOrchestrator)
-    assert captured["settings"].conversation_orchestrator == "hybrid"
     assert captured["sms_sender"] is not None
 
 

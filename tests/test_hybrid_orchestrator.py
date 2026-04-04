@@ -11,7 +11,6 @@ from vocode_contact_center.voicebot_graph.adapters.base import SmsRequest, SmsRe
 
 def make_settings() -> ContactCenterSettings:
     return ContactCenterSettings(
-        conversation_orchestrator="hybrid",
         langchain_provider="openai",
         openai_api_key="openai",
         sms_default_region="US",

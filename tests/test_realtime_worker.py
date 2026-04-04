@@ -3,6 +3,7 @@ import asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from vocode_contact_center.orchestration.models import ConversationTurnResult
 from vocode_contact_center.realtime_worker import (
     RealtimeSessionCreateRequest,
     RealtimeSessionManager,
@@ -45,6 +46,75 @@ class FakeTTS:
 
     async def cancel_current_utterance(self) -> None:
         self.cancel_calls += 1
+
+
+class FakeHybridOrchestrator:
+    """Deterministic stand-in for HybridConversationOrchestratorService in unit tests."""
+
+    _menu_reply = (
+        "I can help with store information, product information, or something else. "
+        "Which would you like?"
+    )
+
+    async def run_turn(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        call_context: str,
+        metadata: dict[str, str] | None = None,
+        commit: bool = True,
+    ) -> ConversationTurnResult:
+        return ConversationTurnResult(
+            text=self._menu_reply,
+            final_outcome=None,
+            active_menu="information",
+            menu_options=["store", "products", "other"],
+            artifacts={},
+            adapter_results={},
+            state_snapshot={},
+        )
+
+    async def preview_turn(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        call_context: str,
+        metadata: dict[str, str] | None = None,
+    ) -> ConversationTurnResult:
+        return await self.run_turn(
+            session_id,
+            user_text,
+            call_context=call_context,
+            metadata=metadata,
+            commit=False,
+        )
+
+    async def stream_text_response(self, text: str):
+        if not text:
+            return
+        for word in text.split():
+            yield word + " "
+
+    async def stream_generate_response(
+        self,
+        session_id: str,
+        user_text: str,
+        *,
+        call_context: str,
+        metadata: dict[str, str] | None = None,
+        commit: bool = True,
+    ):
+        result = await self.run_turn(
+            session_id,
+            user_text,
+            call_context=call_context,
+            metadata=metadata,
+            commit=commit,
+        )
+        async for token in self.stream_text_response(result.text):
+            yield token
 
 
 def make_settings(**overrides) -> ContactCenterSettings:
@@ -173,12 +243,13 @@ def test_realtime_voice_session_interrupts_and_restarts_on_barge_in():
     assert sum(event["type"] == "assistant_response_started" for event in captured_events) >= 2
 
 
-def test_realtime_manager_default_voicebot_llm_uses_state_graph():
+def test_realtime_manager_default_voicebot_llm_uses_hybrid_orchestrator():
     captured_events = []
     settings = make_settings()
     manager = RealtimeSessionManager(
         settings,
         tts_factory=FakeTTS,
+        conversation_orchestrator=FakeHybridOrchestrator(),
     )
     session_response = manager.create_session(RealtimeSessionCreateRequest(call_context="Realtime"))
     session = manager._sessions[session_response.session_id]

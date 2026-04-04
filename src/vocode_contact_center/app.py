@@ -27,7 +27,6 @@ from vocode_contact_center.latency_tracker import conversation_latency_tracker
 from vocode_contact_center.orchestration import (
     ConversationOrchestrator,
     HybridConversationOrchestratorService,
-    LLMConversationOrchestratorService,
 )
 from vocode_contact_center.realtime_worker import (
     RealtimeSessionManager,
@@ -38,8 +37,6 @@ from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.telephony_server import LatencyTrackingTelephonyServer
 from vocode_contact_center.voicebot_graph.adapters.stub import StubSmsSender
 from vocode_contact_center.voicebot_graph.adapters.twilio_sms import TwilioSmsSender
-from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
-
 load_dotenv()
 configure_pretty_logging()
 
@@ -163,12 +160,7 @@ def build_conversation_orchestrator(
     settings: ContactCenterSettings,
 ) -> ConversationOrchestrator:
     sms_sender = build_sms_sender(settings)
-    orchestrator_name = settings.conversation_orchestrator.strip().lower()
-    if orchestrator_name == "llm_orchestrator":
-        return LLMConversationOrchestratorService(settings, sms_sender=sms_sender)
-    if orchestrator_name == "hybrid":
-        return HybridConversationOrchestratorService(settings, sms_sender=sms_sender)
-    return VoicebotGraphService(settings, sms_sender=sms_sender)
+    return HybridConversationOrchestratorService(settings, sms_sender=sms_sender)
 
 
 def build_sms_sender(settings: ContactCenterSettings):
@@ -242,7 +234,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "realtime_input_mode": settings.realtime_input_mode,
             "missing_realtime_values": app.state.missing_realtime_values,
             "stt_note": "Vocode docs support ElevenLabs for TTS, not STT/transcriber.",
-            "conversation_orchestrator": settings.conversation_orchestrator,
+            "conversation_orchestrator": "hybrid",
             "sms_adapter_mode": settings.sms_adapter_mode,
             "missing_sms_values": settings.missing_sms_values(),
         }
