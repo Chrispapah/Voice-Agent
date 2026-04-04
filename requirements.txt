@@ -6,6 +6,7 @@ langchain-openai==0.1.25
 loguru
 phonenumbers
 pydantic-settings
+pypdf
 pyngrok
 python-dotenv
 redis

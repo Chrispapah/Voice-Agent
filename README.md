@@ -78,6 +78,7 @@ Optional:
 
 - set `TRANSFER_PHONE_NUMBER` if you want to reserve a value for future live transfer logic
 - set `REDIS_URL` if your platform provides Redis as a single connection string
+- set `INFORMATION_PRODUCTS_PDF_PATH` to a local PDF file, or `INFORMATION_PRODUCTS_PDF_URL` to a hosted PDF, if you want the LangGraph information flow to answer product questions from that document
 
 ## 4. Run The App
 
@@ -179,6 +180,10 @@ You can tune:
 
 If you want CRM tools, RAG, appointment booking, or human escalation, extend the
 LangChain pipeline in `src/vocode_contact_center/langchain_support.py`.
+
+The information flow can now answer product questions directly from a configured PDF.
+Point `INFORMATION_PRODUCTS_PDF_PATH` at a local file or `INFORMATION_PRODUCTS_PDF_URL`
+at a public PDF, then callers can choose `products` and ask follow-up product questions.
 
 ## 9. Current Limitations
 
