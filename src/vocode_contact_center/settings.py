@@ -68,8 +68,9 @@ class ContactCenterSettings(BaseSettings):
 
     agent_name: str = "AI Contact Center"
     agent_initial_message: str = (
-        "Thanks for calling. I can help with general information, account support like registration "
-        "or login, the latest announcements, or feedback and contact options. What would you like help with today?"
+        "Thanks for calling your bank. I'm a banking assistant on this line. I can help with general "
+        "banking information, account support like registration or login, announcements, or feedback "
+        "and contact options. What would you like help with today?"
     )
     agent_prompt_preamble: str = DEFAULT_AGENT_PROMPT
     transfer_phone_number: str | None = None
