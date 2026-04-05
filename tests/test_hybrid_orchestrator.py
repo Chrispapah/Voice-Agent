@@ -133,7 +133,8 @@ def test_hybrid_orchestrator_enters_and_continues_graph_flow():
     third = asyncio.run(
         service.run_turn("registration", "(415) 555-2671", call_context="test")
     )
-    assert third.active_menu == "registration_terminal"
+    assert third.active_menu == "authentication"
+    assert third.state_snapshot["pending_auth_field"] == "confirmation_code"
     assert third.state_snapshot["hybrid_mode"] == "graph"
     assert third.artifacts["sms_status"] == "sent"
     assert third.artifacts["sms_message_id"] == "SM999"

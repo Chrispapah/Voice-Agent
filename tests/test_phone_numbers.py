@@ -1,4 +1,8 @@
-from vocode_contact_center.phone_numbers import normalize_phone_number, parse_spoken_digit_sequence
+from vocode_contact_center.phone_numbers import (
+    extract_caller_e164_from_call_context,
+    normalize_phone_number,
+    parse_spoken_digit_sequence,
+)
 
 
 def test_normalize_phone_number_accepts_spoken_digits_with_default_region():
@@ -42,3 +46,62 @@ def test_normalize_phone_number_accepts_spoken_local_number_then_country_code_su
         )
         == "+306988039971"
     )
+
+
+def test_normalize_phone_number_accepts_country_code_then_phone_number_clause():
+    assert (
+        normalize_phone_number(
+            "Country code, plus thirty. Phone number, six nine eight eight zero three nine nine seven one.",
+            default_region="GR",
+        )
+        == "+306988039971"
+    )
+
+
+def test_normalize_phone_number_accepts_pass_homophone_as_plus_in_country_clause():
+    assert (
+        normalize_phone_number(
+            "Country code, pass thirty. Phone number, six nine eight eight zero three nine nine seven one.",
+            default_region="GR",
+        )
+        == "+306988039971"
+    )
+
+
+def test_normalize_phone_number_gr_maps_misheard_thirteen_to_thirty_in_country_clause():
+    assert (
+        normalize_phone_number(
+            "Country code, plus thirteen. Phone number, six nine eight eight zero three nine nine seven one.",
+            default_region="GR",
+        )
+        == "+306988039971"
+    )
+
+
+def test_normalize_phone_number_thirteen_country_code_unchanged_without_gr_region():
+    assert (
+        normalize_phone_number(
+            "Country code, plus thirteen. Phone number, six nine eight eight zero three nine nine seven one.",
+            default_region="US",
+        )
+        is None
+    )
+
+
+def test_normalize_phone_number_plus_thirty_six_still_invalid_without_extra_heuristic():
+    assert (
+        normalize_phone_number(
+            "Plus thirty six nine eight eight zero three nine nine seven one.",
+            default_region="GR",
+        )
+        is None
+    )
+
+
+def test_extract_caller_e164_from_sip_in_call_context():
+    ctx = "Live call metadata:\n- Caller number: sip:+306988039971@pbx.example.com\n"
+    assert extract_caller_e164_from_call_context(ctx) == "+306988039971"
+
+
+def test_extract_caller_e164_returns_none_when_missing():
+    assert extract_caller_e164_from_call_context("Live call metadata:\n- Caller metadata was not available\n") is None

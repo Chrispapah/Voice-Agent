@@ -303,7 +303,8 @@ def test_registration_reprompts_when_phone_number_is_invalid():
 
     assert third.active_menu is None
     assert third.state_snapshot["pending_auth_field"] == "phone_number"
-    assert "including the country code" in third.text.lower()
+    assert "did not sound valid" in third.text.lower()
+    assert "country code digit by digit" in third.text.lower()
     assert sms_sender.requests == []
 
 
