@@ -22,10 +22,14 @@ class ContactCenterSettings(BaseSettings):
     twilio_sms_from_number: str | None = None
     twilio_whatsapp_from_number: str | None = None
     twilio_messaging_service_sid: str | None = None
+    twilio_whatsapp_verification_template_sid: str | None = None
     sms_default_region: str | None = None
     registration_confirmation_sms_template: str = (
         "Hi {full_name}, your registration request has been confirmed. "
         "We'll follow up with the next steps shortly."
+    )
+    generic_follow_up_sms_template: str = (
+        "Hi {full_name}, here are your next steps. If you need more help, reply to this message or call us back."
     )
     redis_url: str | None = None
     nltk_auto_download: bool | None = None
@@ -205,6 +209,16 @@ class ContactCenterSettings(BaseSettings):
         if channel == "whatsapp":
             return self.twilio_whatsapp_from_number or self.twilio_sms_from_number
         return self.twilio_sms_from_number
+
+    def whatsapp_template_sid_for_context(
+        self,
+        context: str,
+    ) -> str | None:
+        if self.normalized_twilio_message_channel() != "whatsapp":
+            return None
+        if context in {"registration_confirmation", "registration_sms_confirmation"}:
+            return self.twilio_whatsapp_verification_template_sid
+        return None
 
     def normalized_base_url(self) -> str | None:
         candidate = self.base_url or self.railway_public_domain

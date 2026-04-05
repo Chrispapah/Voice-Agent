@@ -115,6 +115,15 @@ def build_voicebot_graph(
             schedule_background_sms=schedule_background_sms if defer_sms else None,
         )
 
+    async def run_interaction_terminal(state: VoicebotGraphState) -> VoicebotGraphState:
+        return await interaction.handle_terminal_menu(
+            state,
+            sms_sender,
+            settings,
+            defer_sms=defer_sms,
+            schedule_background_sms=schedule_background_sms if defer_sms else None,
+        )
+
     async def run_information(state: VoicebotGraphState) -> VoicebotGraphState:
         return await information.handle_information(state, settings, product_knowledge)
 
@@ -128,7 +137,7 @@ def build_voicebot_graph(
     builder.add_node("interaction_authenticate", run_authentication)
     builder.add_node("interaction_customer_input", interaction.collect_customer_input)
     builder.add_node("interaction_sms_confirmation", run_sms_confirmation)
-    builder.add_node("interaction_terminal", interaction.handle_terminal_menu)
+    builder.add_node("interaction_terminal", run_interaction_terminal)
     builder.add_node("announcements", lambda state: announcements.handle_announcements(state, settings))
     builder.add_node("announcements_genesys", run_announcements_genesys)
     builder.add_node("feedback", lambda state: feedback.handle_feedback(state, settings))

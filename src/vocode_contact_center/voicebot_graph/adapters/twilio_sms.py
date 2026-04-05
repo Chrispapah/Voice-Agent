@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import secrets
 
 from twilio.rest import Client
 
@@ -15,6 +17,7 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
 
 class TwilioSmsSender(SmsSender):
     def __init__(self, settings: ContactCenterSettings) -> None:
+        self._settings = settings
         self._client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
         self._channel = settings.normalized_twilio_message_channel()
         self._from_number = settings.twilio_outbound_from_number()
@@ -72,15 +75,26 @@ class TwilioSmsSender(SmsSender):
         )
 
     def _create_message(self, request: SmsRequest, normalized_phone_number: str):
-        payload = {
-            "to": self._format_recipient(normalized_phone_number),
-            "body": request.message,
-        }
+        payload = {"to": self._format_recipient(normalized_phone_number)}
+        template_sid = self._settings.whatsapp_template_sid_for_context(request.context)
+        if template_sid:
+            payload["content_sid"] = template_sid
+            payload["content_variables"] = json.dumps(
+                {"1": self._resolve_verification_code(request)}
+            )
+        else:
+            payload["body"] = request.message
         if self._messaging_service_sid:
             payload["messaging_service_sid"] = self._messaging_service_sid
         else:
             payload["from_"] = self._format_sender(self._from_number)
         return self._client.messages.create(**payload)
+
+    def _resolve_verification_code(self, request: SmsRequest) -> str:
+        code = (request.metadata or {}).get("verification_code")
+        if code:
+            return str(code)
+        return f"{secrets.randbelow(1_000_000):06d}"
 
     def _format_recipient(self, normalized_phone_number: str) -> str:
         if self._channel == "whatsapp":

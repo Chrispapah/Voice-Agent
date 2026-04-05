@@ -5,7 +5,10 @@ from collections.abc import Callable
 from loguru import logger
 
 from vocode_contact_center.settings import ContactCenterSettings
-from vocode_contact_center.sms import build_registration_confirmation_message
+from vocode_contact_center.sms import (
+    build_generic_follow_up_message,
+    build_registration_confirmation_message,
+)
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
     AuthenticationRequest,
@@ -498,7 +501,114 @@ async def sms_confirmation(
     }
 
 
-def handle_terminal_menu(state: VoicebotGraphState) -> VoicebotGraphState:
+async def _send_terminal_sms(
+    state: VoicebotGraphState,
+    sms_sender: SmsSender,
+    settings: ContactCenterSettings,
+    *,
+    final_outcome: str,
+    message: str,
+    success_response_text: str,
+    failure_response_text: str,
+    defer_sms: bool = False,
+    schedule_background_sms: Callable[[SmsRequest], None] | None = None,
+) -> VoicebotGraphState:
+    collected_data = dict(state.get("collected_data", {}))
+    conversation_memory = dict(state.get("conversation_memory", {}))
+    phone_number = (
+        collected_data.get("phone_number")
+        or conversation_memory.get("phone_number")
+        or ""
+    ).strip()
+    adapter_results = dict(state.get("adapter_results", {}))
+    artifacts = dict(state.get("artifacts", {}))
+
+    if not phone_number:
+        adapter_results["sms"] = {
+            "status": "failed",
+            "metadata": {
+                "provider": "application",
+                "error_message": "No phone number was available for the requested SMS.",
+            },
+        }
+        artifacts["sms_status"] = "failed"
+        return complete_path(
+            state,
+            response_text=(
+                "I couldn't send that message because I don't have a phone number on file yet."
+            ),
+            final_outcome=final_outcome,
+            artifacts=artifacts,
+        ) | {"adapter_results": adapter_results}
+
+    sms_request = SmsRequest(
+        session_id=state["session_id"],
+        recipient_phone_number=phone_number,
+        message=message,
+        context=final_outcome,
+        metadata=dict(state.get("metadata", {})),
+    )
+
+    if defer_sms and schedule_background_sms is not None:
+        schedule_background_sms(sms_request)
+        adapter_results["sms"] = {
+            "status": "pending",
+            "metadata": {
+                "provider": "deferred",
+                "note": "SMS send runs in the background after the verbal acknowledgment.",
+            },
+        }
+        artifacts["sms_status"] = "pending"
+        return complete_path(
+            state,
+            response_text=success_response_text,
+            final_outcome=final_outcome,
+            artifacts=artifacts,
+        ) | {"adapter_results": adapter_results}
+
+    sms_result = await sms_sender.send(sms_request)
+    adapter_results["sms"] = {
+        "status": sms_result.status,
+        "metadata": {
+            **sms_result.metadata,
+            **(
+                {"provider_message_id": sms_result.provider_message_id}
+                if sms_result.provider_message_id
+                else {}
+            ),
+            **(
+                {"error_message": sms_result.error_message}
+                if sms_result.error_message
+                else {}
+            ),
+        },
+    }
+
+    if sms_result.status == "sent":
+        artifacts["sms_status"] = "sent"
+        if sms_result.provider_message_id:
+            artifacts["sms_message_id"] = sms_result.provider_message_id
+        response_text = success_response_text
+    else:
+        artifacts["sms_status"] = "failed"
+        response_text = failure_response_text
+
+    return complete_path(
+        state,
+        response_text=response_text,
+        final_outcome=final_outcome,
+        artifacts=artifacts,
+    ) | {"adapter_results": adapter_results}
+
+
+async def handle_terminal_menu(
+    state: VoicebotGraphState,
+    sms_sender: SmsSender,
+    settings: ContactCenterSettings,
+    *,
+    defer_sms: bool = False,
+    schedule_background_sms: Callable[[SmsRequest], None] | None = None,
+) -> VoicebotGraphState:
     menu_name = state.get("active_menu") or state.get("terminal_group") or "fail_terminal"
 
     if state.get("active_menu") != menu_name:
@@ -507,6 +617,40 @@ def handle_terminal_menu(state: VoicebotGraphState) -> VoicebotGraphState:
     choice = classify_terminal_choice(state.get("latest_user_input", ""), menu_name)
     if choice is None:
         return _prompt_for_terminal_menu(state, menu_name)
+
+    if choice == "registration_sms_confirmation":
+        return await _send_terminal_sms(
+            state,
+            sms_sender,
+            settings,
+            final_outcome=choice,
+            message=build_registration_confirmation_message(
+                settings,
+                dict(state.get("collected_data", {})) or dict(state.get("conversation_memory", {})),
+            ),
+            success_response_text="I've sent the registration confirmation message.",
+            failure_response_text=(
+                "I couldn't send the registration confirmation message just yet."
+            ),
+            defer_sms=defer_sms,
+            schedule_background_sms=schedule_background_sms,
+        )
+
+    if choice == "generic_sms":
+        return await _send_terminal_sms(
+            state,
+            sms_sender,
+            settings,
+            final_outcome=choice,
+            message=build_generic_follow_up_message(
+                settings,
+                dict(state.get("collected_data", {})) or dict(state.get("conversation_memory", {})),
+            ),
+            success_response_text="I've sent a follow-up message with the next steps.",
+            failure_response_text="I couldn't send the follow-up message just yet.",
+            defer_sms=defer_sms,
+            schedule_background_sms=schedule_background_sms,
+        )
 
     response_text = terminal_response_text(menu_name, choice)
     return complete_path(
