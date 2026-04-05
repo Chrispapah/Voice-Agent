@@ -54,9 +54,10 @@ class DisabledRealtimeSessionManager:
         )
 
 
-def ensure_nltk_resources() -> None:
+def ensure_nltk_resources(settings: ContactCenterSettings) -> list[str]:
     # Vocode's ElevenLabs synthesizer uses NLTK tokenization for message cutoff logic.
-    # Railway images start empty, so make sure the required tokenizers exist before calls.
+    # Avoid downloading these on Railway request-serving startup, which can cause cold-start
+    # timeouts for inbound Twilio webhooks. Pre-bake them in the image or opt in explicitly.
     import nltk
     from nltk.data import find
 
@@ -65,12 +66,44 @@ def ensure_nltk_resources() -> None:
         ("tokenizers/punkt_tab/english", "punkt_tab"),
     )
 
+    missing_resources: list[str] = []
     for resource_path, download_name in required_resources:
         try:
             find(resource_path)
         except LookupError:
-            logger.info("Downloading NLTK resource: {}", download_name)
-            nltk.download(download_name, quiet=True)
+            missing_resources.append(download_name)
+
+    if not missing_resources:
+        return []
+
+    if not settings.should_auto_download_nltk():
+        logger.warning(
+            "NLTK resources missing at startup and auto-download is disabled: {}. "
+            "Voice webhook cold starts stay fast, but the synthesizer may need these resources preinstalled.",
+            ", ".join(missing_resources),
+        )
+        return missing_resources
+
+    unresolved_resources: list[str] = []
+    for download_name in missing_resources:
+        logger.info("Downloading NLTK resource: {}", download_name)
+        download_succeeded = bool(nltk.download(download_name, quiet=True))
+        try:
+            if download_name == "punkt":
+                find("tokenizers/punkt")
+            else:
+                find("tokenizers/punkt_tab/english")
+        except LookupError:
+            download_succeeded = False
+        if not download_succeeded:
+            unresolved_resources.append(download_name)
+
+    if unresolved_resources:
+        logger.warning(
+            "NLTK resources are still unavailable after startup download attempt: {}",
+            ", ".join(unresolved_resources),
+        )
+    return unresolved_resources
 
 
 def apply_runtime_env(settings: ContactCenterSettings) -> None:
@@ -181,7 +214,7 @@ def build_sms_sender(settings: ContactCenterSettings):
 def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     settings = settings or ContactCenterSettings()
     apply_runtime_env(settings)
-    ensure_nltk_resources()
+    missing_nltk_resources = ensure_nltk_resources(settings)
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
     conversation_orchestrator = build_conversation_orchestrator(settings)
@@ -207,6 +240,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     app.state.realtime_manager = realtime_manager
     app.state.realtime_ready = realtime_ready
     app.state.missing_realtime_values = [] if realtime_ready else realtime_missing
+    app.state.missing_nltk_resources = missing_nltk_resources
     app.include_router(
         create_realtime_router(
             settings,
@@ -238,6 +272,8 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "sms_adapter_mode": settings.sms_adapter_mode,
             "twilio_message_channel": settings.normalized_twilio_message_channel(),
             "missing_sms_values": settings.missing_sms_values(),
+            "nltk_auto_download": settings.should_auto_download_nltk(),
+            "missing_nltk_resources": app.state.missing_nltk_resources,
         }
 
     @app.get("/latencyz")

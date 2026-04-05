@@ -28,6 +28,7 @@ class ContactCenterSettings(BaseSettings):
         "We'll follow up with the next steps shortly."
     )
     redis_url: str | None = None
+    nltk_auto_download: bool | None = None
 
     deepgram_api_key: str | None = None
     deepgram_model: str = "nova-2"
@@ -216,6 +217,11 @@ class ContactCenterSettings(BaseSettings):
         if not base_url:
             return None
         return f"https://{base_url}/inbound_call"
+
+    def should_auto_download_nltk(self) -> bool:
+        if self.nltk_auto_download is not None:
+            return self.nltk_auto_download
+        return not bool(self.railway_public_domain or os.environ.get("RAILWAY_ENVIRONMENT"))
 
     def apply_redis_env(self) -> None:
         if not self.redis_url:
