@@ -5,6 +5,7 @@ import secrets
 
 from loguru import logger
 
+from vocode_contact_center.phone_numbers import parse_spoken_digit_sequence
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.sms import (
     build_generic_follow_up_message,
@@ -216,6 +217,13 @@ def _digits_only(text: str) -> str:
     return "".join(ch for ch in text if ch.isdigit())
 
 
+def _normalize_confirmation_code(text: str) -> str:
+    digits = _digits_only(text)
+    if digits:
+        return digits
+    return parse_spoken_digit_sequence(text)
+
+
 def _generate_verification_code() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
@@ -368,7 +376,7 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
             return partial
 
     if pending_field == "confirmation_code":
-        provided_code = _digits_only(state.get("latest_user_input", ""))
+        provided_code = _normalize_confirmation_code(state.get("latest_user_input", ""))
         expected_code = _digits_only(dict(state.get("collected_data", {})).get("expected_verification_code", ""))
         if not expected_code:
             return {

@@ -46,6 +46,10 @@ _TENS_WORDS = {
 }
 
 
+def parse_spoken_digit_sequence(raw_text: str) -> str:
+    return _parse_spoken_numeric_sequence(raw_text, allow_plus=False)
+
+
 def normalize_phone_number(
     raw_phone_number: str,
     *,
@@ -100,7 +104,11 @@ def _clean_phone_number(raw_phone_number: str) -> str:
 
 
 def _parse_spoken_phone_number(raw_phone_number: str) -> str:
-    tokens = re.findall(r"[a-zA-Z]+|\+", raw_phone_number.lower())
+    return _parse_spoken_numeric_sequence(raw_phone_number, allow_plus=True)
+
+
+def _parse_spoken_numeric_sequence(raw_text: str, *, allow_plus: bool) -> str:
+    tokens = re.findall(r"[a-zA-Z]+|\+", raw_text.lower())
     if not tokens:
         return ""
 
@@ -109,12 +117,12 @@ def _parse_spoken_phone_number(raw_phone_number: str) -> str:
     while idx < len(tokens):
         token = tokens[idx]
         if token == "+":
-            if not pieces:
+            if allow_plus and not pieces:
                 pieces.append("+")
             idx += 1
             continue
         if token in {"plus"}:
-            if not pieces:
+            if allow_plus and not pieces:
                 pieces.append("+")
             idx += 1
             continue
