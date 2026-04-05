@@ -16,7 +16,8 @@ from vocode_contact_center.voicebot_graph.adapters.base import (
 class TwilioSmsSender(SmsSender):
     def __init__(self, settings: ContactCenterSettings) -> None:
         self._client = Client(settings.twilio_account_sid, settings.twilio_auth_token)
-        self._from_number = settings.twilio_sms_from_number
+        self._channel = settings.normalized_twilio_message_channel()
+        self._from_number = settings.twilio_outbound_from_number()
         self._messaging_service_sid = settings.twilio_messaging_service_sid
         self._default_region = settings.sms_default_region
         self._timeout = max(1.0, float(settings.twilio_sms_timeout_seconds))
@@ -55,7 +56,7 @@ class TwilioSmsSender(SmsSender):
                 metadata={"provider": "twilio"},
             )
 
-        metadata = {"provider": "twilio"}
+        metadata = {"provider": "twilio", "channel": self._channel}
         provider_status = getattr(message, "status", None)
         if provider_status:
             metadata["provider_status"] = str(provider_status)
@@ -72,11 +73,23 @@ class TwilioSmsSender(SmsSender):
 
     def _create_message(self, request: SmsRequest, normalized_phone_number: str):
         payload = {
-            "to": normalized_phone_number,
+            "to": self._format_recipient(normalized_phone_number),
             "body": request.message,
         }
         if self._messaging_service_sid:
             payload["messaging_service_sid"] = self._messaging_service_sid
         else:
-            payload["from_"] = self._from_number
+            payload["from_"] = self._format_sender(self._from_number)
         return self._client.messages.create(**payload)
+
+    def _format_recipient(self, normalized_phone_number: str) -> str:
+        if self._channel == "whatsapp":
+            return f"whatsapp:{normalized_phone_number}"
+        return normalized_phone_number
+
+    def _format_sender(self, from_number: str | None) -> str | None:
+        if from_number is None:
+            return None
+        if self._channel == "whatsapp" and not from_number.startswith("whatsapp:"):
+            return f"whatsapp:{from_number}"
+        return from_number

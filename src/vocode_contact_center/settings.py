@@ -18,7 +18,9 @@ class ContactCenterSettings(BaseSettings):
     twilio_auth_token: str | None = None
     twilio_sip_domain: str | None = None
     sms_adapter_mode: str = "stub"
+    twilio_message_channel: str = "sms"
     twilio_sms_from_number: str | None = None
+    twilio_whatsapp_from_number: str | None = None
     twilio_messaging_service_sid: str | None = None
     sms_default_region: str | None = None
     registration_confirmation_sms_template: str = (
@@ -180,10 +182,28 @@ class ContactCenterSettings(BaseSettings):
             if not value:
                 missing.append(key)
 
-        if not self.twilio_sms_from_number and not self.twilio_messaging_service_sid:
-            missing.append("TWILIO_SMS_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID")
+        if not self.twilio_outbound_from_number() and not self.twilio_messaging_service_sid:
+            channel = self.normalized_twilio_message_channel()
+            if channel == "whatsapp":
+                missing.append(
+                    "TWILIO_WHATSAPP_FROM_NUMBER or TWILIO_SMS_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID"
+                )
+            else:
+                missing.append("TWILIO_SMS_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID")
 
         return missing
+
+    def normalized_twilio_message_channel(self) -> str:
+        channel = self.twilio_message_channel.strip().lower()
+        if channel in {"sms", "whatsapp"}:
+            return channel
+        return "sms"
+
+    def twilio_outbound_from_number(self) -> str | None:
+        channel = self.normalized_twilio_message_channel()
+        if channel == "whatsapp":
+            return self.twilio_whatsapp_from_number or self.twilio_sms_from_number
+        return self.twilio_sms_from_number
 
     def normalized_base_url(self) -> str | None:
         candidate = self.base_url or self.railway_public_domain

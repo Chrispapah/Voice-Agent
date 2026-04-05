@@ -236,6 +236,7 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "stt_note": "Vocode docs support ElevenLabs for TTS, not STT/transcriber.",
             "conversation_orchestrator": "hybrid",
             "sms_adapter_mode": settings.sms_adapter_mode,
+            "twilio_message_channel": settings.normalized_twilio_message_channel(),
             "missing_sms_values": settings.missing_sms_values(),
         }
 
