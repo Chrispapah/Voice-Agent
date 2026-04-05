@@ -86,6 +86,13 @@ def _clean_phone_number(raw_phone_number: str) -> str:
     if not candidate:
         return ""
 
+    explicit_country_code = _extract_spoken_country_code_suffix(candidate)
+    if explicit_country_code is not None:
+        local_part = candidate.lower().split("country code", 1)[0]
+        local_number = _parse_spoken_numeric_sequence(local_part, allow_plus=False)
+        if local_number:
+            return f"{explicit_country_code}{local_number}"
+
     candidate = candidate.replace("plus", "+")
     if candidate.startswith("00"):
         candidate = f"+{candidate[2:]}"
@@ -105,6 +112,20 @@ def _clean_phone_number(raw_phone_number: str) -> str:
 
 def _parse_spoken_phone_number(raw_phone_number: str) -> str:
     return _parse_spoken_numeric_sequence(raw_phone_number, allow_plus=True)
+
+
+def _extract_spoken_country_code_suffix(raw_text: str) -> str | None:
+    lowered = raw_text.lower()
+    marker = "country code"
+    if marker not in lowered:
+        return None
+    suffix = lowered.split(marker, 1)[1].strip(" ,.:;")
+    if not suffix:
+        return None
+    parsed_suffix = _parse_spoken_numeric_sequence(suffix, allow_plus=True)
+    if parsed_suffix.startswith("+") and len(parsed_suffix) > 1:
+        return parsed_suffix
+    return None
 
 
 def _parse_spoken_numeric_sequence(raw_text: str, *, allow_plus: bool) -> str:
