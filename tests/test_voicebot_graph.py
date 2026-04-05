@@ -166,6 +166,32 @@ def test_registration_path_loops_through_customer_input_then_sms_then_terminal_m
         service.run_turn("registration", "sms confirmation", call_context="test")
     )
     assert fourth.final_outcome == "registration_sms_confirmation"
+    assert fourth.artifacts["sms_status"] == "sent"
+    assert fourth.artifacts["sms_message_id"] == "SM123"
+    assert sms_sender.requests[1].context == "registration_sms_confirmation"
+
+
+def test_registration_terminal_generic_sms_sends_follow_up_message():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+
+    asyncio.run(service.run_turn("registration-generic", "I want to register", call_context="test"))
+    asyncio.run(service.run_turn("registration-generic", "Chris Example", call_context="test"))
+    third = asyncio.run(
+        service.run_turn("registration-generic", "(415) 555-2671", call_context="test")
+    )
+
+    assert third.active_menu == "registration_terminal"
+
+    fourth = asyncio.run(
+        service.run_turn("registration-generic", "generic sms", call_context="test")
+    )
+
+    assert fourth.final_outcome == "generic_sms"
+    assert fourth.artifacts["sms_status"] == "sent"
+    assert fourth.artifacts["sms_message_id"] == "SM123"
+    assert sms_sender.requests[1].context == "generic_sms"
+    assert "next steps" in sms_sender.requests[1].message.lower()
 
 
 def test_registration_sms_failure_is_truthful_in_graph_flow():
@@ -371,6 +397,27 @@ def test_login_failure_routes_to_fallback_terminal_menu():
 
     fourth = asyncio.run(service.run_turn("login", "communication", call_context="test"))
     assert fourth.final_outcome == "communication"
+
+
+def test_fail_terminal_generic_sms_uses_memory_phone_number():
+    sms_sender = FakeSmsSender()
+    service = VoicebotGraphService(make_settings(), sms_sender=sms_sender)
+
+    asyncio.run(service.run_turn("login-generic", "login", call_context="test"))
+    asyncio.run(service.run_turn("login-generic", "invalid-account", call_context="test"))
+    service._sessions["login-generic"]["conversation_memory"] = {
+        "full_name": "chris example",
+        "phone_number": "+14155552671",
+    }
+    third = asyncio.run(service.run_turn("login-generic", "secret hint", call_context="test"))
+
+    assert third.active_menu == "fail_terminal"
+
+    fourth = asyncio.run(service.run_turn("login-generic", "generic sms", call_context="test"))
+
+    assert fourth.final_outcome == "generic_sms"
+    assert fourth.artifacts["sms_status"] == "sent"
+    assert sms_sender.requests[-1].recipient_phone_number == "+14155552671"
 
 
 def test_announcements_path_calls_genesys_then_offers_terminal_choices():
