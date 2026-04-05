@@ -215,6 +215,15 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     settings = settings or ContactCenterSettings()
     apply_runtime_env(settings)
     missing_nltk_resources = ensure_nltk_resources(settings)
+    logger.info(
+        "create_app initialized base_url_candidate={} railway_public_domain={} realtime_enabled={} sms_adapter_mode={} twilio_message_channel={} missing_nltk_resources={}",
+        settings.normalized_base_url(),
+        settings.railway_public_domain,
+        settings.realtime_enabled,
+        settings.sms_adapter_mode,
+        settings.normalized_twilio_message_channel(),
+        missing_nltk_resources,
+    )
 
     app = FastAPI(title="Vocode AI Contact Center", version="0.1.0")
     conversation_orchestrator = build_conversation_orchestrator(settings)
@@ -290,6 +299,35 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
     app.state.missing_runtime_values = missing
     app.state.telephony_enabled = not missing
     app.state.public_base_url = base_url
+    logger.info(
+        "App readiness preflight public_base_url={} telephony_enabled={} missing_runtime_values={} missing_realtime_values={} missing_sms_values={}",
+        base_url,
+        app.state.telephony_enabled,
+        missing,
+        app.state.missing_realtime_values,
+        settings.missing_sms_values(),
+    )
+
+    @app.on_event("startup")
+    async def log_startup_readiness():
+        logger.info(
+            "Application startup complete telephony_enabled={} public_base_url={} inbound_call_url={} realtime_ready={} missing_runtime_values={} missing_nltk_resources={}",
+            app.state.telephony_enabled,
+            app.state.public_base_url,
+            settings.inbound_call_url(app.state.public_base_url),
+            app.state.realtime_ready,
+            app.state.missing_runtime_values,
+            app.state.missing_nltk_resources,
+        )
+
+    @app.on_event("shutdown")
+    async def log_shutdown_readiness():
+        logger.info(
+            "Application shutdown telephony_enabled={} public_base_url={} realtime_ready={}",
+            app.state.telephony_enabled,
+            app.state.public_base_url,
+            app.state.realtime_ready,
+        )
 
     if missing or not base_url:
         logger.warning(
@@ -310,6 +348,11 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
         ),
     )
     app.include_router(telephony_server.get_router())
+    logger.info(
+        "Telephony routes mounted inbound_call_url={} events_url=https://{}/events",
+        settings.inbound_call_url(app.state.public_base_url),
+        base_url,
+    )
 
     @app.get("/")
     async def root():
