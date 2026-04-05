@@ -18,6 +18,32 @@ from vocode_contact_center.latency_tracker import ConversationLatencyTracker
 from vocode_contact_center.settings import ContactCenterSettings
 
 
+def test_app_healthz_reports_missing_nltk_resources_without_downloading(monkeypatch):
+    monkeypatch.setattr(
+        "vocode_contact_center.app.ensure_nltk_resources",
+        lambda settings: ["punkt", "punkt_tab"],
+    )
+
+    app = create_app(
+        ContactCenterSettings(
+            railway_public_domain="demo-production.up.railway.app",
+            twilio_account_sid="sid",
+            twilio_auth_token="token",
+            deepgram_api_key="deepgram",
+            elevenlabs_api_key="eleven",
+            elevenlabs_voice_id="voice",
+            langchain_provider="openai",
+            openai_api_key="openai",
+        )
+    )
+
+    client = TestClient(app)
+    payload = client.get("/healthz").json()
+
+    assert payload["nltk_auto_download"] is False
+    assert payload["missing_nltk_resources"] == ["punkt", "punkt_tab"]
+
+
 def test_app_starts_in_degraded_mode_without_provider_keys():
     app = create_app(
         ContactCenterSettings(

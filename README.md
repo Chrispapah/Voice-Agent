@@ -80,6 +80,7 @@ Optional:
 - set `REDIS_URL` if your platform provides Redis as a single connection string
 - set `SMS_ADAPTER_MODE=twilio` to enable real outbound Twilio messaging
 - set `TWILIO_MESSAGE_CHANNEL=whatsapp` and `TWILIO_WHATSAPP_FROM_NUMBER=+14155238886` to test with the Twilio WhatsApp Sandbox, or use your approved WhatsApp sender number in production
+- set `NLTK_AUTO_DOWNLOAD=true` only for local/dev environments where startup downloads are acceptable; on Railway the app now avoids NLTK downloads by default to reduce Twilio webhook cold-start failures
 - set `INFORMATION_PRODUCTS_PDF_PATH` to a local PDF file, or `INFORMATION_PRODUCTS_PDF_URL` to a hosted PDF, if you want the LangGraph information flow to answer product questions from that document
 - set `INFORMATION_PRODUCTS_ANSWER_LANGUAGE` to the language you want spoken back to callers from product-PDF answers; for an English ElevenLabs voice, keep this as `English` even if the PDF itself is in Greek
 

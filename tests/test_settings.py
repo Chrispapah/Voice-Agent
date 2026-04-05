@@ -121,3 +121,15 @@ def test_missing_realtime_values_ignore_telephony_dependencies():
     )
 
     assert settings.missing_realtime_values() == []
+
+
+def test_nltk_auto_download_defaults_off_on_railway():
+    settings = ContactCenterSettings(railway_public_domain="demo-production.up.railway.app")
+
+    assert settings.should_auto_download_nltk() is False
+
+
+def test_nltk_auto_download_can_be_forced_on():
+    settings = ContactCenterSettings(nltk_auto_download=True)
+
+    assert settings.should_auto_download_nltk() is True
