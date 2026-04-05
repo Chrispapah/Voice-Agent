@@ -78,7 +78,10 @@ Optional:
 
 - set `TRANSFER_PHONE_NUMBER` if you want to reserve a value for future live transfer logic
 - set `REDIS_URL` if your platform provides Redis as a single connection string
+- set `SMS_ADAPTER_MODE=twilio` to enable real outbound Twilio messaging
+- set `TWILIO_MESSAGE_CHANNEL=whatsapp` and `TWILIO_WHATSAPP_FROM_NUMBER=+14155238886` to test with the Twilio WhatsApp Sandbox, or use your approved WhatsApp sender number in production
 - set `INFORMATION_PRODUCTS_PDF_PATH` to a local PDF file, or `INFORMATION_PRODUCTS_PDF_URL` to a hosted PDF, if you want the LangGraph information flow to answer product questions from that document
+- set `INFORMATION_PRODUCTS_ANSWER_LANGUAGE` to the language you want spoken back to callers from product-PDF answers; for an English ElevenLabs voice, keep this as `English` even if the PDF itself is in Greek
 
 ## 4. Run The App
 
@@ -184,6 +187,9 @@ LangChain pipeline in `src/vocode_contact_center/langchain_support.py`.
 The information flow can now answer product questions directly from a configured PDF.
 Point `INFORMATION_PRODUCTS_PDF_PATH` at a local file or `INFORMATION_PRODUCTS_PDF_URL`
 at a public PDF, then callers can choose `products` and ask follow-up product questions.
+If the PDF is Greek but your TTS voice is English, set `INFORMATION_PRODUCTS_ANSWER_LANGUAGE=English`
+so the LLM translates the answer before it reaches ElevenLabs. If you want Greek audio output instead,
+use a multilingual Greek-capable ElevenLabs voice and set the answer language to `Greek`.
 
 ## 9. Current Limitations
 
