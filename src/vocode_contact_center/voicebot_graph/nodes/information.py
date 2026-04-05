@@ -18,14 +18,14 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 
 
 INFO_MENU_PROMPT = (
-    "I can help with store information, product information, or something else. Which would you like?"
+    "I can help with the PeopleCert website, answers from our help document, or something else. Which would you like?"
 )
 CHANGE_INFORMATION_PROMPT = (
     "No problem. If you'd like, we can go back and choose a different type of information request."
 )
 PRODUCT_QUESTION_PROMPT = (
-    "I can answer product questions using our product PDF. What product would you like to know about? "
-    "You can also say change information to choose something else."
+    "I can answer questions from our configured PeopleCert help document. What would you like to know? "
+    "You can also say change information to pick another option."
 )
 
 
@@ -106,18 +106,18 @@ async def _handle_product_information_question(
             state,
             menu_name="info_selection",
             menu_options=["store", "products", "other"],
-            response_text="Of course. Would you like store information, product information, or something else?",
+            response_text=f"Of course. {INFO_MENU_PROMPT}",
         )
     if choice == "cancel":
         return complete_path(
             state,
-            response_text="That's fine. We can leave the product information there for now.",
+            response_text="That's fine. We can leave the document questions there for now.",
             final_outcome="information_cancelled",
         )
 
     result = await product_information.answer_question(state.get("latest_user_input", ""))
     follow_up = (
-        " You can ask about another product, or say change information to choose something else."
+        " You can ask another question, or say change information to choose something else."
     )
     return set_menu(
         state,
@@ -134,7 +134,7 @@ def _handle_change_information(state: VoicebotGraphState) -> VoicebotGraphState:
             state,
             menu_name="info_selection",
             menu_options=["store", "products", "other"],
-            response_text="Of course, let's try again. Would you like store information, product information, or something else?",
+            response_text=f"Of course, let's try again. {INFO_MENU_PROMPT}",
         )
     if choice == "cancel":
         return complete_path(

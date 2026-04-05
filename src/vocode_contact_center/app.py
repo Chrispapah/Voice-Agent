@@ -152,6 +152,7 @@ def build_agent_config(settings: ContactCenterSettings) -> AgentConfig:
         generate_responses=True,
         end_conversation_on_goodbye=True,
         interrupt_sensitivity="low",
+        allow_agent_to_be_cut_off=settings.allow_agent_to_be_cut_off,
     )
 
 
@@ -174,6 +175,7 @@ def build_inbound_call_config(settings: ContactCenterSettings) -> TwilioInboundC
             ),
             api_key=settings.deepgram_api_key,
             model=settings.deepgram_model,
+            mute_during_speech=settings.deepgram_mute_during_speech,
         ),
         synthesizer_config=ElevenLabsSynthesizerConfig.from_telephone_output_device(
             api_key=settings.elevenlabs_api_key,

@@ -50,16 +50,39 @@ def complete_path(
 
 
 def information_store_response(settings: ContactCenterSettings) -> tuple[str, dict[str, str]]:
+    primary = settings.information_store_website_url
+    artifacts: dict[str, str] = {
+        "website_url": primary,
+        "help_faq_url": settings.peoplecert_help_faq_url,
+        "olp_guidelines_windows_pdf": settings.peoplecert_olp_guidelines_pdf_windows_url,
+        "olp_guidelines_mac_pdf": settings.peoplecert_olp_guidelines_pdf_mac_url,
+        "take2_url": settings.peoplecert_take2_url,
+        "certificate_verification_url": settings.peoplecert_certificate_verification_url,
+        "corporate_membership_url": settings.peoplecert_corporate_membership_url,
+        "itil4_foundation_url": settings.peoplecert_itil4_foundation_url,
+    }
     return (
-        f"Sure, the easiest place to check store information is on our website: {settings.information_store_website_url}.",
-        {"website_url": settings.information_store_website_url},
+        (
+            f"For Online Proctored Exam help, start at {primary}. "
+            f"For FAQs, use {settings.peoplecert_help_faq_url}. "
+            f"Web proctored candidate guidelines: Windows PDF {settings.peoplecert_olp_guidelines_pdf_windows_url}, "
+            f"Mac PDF {settings.peoplecert_olp_guidelines_pdf_mac_url}. "
+            f"Take2: {settings.peoplecert_take2_url}. "
+            f"Certificate verification: {settings.peoplecert_certificate_verification_url}. "
+            f"Corporate membership: {settings.peoplecert_corporate_membership_url}. "
+            f"ITIL 4 Foundation: {settings.peoplecert_itil4_foundation_url}."
+        ),
+        artifacts,
     )
 
 
 def information_products_response(settings: ContactCenterSettings) -> tuple[str, dict[str, str]]:
+    url = (settings.information_products_pdf_url or "").strip()
+    if not url:
+        url = settings.peoplecert_olp_guidelines_pdf_windows_url
     return (
-        f"Of course. You can review the product details in this PDF: {settings.information_products_pdf_url}.",
-        {"pdf_reference": settings.information_products_pdf_url},
+        f"You can review the official document here: {url}. For Mac-specific steps, see {settings.peoplecert_olp_guidelines_pdf_mac_url}.",
+        {"pdf_reference": url, "olp_guidelines_mac_pdf": settings.peoplecert_olp_guidelines_pdf_mac_url},
     )
 
 
@@ -71,9 +94,10 @@ def terminal_response_text(menu_name: str, choice: str) -> str:
             "generic_sms": "Sure, I'll send a general SMS with the next steps.",
         },
         "login_terminal": {
-            "perform_login": "Great, I'll continue with the login process now.",
-            "update_balance": "Sure, let's move ahead with the balance update.",
-            "details": "Of course, I'll go over the account details next.",
+            "perform_login": "Great, I'll continue with sign-in now.",
+            "exam_booking_help": "I'll walk you through exams and booking on peoplecert.org next.",
+            "certificates_access": "I'll guide you to certificates and results in your account next.",
+            "profile_password": "I'll help with profile and password reset steps next.",
         },
         "fail_terminal": {
             "communication": "Of course, I'll move you to the general communication options.",

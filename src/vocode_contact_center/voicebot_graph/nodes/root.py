@@ -10,7 +10,8 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState, reset
 
 
 ROOT_MENU_PROMPT = (
-    "I can help with general information, account support, announcements, or feedback and contact options. Which one would you like to start with?"
+    "I can help with PeopleCert information from our website or documents, your account registration or sign-in, "
+    "announcements, or feedback and contact options. Which would you like?"
 )
 ROOT_MENU_OPTIONS = ["information", "interaction", "announcements", "feedback"]
 

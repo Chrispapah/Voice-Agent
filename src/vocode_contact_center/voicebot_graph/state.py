@@ -6,6 +6,13 @@ from typing import Any, TypedDict
 
 class VoicebotArtifacts(TypedDict, total=False):
     website_url: str
+    help_faq_url: str
+    olp_guidelines_windows_pdf: str
+    olp_guidelines_mac_pdf: str
+    take2_url: str
+    certificate_verification_url: str
+    corporate_membership_url: str
+    itil4_foundation_url: str
     pdf_reference: str
     product_source_pages: str
     sms_status: str
