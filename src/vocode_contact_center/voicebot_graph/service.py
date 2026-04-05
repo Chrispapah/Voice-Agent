@@ -87,6 +87,7 @@ class VoicebotGraphService:
             settings
         )
         self._session_lock = threading.Lock()
+        self._last_stream_had_llm_failure = False
         schedule_sms = None
         if settings.defer_sms_send_in_background and isinstance(self.sms_sender, TwilioSmsSender):
             schedule_sms = self._enqueue_background_sms
@@ -99,6 +100,10 @@ class VoicebotGraphService:
             schedule_background_sms=schedule_sms,
         )
         self._sessions: dict[str, VoicebotGraphState] = {}
+
+    @property
+    def last_stream_had_llm_failure(self) -> bool:
+        return self._last_stream_had_llm_failure
 
     def clear_session(self, session_id: str) -> None:
         with self._session_lock:
@@ -183,7 +188,26 @@ class VoicebotGraphService:
             state.get("pending_auth_field"),
             sorted(state.get("conversation_memory", {}).keys()),
         )
-        result_state = await self._graph.ainvoke(state)
+        try:
+            result_state = await self._graph.ainvoke(state)
+        except Exception:
+            logger.exception(
+                "Graph ainvoke failed session={} input={!r}",
+                session_id,
+                user_text,
+            )
+            fallback = (self.settings.llm_unavailable_spoken_message or "").strip() or (
+                "Sorry, something went wrong. Please try again in a moment."
+            )
+            return VoicebotTurnResult(
+                text=fallback,
+                final_outcome=None,
+                active_menu=None,
+                menu_options=[],
+                artifacts={},
+                adapter_results={},
+                state_snapshot=clone_state(state),
+            )
         logger.info(
             "Graph run_turn result session={} final_outcome={} active_menu={} next_route={} pending_auth_field={} conversation_memory_keys={}",
             session_id,
@@ -230,20 +254,34 @@ class VoicebotGraphService:
             state.get("active_menu"),
             state.get("pending_auth_field"),
         )
+        self._last_stream_had_llm_failure = False
         last_spoken = ""
         emit_buffer = ""
         final_state: VoicebotGraphState | None = None
-        async for values in self._graph.astream(state, stream_mode="values"):
-            final_state = values
-            spoken = spoken_preview_from_state(values)
-            last_spoken, delta = _spoken_delta(last_spoken, spoken)
-            if delta:
-                emit_buffer += delta
-                while True:
-                    emit_buffer, chunk = _take_flushed_spoken_buffer(emit_buffer, self.settings)
-                    if not chunk:
-                        break
-                    yield chunk
+        try:
+            async for values in self._graph.astream(state, stream_mode="values"):
+                final_state = values
+                spoken = spoken_preview_from_state(values)
+                last_spoken, delta = _spoken_delta(last_spoken, spoken)
+                if delta:
+                    emit_buffer += delta
+                    while True:
+                        emit_buffer, chunk = _take_flushed_spoken_buffer(emit_buffer, self.settings)
+                        if not chunk:
+                            break
+                        yield chunk
+        except Exception:
+            self._last_stream_had_llm_failure = True
+            logger.exception(
+                "Graph astream failed session={} input={!r}",
+                session_id,
+                user_text,
+            )
+            fallback = (self.settings.llm_unavailable_spoken_message or "").strip() or (
+                "Sorry, something went wrong. Please try again in a moment."
+            )
+            yield fallback
+            return
         if final_state is None:
             logger.warning("Graph stream ended with no state session={}", session_id)
             return

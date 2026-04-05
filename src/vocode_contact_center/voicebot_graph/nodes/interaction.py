@@ -732,13 +732,13 @@ async def handle_terminal_menu(
 def _prompt_for_terminal_menu(state: VoicebotGraphState, menu_name: str) -> VoicebotGraphState:
     prompts = {
         "registration_terminal": (
-            "You're all set to continue. I can complete the registration, send the registration SMS confirmation, or send a general SMS with the next steps. Which would you prefer?"
+            "You're all set. I can finish registration, resend the SMS confirmation, or send a general follow-up. Which do you want?"
         ),
         "login_terminal": (
-            "You're verified. I can continue with login, help with a balance update, or go over the account details. What would you like to do next?"
+            "You're verified. I can continue login, update a balance, or go over account details. Which one?"
         ),
         "fail_terminal": (
-            "It looks like authentication didn't fully complete. I can still help with general communication options, send an SMS, or share general details. Which would you like?"
+            "Sign-in didn't finish. I can help with contact options, send an SMS, or share general details. Which one?"
         ),
     }
     prefix = state.get("response_prefix", "")

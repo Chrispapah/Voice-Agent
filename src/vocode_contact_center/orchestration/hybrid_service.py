@@ -9,6 +9,7 @@ from typing import AsyncGenerator, Protocol
 
 from langchain.chat_models import init_chat_model
 from langchain_core.prompts import ChatPromptTemplate
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from vocode_contact_center.langchain_support import (
@@ -433,6 +434,41 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
             call_context=call_context,
             metadata=metadata,
         )
+        try:
+            async for chunk in self._stream_generate_response_body(
+                state=state,
+                session_id=session_id,
+                user_text=user_text,
+                call_context=call_context,
+                metadata=metadata,
+                commit=commit,
+            ):
+                yield chunk
+        except Exception:
+            logger.exception(
+                "Hybrid stream_generate_response failed session={} input={!r}",
+                session_id,
+                user_text,
+            )
+            fallback = (self.settings.llm_unavailable_spoken_message or "").strip() or (
+                "Sorry, please try again in a moment."
+            )
+            async for tok in self.stream_text_response(fallback):
+                yield tok
+            if commit:
+                next_state = deepcopy(state)
+                self._commit_state(next_state, user_text=user_text, response_text=fallback)
+
+    async def _stream_generate_response_body(
+        self,
+        *,
+        state: HybridSessionState,
+        session_id: str,
+        user_text: str,
+        call_context: str,
+        metadata: dict[str, str] | None,
+        commit: bool,
+    ) -> AsyncGenerator[str, None]:
         decision = await self._route_decision(state=state, user_text=user_text)
 
         if state.mode == "graph":
@@ -479,11 +515,18 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
             ):
                 yield tok
             if commit:
-                self._commit_hybrid_after_graph_stream(
-                    state=state,
-                    user_text=user_text,
-                    session_id=session_id,
-                )
+                if self.graph_service.last_stream_had_llm_failure:
+                    fallback = (self.settings.llm_unavailable_spoken_message or "").strip() or (
+                        "Sorry, something went wrong. Please try again in a moment."
+                    )
+                    next_state = deepcopy(state)
+                    self._commit_state(next_state, user_text=user_text, response_text=fallback)
+                else:
+                    self._commit_hybrid_after_graph_stream(
+                        state=state,
+                        user_text=user_text,
+                        session_id=session_id,
+                    )
             return
 
         if decision.action == HybridRouteAction.ENTER_GRAPH_FLOW:
@@ -496,11 +539,18 @@ class HybridConversationOrchestratorService(ConversationOrchestrator):
             ):
                 yield tok
             if commit:
-                self._commit_hybrid_after_graph_stream(
-                    state=state,
-                    user_text=user_text,
-                    session_id=session_id,
-                )
+                if self.graph_service.last_stream_had_llm_failure:
+                    fallback = (self.settings.llm_unavailable_spoken_message or "").strip() or (
+                        "Sorry, something went wrong. Please try again in a moment."
+                    )
+                    next_state = deepcopy(state)
+                    self._commit_state(next_state, user_text=user_text, response_text=fallback)
+                else:
+                    self._commit_hybrid_after_graph_stream(
+                        state=state,
+                        user_text=user_text,
+                        session_id=session_id,
+                    )
             return
 
         response_text = await self.generic_responder.respond(

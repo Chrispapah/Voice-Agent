@@ -60,6 +60,10 @@ class ContactCenterSettings(BaseSettings):
     langchain_model_name: str = "llama-3.3-70b-versatile"
     langchain_temperature: float = 0.2
     langchain_max_tokens: int = 64
+    llm_unavailable_spoken_message: str = (
+        "Sorry, our assistant could not reach the language service just now, for example due to a rate limit. "
+        "Please wait a minute and try again, or call back later."
+    )
     langchain_recent_message_limit: int = 6
     langchain_summary_max_messages: int = 12
     langchain_summary_max_chars: int = 600
