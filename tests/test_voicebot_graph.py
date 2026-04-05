@@ -3,7 +3,9 @@ import asyncio
 from vocode_contact_center.product_knowledge import ProductKnowledgeAnswer
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import SmsRequest, SmsResult
+from vocode_contact_center.voicebot_graph.nodes.interaction import collect_customer_input
 from vocode_contact_center.voicebot_graph.service import VoicebotGraphService
+from vocode_contact_center.voicebot_graph.state import initial_graph_state
 
 
 def make_settings() -> ContactCenterSettings:
@@ -155,20 +157,24 @@ def test_registration_path_loops_through_customer_input_then_sms_then_terminal_m
     assert second.state_snapshot["conversation_memory"]["full_name"] == "chris example"
 
     third = asyncio.run(service.run_turn("registration", "(415) 555-2671", call_context="test"))
-    assert third.active_menu == "registration_terminal"
+    assert third.active_menu is None
+    assert third.state_snapshot["pending_auth_field"] == "confirmation_code"
     assert third.artifacts["sms_status"] == "sent"
     assert third.artifacts["sms_message_id"] == "SM123"
     assert third.adapter_results["sms"]["status"] == "sent"
     assert sms_sender.requests[0].recipient_phone_number == "+14155552671"
     assert third.state_snapshot["conversation_memory"]["phone_number"] == "+14155552671"
 
+    code = third.state_snapshot["collected_data"]["expected_verification_code"]
     fourth = asyncio.run(
-        service.run_turn("registration", "sms confirmation", call_context="test")
+        service.run_turn("registration", code, call_context="test")
     )
-    assert fourth.final_outcome == "registration_sms_confirmation"
-    assert fourth.artifacts["sms_status"] == "sent"
-    assert fourth.artifacts["sms_message_id"] == "SM123"
-    assert sms_sender.requests[1].context == "registration_sms_confirmation"
+    assert fourth.state_snapshot["pending_auth_field"] == "full_id_number"
+
+    fifth = asyncio.run(
+        service.run_turn("registration", "AB123456", call_context="test")
+    )
+    assert fifth.active_menu == "registration_terminal"
 
 
 def test_registration_terminal_generic_sms_sends_follow_up_message():
@@ -181,15 +187,26 @@ def test_registration_terminal_generic_sms_sends_follow_up_message():
         service.run_turn("registration-generic", "(415) 555-2671", call_context="test")
     )
 
-    assert third.active_menu == "registration_terminal"
+    assert third.state_snapshot["pending_auth_field"] == "confirmation_code"
 
+    code = third.state_snapshot["collected_data"]["expected_verification_code"]
     fourth = asyncio.run(
+        service.run_turn("registration-generic", code, call_context="test")
+    )
+    assert fourth.state_snapshot["pending_auth_field"] == "full_id_number"
+
+    fifth = asyncio.run(
+        service.run_turn("registration-generic", "AB123456", call_context="test")
+    )
+    assert fifth.active_menu == "registration_terminal"
+
+    sixth = asyncio.run(
         service.run_turn("registration-generic", "generic sms", call_context="test")
     )
 
-    assert fourth.final_outcome == "generic_sms"
-    assert fourth.artifacts["sms_status"] == "sent"
-    assert fourth.artifacts["sms_message_id"] == "SM123"
+    assert sixth.final_outcome == "generic_sms"
+    assert sixth.artifacts["sms_status"] == "sent"
+    assert sixth.artifacts["sms_message_id"] == "SM123"
     assert sms_sender.requests[1].context == "generic_sms"
     assert "next steps" in sms_sender.requests[1].message.lower()
 
@@ -290,6 +307,20 @@ def test_registration_reprompts_when_phone_number_is_invalid():
     assert sms_sender.requests == []
 
 
+def test_confirmation_code_accepts_spoken_digits_and_reenters_authentication():
+    state = initial_graph_state(session_id="spoken-code", call_context="test")
+    state["pending_auth_field"] = "confirmation_code"
+    state["latest_user_input"] = "Nine four seven one nine nine"
+    state["collected_data"] = {"expected_verification_code": "947199"}
+
+    result = collect_customer_input(state)
+
+    assert result["pending_auth_field"] is None
+    assert result["route_decision"] == "interaction_authenticate"
+    assert result["collected_data"]["confirmation_code"] == "947199"
+    assert result["collected_data"]["sms_confirmed"] == "true"
+
+
 def test_cancel_during_pending_auth_returns_to_root_and_preserves_safe_memory():
     service = VoicebotGraphService(make_settings())
 
@@ -323,7 +354,7 @@ def test_cancel_after_sms_prompt_returns_to_root_and_keeps_normalized_phone():
     third = asyncio.run(
         service.run_turn("registration-root", "(415) 555-2671", call_context="test")
     )
-    assert third.active_menu == "registration_terminal"
+    assert third.state_snapshot["pending_auth_field"] == "confirmation_code"
 
     cancelled = asyncio.run(
         service.run_turn("registration-root", "main menu", call_context="test")
