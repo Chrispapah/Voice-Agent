@@ -26,9 +26,9 @@ def test_product_knowledge_fallback_avoids_raw_greek_text_for_english_voice():
     )
 
     text = service._extractive_fallback(
-        "Το προϊόν παρέχει πρόσβαση στο e-banking και δωρεάν ειδοποιήσεις.",
+        "Τα αποτελέσματα εξετάσεων εκδίδονται εντός δύο εργάσιμων ημερών.",
         "PRODUCT_PAGE.pdf",
     )
 
     assert "clean english voice answer" in text.lower()
-    assert "Το προϊόν" not in text
+    assert "αποτελέσματα" not in text

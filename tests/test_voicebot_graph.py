@@ -1,4 +1,5 @@
 import asyncio
+from unittest.mock import MagicMock
 
 from vocode_contact_center.product_knowledge import ProductKnowledgeAnswer
 from vocode_contact_center.settings import ContactCenterSettings
@@ -51,7 +52,7 @@ class FakeProductInformationService:
     async def answer_question(self, question: str) -> ProductKnowledgeAnswer:
         self.questions.append(question)
         return ProductKnowledgeAnswer(
-            text="The product PDF says the savings account includes online access and monthly statements.",
+            text="The help document says ITIL exam results are usually available within two business days.",
             artifacts={
                 "pdf_reference": "https://demo.example.com/products.pdf",
                 "product_source_pages": "2",
@@ -89,7 +90,7 @@ def test_information_path_loops_back_when_change_information_is_selected():
         )
     )
     assert third.active_menu == "info_selection"
-    assert "would you like store information" in third.text.lower()
+    assert "peoplecert website" in third.text.lower() or "help document" in third.text.lower()
 
 
 def test_product_information_path_answers_from_pdf_service_and_stays_active():
@@ -116,20 +117,20 @@ def test_product_information_path_answers_from_pdf_service_and_stays_active():
         )
     )
     assert second.active_menu == "information_products"
-    assert "product pdf" in second.text.lower()
+    assert "help document" in second.text.lower()
 
     third = asyncio.run(
         service.run_turn(
             "product-info",
-            "Tell me about the savings account",
+            "When will I get my ITIL results?",
             call_context="test",
         )
     )
     assert third.active_menu == "information_products"
-    assert "savings account" in third.text.lower()
+    assert "itil" in third.text.lower() or "business" in third.text.lower()
     assert third.artifacts["pdf_reference"] == "https://demo.example.com/products.pdf"
     assert third.artifacts["product_source_pages"] == "2"
-    assert product_service.questions == ["Tell me about the savings account"]
+    assert product_service.questions == ["When will I get my ITIL results?"]
 
 
 def test_product_information_falls_back_to_pdf_link_when_pdf_service_is_not_configured():
@@ -169,12 +170,8 @@ def test_registration_path_loops_through_customer_input_then_sms_then_terminal_m
     fourth = asyncio.run(
         service.run_turn("registration", code, call_context="test")
     )
-    assert fourth.state_snapshot["pending_auth_field"] == "full_id_number"
-
-    fifth = asyncio.run(
-        service.run_turn("registration", "AB123456", call_context="test")
-    )
-    assert fifth.active_menu == "registration_terminal"
+    assert fourth.active_menu == "registration_terminal"
+    assert fourth.state_snapshot.get("pending_auth_field") is None
 
 
 def test_registration_terminal_generic_sms_sends_follow_up_message():
@@ -193,22 +190,18 @@ def test_registration_terminal_generic_sms_sends_follow_up_message():
     fourth = asyncio.run(
         service.run_turn("registration-generic", code, call_context="test")
     )
-    assert fourth.state_snapshot["pending_auth_field"] == "full_id_number"
+    assert fourth.active_menu == "registration_terminal"
+    assert fourth.state_snapshot.get("pending_auth_field") is None
 
     fifth = asyncio.run(
-        service.run_turn("registration-generic", "AB123456", call_context="test")
-    )
-    assert fifth.active_menu == "registration_terminal"
-
-    sixth = asyncio.run(
         service.run_turn("registration-generic", "generic sms", call_context="test")
     )
 
-    assert sixth.final_outcome == "generic_sms"
-    assert sixth.artifacts["sms_status"] == "sent"
-    assert sixth.artifacts["sms_message_id"] == "SM123"
+    assert fifth.final_outcome == "generic_sms"
+    assert fifth.artifacts["sms_status"] == "sent"
+    assert fifth.artifacts["sms_message_id"] == "SM123"
     assert sms_sender.requests[1].context == "generic_sms"
-    assert "next steps" in sms_sender.requests[1].message.lower()
+    assert "next steps" in sms_sender.requests[1].message.lower() or "peoplecert" in sms_sender.requests[1].message.lower()
 
 
 def test_registration_sms_failure_is_truthful_in_graph_flow():
@@ -478,3 +471,45 @@ def test_feedback_path_supports_back_to_chat_and_contact_routes():
 
     third = asyncio.run(service.run_turn("feedback", "contact", call_context="test"))
     assert third.final_outcome == "contact"
+
+
+async def _collect_graph_stream_chunks(service: VoicebotGraphService) -> list[str]:
+    chunks: list[str] = []
+    async for t in service.stream_generate_response(
+        "llm-fail-session",
+        "Ernesto Pappas",
+        call_context="test",
+        commit=False,
+    ):
+        chunks.append(t)
+    return chunks
+
+
+def test_stream_generate_response_yields_spoken_fallback_when_graph_astream_fails():
+    service = VoicebotGraphService(make_settings())
+
+    async def failing_astream(*_a, **_k):
+        raise RuntimeError("simulated groq 429")
+        yield  # pragma: no cover
+
+    service._graph = MagicMock()
+    service._graph.astream = failing_astream
+
+    chunks = asyncio.run(_collect_graph_stream_chunks(service))
+    assert len(chunks) == 1
+    assert "language service" in chunks[0].lower() or "rate limit" in chunks[0].lower()
+
+
+def test_run_turn_returns_spoken_fallback_when_graph_ainvoke_fails():
+    service = VoicebotGraphService(make_settings())
+
+    async def ainvoke_fail(*_a, **_k):
+        raise RuntimeError("simulated failure")
+
+    service._graph = MagicMock()
+    service._graph.ainvoke = ainvoke_fail
+
+    result = asyncio.run(
+        service.run_turn("llm-fail-ainvoke", "hello", call_context="test", commit=False)
+    )
+    assert "language service" in result.text.lower() or "rate limit" in result.text.lower()

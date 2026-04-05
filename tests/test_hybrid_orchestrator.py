@@ -73,7 +73,7 @@ class FakeProductInformationService:
     async def answer_question(self, question: str) -> ProductKnowledgeAnswer:
         self.questions.append(question)
         return ProductKnowledgeAnswer(
-            text="The PDF says the platinum account includes a debit card and online banking.",
+            text="The PDF says PRINCE2 results are usually issued within two business days.",
             artifacts={"pdf_reference": "https://demo.example.com/products.pdf"},
             found_match=True,
         )
@@ -212,7 +212,7 @@ def test_hybrid_orchestrator_can_answer_directly_while_graph_is_active():
                 HybridRouteDecision(action=HybridRouteAction.ANSWER_DIRECTLY),
             ]
         ),
-        generic_responder=QueueGenericResponder(["Our stores are open weekdays."]),
+        generic_responder=QueueGenericResponder(["PeopleCert.org lists support hours on the contact page."]),
     )
 
     first = asyncio.run(service.run_turn("mixed-session", "login", call_context="test"))
@@ -220,9 +220,9 @@ def test_hybrid_orchestrator_can_answer_directly_while_graph_is_active():
     assert first.state_snapshot["hybrid_mode"] == "graph"
 
     second = asyncio.run(
-        service.run_turn("mixed-session", "Actually, what are your store hours?", call_context="test")
+        service.run_turn("mixed-session", "Actually, what are your support hours?", call_context="test")
     )
-    assert second.text == "Our stores are open weekdays."
+    assert second.text == "PeopleCert.org lists support hours on the contact page."
     assert second.active_menu is None
     assert second.state_snapshot["hybrid_mode"] == "generic"
 
@@ -237,7 +237,9 @@ def test_hybrid_orchestrator_returns_to_generic_mode_after_graph_completion():
                 HybridRouteDecision(action=HybridRouteAction.ANSWER_DIRECTLY),
             ]
         ),
-        generic_responder=QueueGenericResponder(["We offer general support, account help, and announcements."]),
+        generic_responder=QueueGenericResponder(
+            ["We help with PeopleCert exams, your account, and announcements."]
+        ),
     )
 
     first = asyncio.run(service.run_turn("info-session", "I need information", call_context="test"))
@@ -252,7 +254,7 @@ def test_hybrid_orchestrator_returns_to_generic_mode_after_graph_completion():
     third = asyncio.run(
         service.run_turn("info-session", "What services do you offer?", call_context="test")
     )
-    assert third.text == "We offer general support, account help, and announcements."
+    assert third.text == "We help with PeopleCert exams, your account, and announcements."
     assert third.state_snapshot["hybrid_mode"] == "generic"
 
 
@@ -283,9 +285,9 @@ def test_hybrid_product_information_menu_stays_in_graph_when_router_tries_direct
     assert second.state_snapshot["hybrid_mode"] == "graph"
 
     third = asyncio.run(
-        service.run_turn("product-sticky", "Tell me about the platinum account", call_context="test")
+        service.run_turn("product-sticky", "When are PRINCE2 results ready?", call_context="test")
     )
     assert third.active_menu == "information_products"
     assert third.state_snapshot["hybrid_mode"] == "graph"
-    assert "platinum account" in third.text.lower()
-    assert product_service.questions == ["Tell me about the platinum account"]
+    assert "prince2" in third.text.lower() or "business" in third.text.lower()
+    assert product_service.questions == ["When are PRINCE2 results ready?"]

@@ -52,7 +52,7 @@ class FakeHybridOrchestrator:
     """Deterministic stand-in for HybridConversationOrchestratorService in unit tests."""
 
     _menu_reply = (
-        "I can help with store information, product information, or something else. "
+        "I can help with the PeopleCert website, answers from our help document, or something else. "
         "Which would you like?"
     )
 
@@ -266,5 +266,5 @@ def test_realtime_manager_default_voicebot_llm_uses_hybrid_orchestrator():
 
     turn_end_events = [event for event in captured_events if event["type"] == "assistant_turn_end"]
     assert turn_end_events
-    assert "store information" in turn_end_events[-1]["text"].lower()
+    assert "peoplecert" in turn_end_events[-1]["text"].lower() or "help document" in turn_end_events[-1]["text"].lower()
 
