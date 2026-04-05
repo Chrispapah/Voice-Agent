@@ -50,12 +50,40 @@ def parse_spoken_digit_sequence(raw_text: str) -> str:
     return _parse_spoken_numeric_sequence(raw_text, allow_plus=False)
 
 
+def extract_caller_e164_from_call_context(call_context: str) -> str | None:
+    """Best-effort E.164 from telephony call context (e.g. sip:+30698...@host in Caller number line)."""
+    if not call_context or not call_context.strip():
+        return None
+    sip_match = re.search(r"sip:(\+[1-9]\d{6,14})@", call_context, re.IGNORECASE)
+    if sip_match:
+        candidate = sip_match.group(1)
+        return _validate_and_format_e164(candidate)
+    loose = re.search(
+        r"(?:caller\s+number|from)\s*:\s*(\+[1-9]\d{6,14})\b",
+        call_context,
+        re.IGNORECASE,
+    )
+    if loose:
+        return _validate_and_format_e164(loose.group(1))
+    return None
+
+
+def _validate_and_format_e164(candidate: str) -> str | None:
+    try:
+        parsed = phonenumbers.parse(candidate, None)
+    except NumberParseException:
+        return None
+    if not phonenumbers.is_valid_number(parsed):
+        return None
+    return phonenumbers.format_number(parsed, PhoneNumberFormat.E164)
+
+
 def normalize_phone_number(
     raw_phone_number: str,
     *,
     default_region: str | None = None,
 ) -> str | None:
-    cleaned = _clean_phone_number(raw_phone_number)
+    cleaned = _clean_phone_number(raw_phone_number, default_region=default_region)
     if not cleaned:
         return None
 
@@ -81,10 +109,54 @@ def normalize_phone_number_cached(
     return normalize_phone_number(raw_phone_number, default_region=default_region)
 
 
-def _clean_phone_number(raw_phone_number: str) -> str:
+def _try_clean_country_code_phone_number_clause(
+    raw_phone_number: str,
+    default_region: str | None,
+) -> str | None:
+    """Handle 'country code … phone number …' spoken form without merging both into one digit string."""
+    lowered = raw_phone_number.lower()
+    cc_marker = "country code"
+    pn_marker = "phone number"
+    if cc_marker not in lowered or pn_marker not in lowered:
+        return None
+    i_cc = lowered.index(cc_marker)
+    i_pn = lowered.index(pn_marker)
+    if i_pn <= i_cc:
+        return None
+    country_segment = raw_phone_number[i_cc + len(cc_marker) : i_pn].strip(" ,.:;")
+    national_segment = raw_phone_number[i_pn + len(pn_marker) :].strip(" ,.:;")
+    if not country_segment or not national_segment:
+        return None
+    cc_digits = _parse_country_calling_code_spoken(country_segment, default_region)
+    if not cc_digits:
+        return None
+    national_digits = _parse_spoken_numeric_sequence(national_segment, allow_plus=False)
+    if not national_digits:
+        return None
+    return f"+{cc_digits}{national_digits}"
+
+
+def _parse_country_calling_code_spoken(segment: str, default_region: str | None) -> str | None:
+    raw = _parse_spoken_numeric_sequence(segment, allow_plus=True)
+    if not raw:
+        return None
+    cc = raw[1:] if raw.startswith("+") else raw
+    region = default_region.strip().upper() if default_region else None
+    if region == "GR" and cc == "13":
+        cc = "30"
+    if not cc.isdigit() or not (1 <= len(cc) <= 3):
+        return None
+    return cc
+
+
+def _clean_phone_number(raw_phone_number: str, default_region: str | None = None) -> str:
     candidate = raw_phone_number.strip()
     if not candidate:
         return ""
+
+    split_cleaned = _try_clean_country_code_phone_number_clause(candidate, default_region)
+    if split_cleaned:
+        return split_cleaned
 
     explicit_country_code = _extract_spoken_country_code_suffix(candidate)
     if explicit_country_code is not None:
@@ -119,6 +191,8 @@ def _extract_spoken_country_code_suffix(raw_text: str) -> str | None:
     marker = "country code"
     if marker not in lowered:
         return None
+    if "phone number" in lowered and lowered.index("phone number") > lowered.index(marker):
+        return None
     suffix = lowered.split(marker, 1)[1].strip(" ,.:;")
     if not suffix:
         return None
@@ -142,7 +216,7 @@ def _parse_spoken_numeric_sequence(raw_text: str, *, allow_plus: bool) -> str:
                 pieces.append("+")
             idx += 1
             continue
-        if token in {"plus"}:
+        if token in {"plus", "pass"}:
             if allow_plus and not pieces:
                 pieces.append("+")
             idx += 1

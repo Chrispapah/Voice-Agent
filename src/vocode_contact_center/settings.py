@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from urllib.parse import urlparse
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from vocode_contact_center.prompts import DEFAULT_AGENT_PROMPT
@@ -23,7 +24,14 @@ class ContactCenterSettings(BaseSettings):
     twilio_whatsapp_from_number: str | None = None
     twilio_messaging_service_sid: str | None = None
     twilio_whatsapp_verification_template_sid: str | None = None
-    sms_default_region: str | None = None
+    sms_default_region: str | None = Field(
+        default=None,
+        description="ISO 3166-1 alpha-2 default region for parsing spoken SMS destination numbers (e.g. GR, US).",
+    )
+    sms_prefer_caller_id_for_registration: bool = Field(
+        default=False,
+        description="If true, registration may use telephony caller ID (from call context) when the number is missing or spoken input fails to normalize.",
+    )
     registration_confirmation_sms_template: str = (
         "Hi {full_name}, your registration request has been confirmed. "
         "We'll follow up with the next steps shortly."

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from vocode_contact_center.phone_numbers import normalize_phone_number_cached
+from vocode_contact_center.phone_numbers import (
+    extract_caller_e164_from_call_context,
+    normalize_phone_number_cached,
+)
 from vocode_contact_center.settings import ContactCenterSettings
 from vocode_contact_center.voicebot_graph.adapters.base import (
     AuthenticationAdapter,
@@ -33,22 +36,37 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
                     ),
                     requested_field="full_name",
                 )
+            if "phone_number" not in data and self._settings.sms_prefer_caller_id_for_registration:
+                ani = extract_caller_e164_from_call_context(request.call_context)
+                if ani:
+                    data["phone_number"] = ani
             if "phone_number" not in data:
                 return AuthenticationResult(
                     status="needs_customer_input",
-                    prompt="Please share the phone number we should use for registration.",
+                    prompt=(
+                        "Please share the mobile number we should use for registration. "
+                        "Say plus, then your country code digit by digit—for example plus three zero for Greece—"
+                        "then your number digit by digit. You can also say country code, plus three zero, "
+                        "phone number, then the rest of your digits."
+                    ),
                     requested_field="phone_number",
                 )
             normalized_phone_number = normalize_phone_number_cached(
                 data.get("phone_number", ""),
                 self._settings.sms_default_region,
             )
+            if not normalized_phone_number and self._settings.sms_prefer_caller_id_for_registration:
+                ani = extract_caller_e164_from_call_context(request.call_context)
+                if ani:
+                    normalized_phone_number = normalize_phone_number_cached(
+                        ani, self._settings.sms_default_region
+                    )
             if not normalized_phone_number:
                 return AuthenticationResult(
                     status="needs_customer_input",
                     prompt=(
                         "That phone number did not sound valid. Please say it again slowly, "
-                        "including the country code."
+                        "with plus and your country code digit by digit, then your mobile number digit by digit."
                     ),
                     requested_field="phone_number",
                 )
