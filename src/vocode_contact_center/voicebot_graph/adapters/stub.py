@@ -59,9 +59,41 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
                     prompt="I could not validate that registration request with the current details.",
                     metadata={"reason": "stub_registration_denied"},
                 )
+            if data.get("sms_confirmed") != "true":
+                return AuthenticationResult(
+                    status="needs_sms_confirmation",
+                    prompt="I can now send an SMS confirmation to finish registration.",
+                    normalized_data=data,
+                )
+            expected_code = "".join(ch for ch in data.get("expected_verification_code", "") if ch.isdigit())
+            provided_code = "".join(ch for ch in data.get("confirmation_code", "") if ch.isdigit())
+            if "confirmation_code" not in data:
+                return AuthenticationResult(
+                    status="needs_customer_input",
+                    prompt="Please tell me the confirmation code that was sent to your phone.",
+                    requested_field="confirmation_code",
+                    normalized_data=data,
+                )
+            if not expected_code or provided_code != expected_code:
+                data.pop("confirmation_code", None)
+                data["sms_confirmed"] = "false"
+                return AuthenticationResult(
+                    status="needs_customer_input",
+                    prompt="That code doesn't match the one I sent. Please tell me the confirmation code again.",
+                    requested_field="confirmation_code",
+                    normalized_data=data,
+                    metadata={"reason": "verification_code_mismatch"},
+                )
+            if "full_id_number" not in data:
+                return AuthenticationResult(
+                    status="needs_customer_input",
+                    prompt="Thanks. Now please tell me your full ID number.",
+                    requested_field="full_id_number",
+                    normalized_data=data,
+                )
             return AuthenticationResult(
-                status="needs_sms_confirmation",
-                prompt="I can now send an SMS confirmation to finish registration.",
+                status="success",
+                prompt="Registration verification is complete.",
                 normalized_data=data,
             )
 

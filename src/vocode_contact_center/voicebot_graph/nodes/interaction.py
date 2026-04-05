@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import secrets
 
 from loguru import logger
 
@@ -33,6 +34,15 @@ INTERACTION_ENTRY_PROMPT = (
     "I can help you create a new account or access an existing one. Would you like registration or login support?"
 )
 SAFE_MEMORY_FIELDS = {"full_name", "phone_number"}
+CONFIRMATION_CODE_PROMPT = (
+    "I've sent the confirmation code to your phone. Please tell me the code you received."
+)
+CONFIRMATION_CODE_REPROMPT = (
+    "That code doesn't match the one I sent. Please say the 6-digit confirmation code again."
+)
+CONFIRMATION_CODE_FORMAT_REPROMPT = (
+    "I need the 6-digit confirmation code from the message. Please say the digits one by one."
+)
 
 _FULL_NAME_BLOCKLIST = frozenset(
     {
@@ -202,6 +212,14 @@ def _name_tokens(text: str) -> list[str]:
     return tokens
 
 
+def _digits_only(text: str) -> str:
+    return "".join(ch for ch in text if ch.isdigit())
+
+
+def _generate_verification_code() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
 def is_plausible_full_name(user_text: str) -> bool:
     """Reject greetings, backchannels, and other non-name utterances."""
     normalized = normalize_text(user_text)
@@ -349,6 +367,39 @@ def collect_customer_input(state: VoicebotGraphState) -> VoicebotGraphState:
         if partial is not None:
             return partial
 
+    if pending_field == "confirmation_code":
+        provided_code = _digits_only(state.get("latest_user_input", ""))
+        expected_code = _digits_only(dict(state.get("collected_data", {})).get("expected_verification_code", ""))
+        if not expected_code:
+            return {
+                "response_text": "I need to send you a fresh confirmation code before we continue.",
+                "pending_prompt": "I need to send you a fresh confirmation code before we continue.",
+                "pending_auth_field": None,
+                "route_decision": "interaction_sms_confirmation",
+            }
+        if len(provided_code) != 6:
+            return {
+                "response_text": CONFIRMATION_CODE_FORMAT_REPROMPT,
+                "pending_prompt": CONFIRMATION_CODE_FORMAT_REPROMPT,
+                "pending_auth_field": pending_field,
+                "route_decision": "complete",
+            }
+        if expected_code and provided_code != expected_code:
+            return {
+                "response_text": CONFIRMATION_CODE_REPROMPT,
+                "pending_prompt": CONFIRMATION_CODE_REPROMPT,
+                "pending_auth_field": pending_field,
+                "route_decision": "complete",
+            }
+        updated_data = dict(state.get("collected_data", {}))
+        updated_data["confirmation_code"] = provided_code
+        updated_data["sms_confirmed"] = "true"
+        return {
+            "collected_data": updated_data,
+            "pending_auth_field": None,
+            "route_decision": "interaction_authenticate",
+        }
+
     if pending_field == "full_name" and not is_plausible_full_name(state.get("latest_user_input", "")):
         logger.info(
             "Graph collect_customer_input session={} rejected implausible full_name input={!r}",
@@ -397,6 +448,8 @@ async def sms_confirmation(
     schedule_background_sms: Callable[[SmsRequest], None] | None = None,
 ) -> VoicebotGraphState:
     updated_data = dict(state.get("collected_data", {}))
+    if not updated_data.get("expected_verification_code"):
+        updated_data["expected_verification_code"] = _generate_verification_code()
     phone_number = updated_data.get("phone_number", "").strip()
     adapter_results = dict(state.get("adapter_results", {}))
 
@@ -428,7 +481,10 @@ async def sms_confirmation(
         recipient_phone_number=phone_number,
         message=build_registration_confirmation_message(settings, updated_data),
         context="registration_confirmation",
-        metadata=dict(state.get("metadata", {})),
+        metadata={
+            **dict(state.get("metadata", {})),
+            "verification_code": updated_data["expected_verification_code"],
+        },
     )
 
     if defer_sms and schedule_background_sms is not None:
@@ -442,16 +498,13 @@ async def sms_confirmation(
         }
         return {
             "collected_data": updated_data,
-            "auth_status": "success",
-            "response_prefix": "I'm sending a confirmation text to your phone now. ",
+            "auth_status": "pending",
+            "response_text": CONFIRMATION_CODE_PROMPT,
+            "pending_prompt": CONFIRMATION_CODE_PROMPT,
+            "pending_auth_field": "confirmation_code",
             "artifacts": {"sms_status": "pending"},
             "adapter_results": adapter_results,
-            "terminal_group": (
-                "registration_terminal"
-                if state.get("interaction_context") == "registration"
-                else "login_terminal"
-            ),
-            "route_decision": "interaction_terminal",
+            "route_decision": "complete",
         }
 
     sms_result = await sms_sender.send(sms_request)
@@ -473,12 +526,19 @@ async def sms_confirmation(
     }
 
     if sms_result.status == "sent":
-        updated_data["sms_confirmed"] = "true"
         artifacts = {"sms_status": "sent"}
         if sms_result.provider_message_id:
             artifacts["sms_message_id"] = sms_result.provider_message_id
-        response_prefix = "I've sent the SMS confirmation step through, so we can keep moving. "
-        auth_status = "success"
+        return {
+            "collected_data": updated_data,
+            "auth_status": "pending",
+            "response_text": CONFIRMATION_CODE_PROMPT,
+            "pending_prompt": CONFIRMATION_CODE_PROMPT,
+            "pending_auth_field": "confirmation_code",
+            "artifacts": artifacts,
+            "adapter_results": adapter_results,
+            "route_decision": "complete",
+        }
     else:
         artifacts = {"sms_status": "failed"}
         response_prefix = (

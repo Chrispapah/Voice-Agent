@@ -145,9 +145,6 @@ class VoicebotGraphService:
             merged["adapter_results"] = ar
             artifacts = dict(merged.get("artifacts") or {})
             if result.status == "sent":
-                cd = dict(merged.get("collected_data") or {})
-                cd["sms_confirmed"] = "true"
-                merged["collected_data"] = cd
                 artifacts["sms_status"] = "sent"
                 if result.provider_message_id:
                     artifacts["sms_message_id"] = result.provider_message_id
