@@ -151,7 +151,7 @@ def build_agent_config(settings: ContactCenterSettings) -> AgentConfig:
         transfer_phone_number=settings.transfer_phone_number,
         generate_responses=True,
         end_conversation_on_goodbye=True,
-        interrupt_sensitivity=settings.agent_interrupt_sensitivity,
+        interrupt_sensitivity=settings.normalized_interrupt_sensitivity(),
         allow_agent_to_be_cut_off=settings.allow_agent_to_be_cut_off,
     )
 
@@ -272,9 +272,6 @@ def create_app(settings: ContactCenterSettings | None = None) -> FastAPI:
             "twilio_webhook_path": "/inbound_call",
             "twilio_sip_http_method": "POST",
             "stt_provider": "deepgram",
-            "allow_agent_to_be_cut_off": settings.allow_agent_to_be_cut_off,
-            "interrupt_sensitivity": settings.agent_interrupt_sensitivity,
-            "deepgram_mute_during_speech": settings.deepgram_mute_during_speech,
             "require_streaming_synthesizer": settings.require_streaming_synthesizer,
             "realtime_enabled": settings.realtime_enabled,
             "realtime_ready": app.state.realtime_ready,

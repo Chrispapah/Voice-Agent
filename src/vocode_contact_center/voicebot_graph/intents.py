@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""
+Intent keywords align with Candidate_BIT_OLP_EN_ContactDrivers.xlsx (PeopleCert):
+- information: booking (OLP/classroom), Exam Shield, Canvas, results timelines, refunds policy,
+  discount codes, membership / re-cert info, help document questions.
+- interaction: account registration, sign-in, reset password, profile access via account flows.
+- feedback: contact options, disputes, appeals, SELT/LanguageCert misroute, partner-only topics.
+"""
+
+import re
 import unicodedata
 from typing import Iterable
 
@@ -16,8 +25,19 @@ def normalize_text(text: str) -> str:
 
 
 def contains_any(text: str, keywords: Iterable[str]) -> bool:
+    """Match keywords; single-token ASCII alnum keywords use word boundaries so e.g. `exam` does not match `example`."""
     normalized = normalize_text(text)
-    return any(keyword in normalized for keyword in keywords)
+    for keyword in keywords:
+        kw = keyword.strip().lower()
+        if not kw:
+            continue
+        ascii_alnum_token = kw.isascii() and kw.isalnum() and " " not in kw and len(kw) >= 2
+        if ascii_alnum_token:
+            if re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z0-9])", normalized):
+                return True
+        elif kw in normalized:
+            return True
+    return False
 
 
 def classify_root_intent(text: str) -> str | None:
@@ -50,9 +70,13 @@ def classify_root_intent(text: str) -> str | None:
             "sign in",
             "sign-in",
             "password",
+            "reset password",
+            "forgot password",
             "account support",
             "account help",
             "account access",
+            "peoplecert account",
+            "candidate account",
             "authenticate",
             "authentication",
         ),
@@ -76,6 +100,30 @@ def classify_root_intent(text: str) -> str | None:
             "other",
             "website",
             "pdf",
+            "peoplecert.org",
+            "exam",
+            "booking",
+            "reschedule",
+            "voucher",
+            "proctor",
+            "online proctored",
+            "olp",
+            "exam shield",
+            "take2",
+            "certificate",
+            "certifications",
+            "results",
+            "mock exam",
+            "canvas",
+            "membership",
+            "recertification",
+            "re-certification",
+            "re certification",
+            "refund policy",
+            "discount code",
+            "promo code",
+            "classroom exam",
+            "appeal process",
         ),
     ):
         return "information"
@@ -89,6 +137,22 @@ def classify_root_intent(text: str) -> str | None:
             "contact options",
             "back to chat",
             "contact me",
+            "human",
+            "representative",
+            "complaint",
+            "appeal",
+            "dispute",
+            "result dispute",
+            "refund dispute",
+            "malpractice",
+            "cheating",
+            "fraud",
+            "selt",
+            "languagecert",
+            "language cert",
+            "training centre",
+            "training center",
+            "partner exam",
         ),
     ):
         return "feedback"
@@ -159,9 +223,32 @@ def classify_interaction_context(text: str) -> str | None:
 
 def classify_information_choice(text: str) -> str | None:
     normalized = normalize_text(text)
-    if contains_any(normalized, ("καταστημα", "store", "shop", "website")):
+    if contains_any(
+        normalized,
+        (
+            "καταστημα",
+            "store",
+            "shop",
+            "website",
+            "peoplecert",
+            "help center",
+            "help article",
+        ),
+    ):
         return "store"
-    if contains_any(normalized, ("προϊον", "προιον", "product", "products", "pdf")):
+    if contains_any(
+        normalized,
+        (
+            "προϊον",
+            "προιον",
+            "product",
+            "products",
+            "pdf",
+            "document",
+            "help document",
+            "policy",
+        ),
+    ):
         return "products"
     if contains_any(normalized, ("άλλο", "αλλο", "other")):
         return "other"
@@ -220,9 +307,35 @@ def classify_terminal_choice(text: str, menu_name: str) -> str | None:
             "generic_sms": ("generic sms", "send sms", "sms"),
         },
         "login_terminal": {
-            "perform_login": ("login", "perform login", "sign in"),
-            "update_balance": ("ενημερωση υπολοιπου", "update balance", "balance"),
-            "details": ("λεπτομερειες", "details", "account details"),
+            "perform_login": ("login", "perform login", "sign in", "continue sign"),
+            "exam_booking_help": (
+                "exam",
+                "booking",
+                "schedule",
+                "reschedule",
+                "overview",
+                "olp",
+                "proctor",
+                "online exam",
+            ),
+            "certificates_access": (
+                "certificate",
+                "certifications",
+                "result",
+                "results",
+                "e certificate",
+                "electronic certificate",
+                "λεπτομερειες",
+                "details",
+            ),
+            "profile_password": (
+                "profile",
+                "password",
+                "personal",
+                "name change",
+                "reset password",
+                "account details",
+            ),
         },
         "fail_terminal": {
             "communication": ("επικοινωνια", "communication", "contact options"),

@@ -24,12 +24,12 @@ from vocode_contact_center.settings import ContactCenterSettings
 
 
 PRODUCT_QA_SYSTEM_PROMPT = """
-You answer product questions for a banking contact center using only the provided PDF excerpts.
+You answer questions for PeopleCert candidates using only the provided PDF excerpts (approved PeopleCert help or policy material).
 
 Rules:
-- Use only the PDF excerpts. Never invent product details.
+- Use only the PDF excerpts. Never invent exam rules, prices, or policies.
 - Always answer in {response_language}. Translate faithfully when the PDF excerpts are written in another language.
-- If the excerpts do not answer the caller's question, say that you cannot confirm it from the product PDF.
+- If the excerpts do not answer the caller's question, say that you cannot confirm it from the document and suggest peoplecert.org or a human representative as appropriate.
 - Keep the answer concise and natural for live voice, at most three short sentences.
 - Do not mention that you are looking at chunks or retrieval results.
 """.strip()
@@ -66,7 +66,7 @@ class ProductKnowledgeService:
         if reference is None:
             return ProductKnowledgeAnswer(
                 text=(
-                    "I don't have a product PDF configured yet, so I can't answer product questions from it right now."
+                    "I don't have a PeopleCert help document configured yet, so I can't answer from it right now."
                 ),
                 artifacts={},
                 found_match=False,
@@ -79,7 +79,7 @@ class ProductKnowledgeService:
             )
             return ProductKnowledgeAnswer(
                 text=(
-                    "I can share the product PDF link, but the system isn't ready to read product answers from the document right now. "
+                    "I can share the document link, but the system isn't ready to read answers from it right now. "
                     f"You can review it here: {reference}."
                 ),
                 artifacts={"pdf_reference": reference},
@@ -92,7 +92,7 @@ class ProductKnowledgeService:
             logger.exception("Failed to load product PDF source={} error={}", reference, exc)
             return ProductKnowledgeAnswer(
                 text=(
-                    "I couldn't open the product PDF just now. "
+                    "I couldn't open the help document just now. "
                     f"You can still review it directly here: {reference}."
                 ),
                 artifacts={"pdf_reference": reference},
@@ -103,8 +103,8 @@ class ProductKnowledgeService:
         if not ranked:
             return ProductKnowledgeAnswer(
                 text=(
-                    "I couldn't find that detail in the product PDF. "
-                    f"You can review the document here: {reference}."
+                    "I couldn't find that detail in the help document. "
+                    f"You can review it here: {reference}."
                 ),
                 artifacts={"pdf_reference": reference},
                 found_match=False,
@@ -138,7 +138,7 @@ class ProductKnowledgeService:
                 ("system", "Product PDF reference: {pdf_reference}"),
                 (
                     "human",
-                    "Caller question: {question}\n\nRelevant product PDF excerpts:\n{context}",
+                    "Caller question: {question}\n\nRelevant document excerpts:\n{context}",
                 ),
             ]
         )
@@ -214,7 +214,7 @@ class ProductKnowledgeService:
             if normalized:
                 pages.append((index, normalized))
         if not pages:
-            raise ValueError("The configured product PDF did not contain extractable text.")
+            raise ValueError("The configured help document did not contain extractable text.")
         return pages
 
     def _read_pdf_bytes(self, reference: str) -> bytes:
@@ -315,7 +315,7 @@ class ProductKnowledgeService:
         response_language = self._response_language().lower()
         if response_language.startswith("english") and self._contains_non_latin_script(context):
             return (
-                "I found relevant product details in the PDF, but I couldn't turn them into a clean English voice answer just now. "
+                "I found relevant details in the document, but I couldn't turn them into a clean English voice answer just now. "
                 f"You can review the full document here: {reference}."
             )
         sentences = [
@@ -326,8 +326,8 @@ class ProductKnowledgeService:
         if sentences:
             preview = " ".join(sentences[:2]).strip()
             if preview:
-                return f"Here’s what I found in the product PDF: {preview}"
-        return f"I found relevant product details in the PDF, and you can review the full document here: {reference}."
+                return f"Here's what I found in the help document: {preview}"
+        return f"I found relevant details in the document, and you can review the full document here: {reference}."
 
     def _format_pages(self, chunks: Iterable[ProductKnowledgeChunk]) -> str:
         page_numbers = sorted({page for chunk in chunks for page in chunk.pages})

@@ -223,6 +223,9 @@ class RealtimeVoiceSession:
     _assistant_generation: int = 0
     _active_response_mode: str | None = None
 
+    def _assistant_response_active(self) -> bool:
+        return self._assistant_task is not None and not self._assistant_task.done()
+
     async def send_session_ready(self, *, legacy_telephony_available: bool) -> None:
         await self.send_event(
             {
@@ -237,6 +240,8 @@ class RealtimeVoiceSession:
         )
 
     async def handle_client_event(self, event: dict[str, Any]) -> None:
+        # Realtime interruption is client-driven: the websocket caller must send barge_in,
+        # user_partial, or user_final as soon as local ASR detects speech.
         event_type = str(event.get("type", "")).strip().lower()
         if event_type == "ping":
             await self.send_event({"type": "pong"})
@@ -262,7 +267,9 @@ class RealtimeVoiceSession:
         if not normalized:
             return
         self.current_partial_text = normalized
-        if self._assistant_task is not None:
+        if self._assistant_response_active():
+            if not self.settings.allow_agent_to_be_cut_off:
+                return
             await self.interrupt(reason="user_speaking")
         if self._should_start_partial_response(normalized):
             await self._start_response(normalized, mode="partial")
@@ -273,7 +280,11 @@ class RealtimeVoiceSession:
             return
         self.current_final_text = normalized
         self.current_partial_text = normalized
-        await self.interrupt(reason="user_finalized")
+        if self._assistant_response_active():
+            if self.settings.allow_agent_to_be_cut_off:
+                await self.interrupt(reason="user_finalized")
+            elif self._assistant_task is not None:
+                await self._assistant_task
         await self._start_response(normalized, mode="final")
 
     def _should_start_partial_response(self, text: str) -> bool:
@@ -385,6 +396,8 @@ class RealtimeVoiceSession:
             self._active_response_mode = None
 
     async def interrupt(self, *, reason: str) -> None:
+        if reason != "session_closed" and not self.settings.allow_agent_to_be_cut_off:
+            return
         if self._assistant_task is None or self._assistant_task.done():
             return
         self.metrics.total_interruptions += 1

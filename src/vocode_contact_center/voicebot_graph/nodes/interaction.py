@@ -32,7 +32,7 @@ from vocode_contact_center.voicebot_graph.state import VoicebotGraphState
 
 
 INTERACTION_ENTRY_PROMPT = (
-    "I can help you create a new account or access an existing one. Would you like registration or login support?"
+    "I can help you with PeopleCert account registration or signing in. Which would you like—registration or login?"
 )
 SAFE_MEMORY_FIELDS = {"full_name", "phone_number"}
 CONFIRMATION_CODE_PROMPT = (
@@ -735,7 +735,7 @@ def _prompt_for_terminal_menu(state: VoicebotGraphState, menu_name: str) -> Voic
             "You're all set. I can finish registration, resend the SMS confirmation, or send a general follow-up. Which do you want?"
         ),
         "login_terminal": (
-            "You're verified. I can continue login, update a balance, or go over account details. Which one?"
+            "You're verified. I can continue sign-in, help with exams and booking, certificates, or profile and password. Which one?"
         ),
         "fail_terminal": (
             "Sign-in didn't finish. I can help with contact options, send an SMS, or share general details. Which one?"
@@ -757,7 +757,12 @@ def _terminal_options(menu_name: str) -> tuple[str, ...]:
             "registration_sms_confirmation",
             "generic_sms",
         ),
-        "login_terminal": ("perform_login", "update_balance", "details"),
+        "login_terminal": (
+            "perform_login",
+            "exam_booking_help",
+            "certificates_access",
+            "profile_password",
+        ),
         "fail_terminal": ("communication", "generic_sms", "details"),
     }
     return options[menu_name]
