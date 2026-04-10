@@ -68,15 +68,6 @@ Expected:
 - It returns the fallback handoff message.
 - If you later add a live transfer workflow, verify that path separately before enabling it.
 
-## PeopleCert (CertyPal) smoke checks
-
-When this deployment is configured for PeopleCert candidate support, spot-check:
-
-- Opening matches the approved virtual-assistant disclosure (CertyPal / PeopleCert).
-- Misroute wording for non-B&IT exam types is available in the system prompt; SELT/LanguageCert mentions route toward human contact.
-- Sample scenarios: invalid voucher guidance, OLP stuck screen (refresh / restart), locked profile name (upload + support), results timeline, e-certificate location and hard-copy ordering.
-- Document-backed answers only use the configured `INFORMATION_PRODUCTS_*` PDF; no invented policy.
-
 ## Production Cutover
 
 Only cut over fully when all of the following are true:

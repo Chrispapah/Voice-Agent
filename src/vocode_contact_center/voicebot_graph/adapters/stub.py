@@ -102,6 +102,13 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
                     normalized_data=data,
                     metadata={"reason": "verification_code_mismatch"},
                 )
+            if "full_id_number" not in data:
+                return AuthenticationResult(
+                    status="needs_customer_input",
+                    prompt="Thanks. Now please tell me your full ID number.",
+                    requested_field="full_id_number",
+                    normalized_data=data,
+                )
             return AuthenticationResult(
                 status="success",
                 prompt="Registration verification is complete.",
@@ -111,30 +118,24 @@ class StubAuthenticationAdapter(AuthenticationAdapter):
         if "account_id" not in data:
             return AuthenticationResult(
                 status="needs_customer_input",
-                prompt=(
-                    "Please say the email address on your PeopleCert account slowly and clearly, "
-                    "or your candidate reference if you use one. For this demo line we only use it to continue the flow—we never collect identity documents on the call."
-                ),
+                prompt="Please tell me your account ID or phone number so I can verify your login.",
                 requested_field="account_id",
             )
         if "password_hint" not in data:
             return AuthenticationResult(
                 status="needs_customer_input",
-                prompt=(
-                    "For this demo sign-in check, please say a short verification word you will recognize—not your real password. "
-                    "Or say continue if you are testing the line."
-                ),
+                prompt="I need one more detail. Please tell me the password hint or last known code on the account.",
                 requested_field="password_hint",
             )
         if any(flag in data.get("account_id", "").lower() for flag in ("fail", "wrong", "invalid")):
             return AuthenticationResult(
                 status="failure",
-                prompt="The sign-in check could not verify those details. You can try again or ask for a human representative.",
+                prompt="The authentication system could not verify that account.",
                 metadata={"reason": "stub_login_denied"},
             )
         return AuthenticationResult(
             status="success",
-            prompt="Sign-in check succeeded.",
+            prompt="Authentication succeeded.",
             normalized_data=data,
         )
 
@@ -144,7 +145,7 @@ class StubGenesysAdapter(GenesysAdapter):
         queue_name = "announcements_queue" if request.path_name == "announcements" else "feedback_queue"
         return GenesysResult(
             status="connected",
-            prompt="I connected the request to PeopleCert routing.",
+            prompt="I connected the request to the contact center routing system.",
             metadata={
                 "queue": queue_name,
                 "path_name": request.path_name,

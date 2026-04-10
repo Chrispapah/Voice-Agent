@@ -1,21 +1,12 @@
 from __future__ import annotations
 
 import os
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from vocode_contact_center.peoplecert_urls import (
-    CERTIFICATE_VERIFICATION,
-    CORPORATE_MEMBERSHIP,
-    HELP_AND_SUPPORT_FAQ,
-    HELP_AND_SUPPORT_OLP,
-    ITIL4_FOUNDATION,
-    OLP_GUIDELINES_PDF_MAC,
-    OLP_GUIDELINES_PDF_WINDOWS,
-    TAKE2,
-)
 from vocode_contact_center.prompts import DEFAULT_AGENT_PROMPT
 
 
@@ -43,12 +34,11 @@ class ContactCenterSettings(BaseSettings):
         description="If true, registration may use telephony caller ID (from call context) when the number is missing or spoken input fails to normalize.",
     )
     registration_confirmation_sms_template: str = (
-        "Hi {full_name}, your PeopleCert account registration update is noted. "
-        "Next steps are on peoplecert.org; reply here or call back if you need more help."
+        "Hi {full_name}, your registration request has been confirmed. "
+        "We'll follow up with the next steps shortly."
     )
     generic_follow_up_sms_template: str = (
-        "Hi {full_name}, here are your PeopleCert next steps. "
-        "For more help, reply to this message or visit peoplecert.org."
+        "Hi {full_name}, here are your next steps. If you need more help, reply to this message or call us back."
     )
     redis_url: str | None = None
     nltk_auto_download: bool | None = None
@@ -61,10 +51,11 @@ class ContactCenterSettings(BaseSettings):
     deepgram_post_punctuation_time_seconds: float = 0.05
     deepgram_single_utterance_for_first_response: bool = True
     deepgram_mute_during_speech: bool = Field(
-        default=True,
+        default=False,
         description=(
             "When True (telephony), Deepgram input is muted while the bot plays TTS—reduces echo being "
-            "transcribed as caller speech and cutting off the next prompt."
+            "transcribed as caller speech, but also prevents true mid-utterance barge-in. Keep this False "
+            "to let callers interrupt the bot while it is talking."
         ),
     )
 
@@ -93,6 +84,13 @@ class ContactCenterSettings(BaseSettings):
             "finishes without barge-in—useful on very echo-prone SIP when DEEPGRAM_MUTE_DURING_SPEECH is not enough."
         ),
     )
+    agent_interrupt_sensitivity: Literal["low", "high"] = Field(
+        default="high",
+        description=(
+            "Vocode backchannel handling for live telephony interruptions. Use high to treat short phrases like "
+            "'wait' or 'stop' as real interrupts instead of backchannels."
+        ),
+    )
     non_streaming_chunk_min_words: int = 3
     non_streaming_chunk_max_words: int = 8
     non_streaming_chunk_min_chars: int = 12
@@ -110,33 +108,26 @@ class ContactCenterSettings(BaseSettings):
     google_api_key: str | None = None
     groq_api_key: str | None = None
 
-    agent_name: str = "CertyPal"
+    agent_name: str = "AI Contact Center"
     agent_initial_message: str = (
-        "Hello — thank you for calling PeopleCert. My name is CertyPal, and I'm PeopleCert's virtual assistant. "
-        "I can help with exams and booking, your PeopleCert account, certificates and learning products, "
-        "announcements, or connecting you with our team. How can I help today?"
+        "Thanks for calling your bank. I'm a banking assistant on this line. I can help with general "
+        "banking information, account support like registration or login, announcements, or feedback "
+        "and contact options. What would you like help with today?"
     )
     agent_prompt_preamble: str = DEFAULT_AGENT_PROMPT
     transfer_phone_number: str | None = None
-    information_store_website_url: str = HELP_AND_SUPPORT_OLP
-    peoplecert_help_faq_url: str = HELP_AND_SUPPORT_FAQ
-    peoplecert_olp_guidelines_pdf_mac_url: str = OLP_GUIDELINES_PDF_MAC
-    peoplecert_olp_guidelines_pdf_windows_url: str = OLP_GUIDELINES_PDF_WINDOWS
-    peoplecert_certificate_verification_url: str = CERTIFICATE_VERIFICATION
-    peoplecert_take2_url: str = TAKE2
-    peoplecert_corporate_membership_url: str = CORPORATE_MEMBERSHIP
-    peoplecert_itil4_foundation_url: str = ITIL4_FOUNDATION
+    information_store_website_url: str = "https://example.com/store-locations"
     information_products_pdf_path: str | None = None
-    information_products_pdf_url: str = OLP_GUIDELINES_PDF_WINDOWS
+    information_products_pdf_url: str = "https://example.com/products.pdf"
     information_products_chunk_chars: int = 1200
     information_products_retrieval_chunks: int = 4
     information_products_answer_max_tokens: int = 220
     information_products_answer_language: str = "English"
     announcements_message: str = (
-        "I can share the latest PeopleCert announcements with you."
+        "I can share the latest announcements with you."
     )
     feedback_question_prompt: str = (
-        "Before we finish, would you like other self-service options, or contact details for more help?"
+        "Before we finish, would you like to return to the chat, or would you prefer contact options for more help?"
     )
     voicebot_adapter_mode: str = "stub"
 
