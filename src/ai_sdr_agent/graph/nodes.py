@@ -23,6 +23,7 @@ from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.services.brain import ConversationBrain
 from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway, render_follow_up_email
 
+MAX_QUALIFY_ATTEMPTS = 3
 MAX_BOOKING_ATTEMPTS = 3
 
 
@@ -111,6 +112,7 @@ async def qualify_node(
     *,
     brain: ConversationBrain,
 ) -> dict:
+    new_attempts = state["qualify_attempts"] + 1
     qual_updates = await brain.extract_qualification(
         transcript=state["transcript"],
         existing_pain_points=state["pain_points"],
@@ -120,10 +122,16 @@ async def qualify_node(
         transcript=state["transcript"],
     )
     decision = await route_after_qualify(state, brain)
-    next_node = "pitch" if decision == "pitch" else "wrap_up"
-    extra: dict = {**qual_updates}
+    extra: dict = {**qual_updates, "qualify_attempts": new_attempts}
+
     if decision == "not_interested":
         extra["call_outcome"] = "not_interested"
+        next_node = "wrap_up"
+    elif decision == "pitch" or new_attempts >= MAX_QUALIFY_ATTEMPTS:
+        next_node = "pitch"
+    else:
+        next_node = "qualify_lead"
+
     return _append_agent_message(state, response, "qualify_lead", next_node, **extra)
 
 

@@ -24,7 +24,7 @@ async def route_after_qualify(
     return await brain.classify(
         instruction=QUALIFY_ROUTER_PROMPT,
         human_input=get_last_human_message(state),
-        labels=("pitch", "not_interested"),
+        labels=("continue_qualifying", "pitch", "not_interested"),
     )
 
 

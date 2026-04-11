@@ -48,6 +48,7 @@ class ConversationState(TypedDict):
     meeting_booked: bool
     meeting_link: str | None
     objection_count: int
+    qualify_attempts: int
     booking_attempts: int
     call_outcome: CallOutcome
     follow_up_action: str | None
@@ -90,6 +91,7 @@ def build_initial_state(
         "meeting_booked": False,
         "meeting_link": None,
         "objection_count": 0,
+        "qualify_attempts": 0,
         "booking_attempts": 0,
         "call_outcome": "follow_up_needed",
         "follow_up_action": None,

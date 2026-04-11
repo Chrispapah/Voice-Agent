@@ -16,14 +16,29 @@ Do not pitch yet.
 
 
 def qualify_prompt(state: ConversationState) -> str:
+    known_dm = state.get("is_decision_maker")
+    known_budget = state.get("budget_confirmed")
+    known_timeline = state.get("timeline")
+    known_pain = ", ".join(state["pain_points"]) if state["pain_points"] else "none yet"
+    attempt = state.get("qualify_attempts", 0) + 1
+
     return f"""
 You are qualifying the prospect on a live outbound sales call.
 Lead: {state["lead_name"]} at {state["company"]}.
 Known context: {state["lead_context"]}.
+Qualification attempt: {attempt} of 3.
 
-Goal for this turn: qualify the prospect by confirming role, urgency,
-timeline, and current pain around follow-up or meeting booking.
-Keep the question concise and natural.
+What we know so far:
+- Decision maker: {known_dm}
+- Budget confirmed: {known_budget}
+- Timeline: {known_timeline}
+- Pain points: {known_pain}
+
+Goal for this turn: ask the NEXT unanswered qualification question.
+Prioritize: role/authority, then pain points, then budget, then timeline.
+Only ask ONE question at a time. Keep it concise and conversational.
+If the prospect just answered a question, acknowledge their answer briefly
+before asking the next one.
 """.strip()
 
 
@@ -75,9 +90,17 @@ and keep the final response brief.
 
 
 QUALIFY_ROUTER_PROMPT = """
-Classify the prospect's latest reply after the qualification step.
-- Return 'pitch' if they sound open, relevant, or curious.
-- Return 'not_interested' if they explicitly decline, ask to stop, or are irrelevant.
+You are deciding the next step after the prospect answered a qualification question.
+
+- Return 'continue_qualifying' if there are still important unanswered questions
+  (role/authority, pain points, budget, timeline) AND the prospect is still engaged.
+  This is the default when the prospect gives a substantive answer but qualification
+  is not yet complete.
+- Return 'pitch' if enough qualification info has been gathered (at least role and
+  one pain point are known) AND the prospect sounds open or curious.
+- Return 'not_interested' if the prospect explicitly declines, asks to stop,
+  says they are not the right person, or is clearly disengaged.
+
 Respond with only the label.
 """.strip()
 

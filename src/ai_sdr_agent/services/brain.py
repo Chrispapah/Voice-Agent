@@ -103,12 +103,20 @@ class StubConversationBrain:
         text = human_input.lower().strip()
         if any(phrase in text for phrase in self._EXIT_PHRASES):
             return "wrap_up" if "wrap_up" in labels else "not_interested"
+        if "continue_qualifying" in labels:
+            qual_signals = ("i handle", "i'm the", "i am the", "i own", "budget",
+                            "approved", "quarter", "month", "pain", "problem",
+                            "struggle", "slow", "manual")
+            if any(s in text for s in qual_signals):
+                return "continue_qualifying"
         if "busy" in text or "already have" in text or "send info" in text or "maybe later" in text:
             if "handle_objection" in labels:
                 return "handle_objection"
         if "yes" in text or "sounds good" in text or "let's do it" in text:
             if "book_meeting" in labels:
                 return "book_meeting"
+            if "continue_qualifying" in labels:
+                return "continue_qualifying"
             if "pitch" in labels:
                 return "pitch"
             if "continue_booking" in labels:
