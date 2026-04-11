@@ -28,6 +28,7 @@ from ai_sdr_agent.services.persistence import (
     InMemorySessionStore,
 )
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
+from ai_sdr_agent.transcriber_factory import SDRTranscriberFactory
 from ai_sdr_agent.tools import StubCRMGateway, StubCalendarGateway, StubEmailGateway
 from ai_sdr_agent.vocode_agent import build_agent_config
 
@@ -196,6 +197,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
         telephony_server = TelephonyServer(
             base_url=settings.normalized_base_url(),
             config_manager=config_manager,
+            transcriber_factory=SDRTranscriberFactory(),
             inbound_call_configs=[
                 TwilioInboundCallConfig(
                     url="/inbound_call",
