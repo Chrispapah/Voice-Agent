@@ -96,10 +96,14 @@ You are deciding the next step after the prospect answered a qualification quest
   (role/authority, pain points, budget, timeline) AND the prospect is still engaged.
   This is the default when the prospect gives a substantive answer but qualification
   is not yet complete.
+  IMPORTANT: If the prospect says they are not the right person BUT offers to
+  connect you with someone else or provides a referral, return 'continue_qualifying'
+  so the agent can gather the referral details (name, role, contact info).
 - Return 'pitch' if enough qualification info has been gathered (at least role and
   one pain point are known) AND the prospect sounds open or curious.
 - Return 'not_interested' if the prospect explicitly declines, asks to stop,
-  says they are not the right person, or is clearly disengaged.
+  or is clearly disengaged with NO offer to help further. Only use this when
+  the prospect gives a hard refusal with no opening.
 
 Respond with only the label.
 """.strip()
