@@ -7,9 +7,14 @@ from loguru import logger
 from pydantic import BaseModel
 from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
+from vocode.streaming.models.transcriber import DeepgramTranscriberConfig
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
 from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboundCallConfig
+from vocode.streaming.transcriber.deepgram_transcriber import (
+    DeepgramEndpointingConfig,
+    TimeSilentConfig,
+)
 
 from ai_sdr_agent.agent_factory import SDRAgentFactory
 from ai_sdr_agent.config import SDRSettings, get_settings
@@ -169,6 +174,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
                         sales_rep_name=settings.default_sales_rep_name,
                         initial_message_text=settings.initial_greeting,
                     ),
+                    transcriber_config=_build_transcriber_config(settings),
                     synthesizer_config=_build_synthesizer_config(settings),
                     twilio_config=TwilioConfig(
                         account_sid=settings.twilio_account_sid or "",
@@ -218,4 +224,23 @@ def _build_synthesizer_config(settings: SDRSettings):
         model_id=settings.elevenlabs_model_id,
         optimize_streaming_latency=settings.elevenlabs_optimize_streaming_latency,
         experimental_websocket=settings.elevenlabs_use_websocket,
+    )
+
+
+def _build_transcriber_config(settings: SDRSettings):
+    return DeepgramTranscriberConfig.from_telephone_input_device(
+        endpointing_config=DeepgramEndpointingConfig(
+            vad_threshold_ms=settings.deepgram_vad_threshold_ms,
+            utterance_cutoff_ms=settings.deepgram_utterance_cutoff_ms,
+            time_silent_config=TimeSilentConfig(
+                time_cutoff_seconds=settings.deepgram_time_cutoff_seconds,
+                post_punctuation_time_seconds=settings.deepgram_post_punctuation_time_seconds,
+            ),
+            use_single_utterance_endpointing_for_first_utterance=(
+                settings.deepgram_single_utterance_for_first_response
+            ),
+        ),
+        api_key=settings.deepgram_api_key,
+        model=settings.deepgram_model,
+        mute_during_speech=settings.deepgram_mute_during_speech,
     )

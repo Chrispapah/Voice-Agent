@@ -4,6 +4,8 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
+from loguru import logger
+
 from ai_sdr_agent.graph.graph import build_sdr_graph
 from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.models import CallLogRecord
@@ -51,6 +53,7 @@ class SDRConversationService:
                 transcript=[],
             )
         )
+        logger.info("Started SDR session conversation_id={} lead_id={}", session_id, lead_id)
         return session_id
 
     async def get_state(self, conversation_id: str) -> ConversationState:
@@ -65,6 +68,14 @@ class SDRConversationService:
             state["transcript"].append({"role": "human", "content": human_input})
             state["last_human_message"] = human_input
             state["turn_count"] += 1
+            logger.info(
+                "Processing human turn conversation_id={} turn_count={} text={!r}",
+                conversation_id,
+                state["turn_count"],
+                human_input,
+            )
+        else:
+            logger.info("Processing empty turn conversation_id={}", conversation_id)
         updated_state = await self.graph.ainvoke(state)
         await self.dependencies.session_store.save(conversation_id, updated_state)
         await self.dependencies.call_log_repository.save_call_log(
@@ -78,5 +89,11 @@ class SDRConversationService:
                 proposed_slot=updated_state["proposed_slot"],
                 follow_up_action=updated_state["follow_up_action"],
             )
+        )
+        logger.info(
+            "Completed SDR turn conversation_id={} route_decision={} response={!r}",
+            conversation_id,
+            updated_state["route_decision"],
+            updated_state["last_agent_response"],
         )
         return updated_state

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from loguru import logger
 from pydantic.v1 import Field
 from vocode.streaming.agent.base_agent import RespondAgent
 from vocode.streaming.models.agent import AgentConfig
@@ -33,13 +34,29 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         is_interrupt: bool = False,
     ) -> tuple[str | None, bool]:
+        logger.info(
+            "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
+            conversation_id,
+            is_interrupt,
+            human_input,
+        )
         if conversation_id not in self._initialized_conversations:
             await self.conversation_service.start_session(
                 self.agent_config.lead_id,
                 conversation_id=conversation_id,
             )
             self._initialized_conversations.add(conversation_id)
+            logger.info(
+                "Initialized SDR session from phone call conversation_id={} lead_id={}",
+                conversation_id,
+                self.agent_config.lead_id,
+            )
         state = await self.conversation_service.handle_turn(conversation_id, human_input)
+        logger.info(
+            "SDR agent generated reply conversation_id={} text={!r}",
+            conversation_id,
+            state["last_agent_response"],
+        )
         return state["last_agent_response"], True
 
 
