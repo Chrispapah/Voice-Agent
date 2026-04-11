@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from loguru import logger
 from pydantic import BaseModel
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
@@ -38,6 +39,8 @@ class OutboundCallRequest(BaseModel):
 
 def create_app(settings: SDRSettings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    missing_runtime_values = settings.missing_runtime_values()
+    telephony_ready = not missing_runtime_values
 
     lead_repository = InMemoryLeadRepository()
     seed_lead = lead_repository._leads["lead-001"]  # typed seed used by all stubs
@@ -81,14 +84,32 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     @app.get("/healthz")
     async def healthz():
         return {
-            "status": "ok" if settings.telephony_ready() else "degraded",
+            "status": "ok" if telephony_ready else "degraded",
             "app_name": settings.app_name,
             "llm_provider": settings.llm_provider,
             "tts_provider": settings.tts_provider,
-            "telephony_ready": settings.telephony_ready(),
-            "missing_runtime_values": settings.missing_runtime_values(),
+            "telephony_ready": telephony_ready,
+            "missing_runtime_values": missing_runtime_values,
             "config_manager": settings.config_manager_kind(),
             "provider_summary": settings.provider_summary(),
+        }
+
+    @app.get("/debug/telephony")
+    async def debug_telephony():
+        routes = sorted(
+            {
+                route.path
+                for route in app.routes
+                if hasattr(route, "path")
+            }
+        )
+        return {
+            "telephony_ready": telephony_ready,
+            "base_url": settings.normalized_base_url(),
+            "missing_runtime_values": missing_runtime_values,
+            "config_manager": settings.config_manager_kind(),
+            "inbound_call_route_registered": "/inbound_call" in routes,
+            "routes": routes,
         }
 
     @app.get("/leads")
@@ -134,7 +155,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
         result = await call_scheduler.schedule_outbound_call(lead)
         return result.__dict__
 
-    if settings.telephony_ready() and settings.normalized_base_url():
+    if telephony_ready and settings.normalized_base_url():
         telephony_server = TelephonyServer(
             base_url=settings.normalized_base_url(),
             config_manager=config_manager,
@@ -156,6 +177,24 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             agent_factory=SDRAgentFactory(conversation_service),
         )
         app.include_router(telephony_server.get_router())
+
+    registered_routes = sorted(
+        {
+            route.path
+            for route in app.routes
+            if hasattr(route, "path")
+        }
+    )
+    logger.info(
+        "Application startup telephony_ready={} base_url={} config_manager={} "
+        "missing_runtime_values={} inbound_call_route_registered={} routes={}",
+        telephony_ready,
+        settings.normalized_base_url(),
+        settings.config_manager_kind(),
+        missing_runtime_values,
+        "/inbound_call" in registered_routes,
+        registered_routes,
+    )
 
     return app
 
