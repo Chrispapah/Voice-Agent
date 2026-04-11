@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 
@@ -119,26 +120,22 @@ async def qualify_node(
     new_attempts = state["qualify_attempts"] + 1
 
     t0 = time.perf_counter()
-    qual_updates = await brain.extract_qualification(
-        transcript=state["transcript"],
-        existing_pain_points=state["pain_points"],
+    qual_updates, response, decision = await asyncio.gather(
+        brain.extract_qualification(
+            transcript=state["transcript"],
+            existing_pain_points=state["pain_points"],
+        ),
+        brain.respond(
+            system_prompt=qualify_prompt(state),
+            transcript=state["transcript"],
+        ),
+        route_after_qualify(state, brain),
     )
-    extract_ms = (time.perf_counter() - t0) * 1000
-
-    t1 = time.perf_counter()
-    response = await brain.respond(
-        system_prompt=qualify_prompt(state),
-        transcript=state["transcript"],
-    )
-    respond_ms = (time.perf_counter() - t1) * 1000
-
-    t2 = time.perf_counter()
-    decision = await route_after_qualify(state, brain)
-    route_ms = (time.perf_counter() - t2) * 1000
+    wall_ms = (time.perf_counter() - t0) * 1000
 
     logger.info(
-        "qualify_node latency extract_ms={:.0f} respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
-        extract_ms, respond_ms, route_ms, extract_ms + respond_ms + route_ms,
+        "qualify_node latency wall_ms={:.0f} (extract+respond+route parallel)",
+        wall_ms,
     )
     extra: dict = {**qual_updates, "qualify_attempts": new_attempts}
 
@@ -159,19 +156,18 @@ async def pitch_node(
     brain: ConversationBrain,
 ) -> dict:
     t0 = time.perf_counter()
-    response = await brain.respond(
-        system_prompt=pitch_prompt(state),
-        transcript=state["transcript"],
+    response, decision = await asyncio.gather(
+        brain.respond(
+            system_prompt=pitch_prompt(state),
+            transcript=state["transcript"],
+        ),
+        route_after_pitch(state, brain),
     )
-    respond_ms = (time.perf_counter() - t0) * 1000
-
-    t1 = time.perf_counter()
-    decision = await route_after_pitch(state, brain)
-    route_ms = (time.perf_counter() - t1) * 1000
+    wall_ms = (time.perf_counter() - t0) * 1000
 
     logger.info(
-        "pitch_node latency respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
-        respond_ms, route_ms, respond_ms + route_ms,
+        "pitch_node latency wall_ms={:.0f} (respond+route parallel)",
+        wall_ms,
     )
     next_node = {
         "book_meeting": "book_meeting",
@@ -187,26 +183,30 @@ async def objection_node(
     brain: ConversationBrain,
 ) -> dict:
     new_count = state["objection_count"] + 1
+    extra: dict = {"objection_count": new_count}
 
     t0 = time.perf_counter()
-    response = await brain.respond(
-        system_prompt=objection_prompt(state),
-        transcript=state["transcript"],
-    )
-    respond_ms = (time.perf_counter() - t0) * 1000
-
-    extra: dict = {"objection_count": new_count}
     if new_count >= 2:
-        logger.info("objection_node latency respond_ms={:.0f} route_ms=0 total_ms={:.0f}", respond_ms, respond_ms)
+        response = await brain.respond(
+            system_prompt=objection_prompt(state),
+            transcript=state["transcript"],
+        )
+        wall_ms = (time.perf_counter() - t0) * 1000
+        logger.info("objection_node latency wall_ms={:.0f} (max objections reached)", wall_ms)
         extra["call_outcome"] = "follow_up_needed"
         next_node = "wrap_up"
     else:
-        t1 = time.perf_counter()
-        decision = await route_after_objection(state, brain)
-        route_ms = (time.perf_counter() - t1) * 1000
+        response, decision = await asyncio.gather(
+            brain.respond(
+                system_prompt=objection_prompt(state),
+                transcript=state["transcript"],
+            ),
+            route_after_objection(state, brain),
+        )
+        wall_ms = (time.perf_counter() - t0) * 1000
         logger.info(
-            "objection_node latency respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
-            respond_ms, route_ms, respond_ms + route_ms,
+            "objection_node latency wall_ms={:.0f} (respond+route parallel)",
+            wall_ms,
         )
         next_node = "pitch" if decision == "pitch" else "wrap_up"
     return _append_agent_message(state, response, "handle_objection", next_node, **extra)
@@ -238,14 +238,9 @@ async def book_meeting_node(
         ]
         extra["available_slots"] = available_slots
 
-    t0 = time.perf_counter()
-    response = await brain.respond(
-        system_prompt=booking_prompt(state),
-        transcript=state["transcript"],
-    )
-    respond_ms = (time.perf_counter() - t0) * 1000
-
     confirmed = _detect_confirmed_slot(state)
+    t0 = time.perf_counter()
+
     if confirmed is not None:
         booking = await calendar_gateway.book_slot(
             calendar_id=state["calendar_id"],
@@ -261,10 +256,10 @@ async def book_meeting_node(
             call_outcome="meeting_booked",
             follow_up_action="send_meeting_confirmation",
         )
-        book_ms = (time.perf_counter() - t0) * 1000 - respond_ms
+        wall_ms = (time.perf_counter() - t0) * 1000
         logger.info(
-            "book_meeting_node latency respond_ms={:.0f} book_slot_ms={:.0f} total_ms={:.0f} (slot confirmed)",
-            respond_ms, book_ms, respond_ms + book_ms,
+            "book_meeting_node latency wall_ms={:.0f} (slot confirmed)",
+            wall_ms,
         )
         response = (
             f"Great, I have you booked for {confirmed['label']}. "
@@ -272,19 +267,29 @@ async def book_meeting_node(
         )
         next_node = "wrap_up"
     elif new_attempts >= MAX_BOOKING_ATTEMPTS:
+        response = await brain.respond(
+            system_prompt=booking_prompt(state),
+            transcript=state["transcript"],
+        )
+        wall_ms = (time.perf_counter() - t0) * 1000
         logger.info(
-            "book_meeting_node latency respond_ms={:.0f} route_ms=0 total_ms={:.0f} (attempts exhausted)",
-            respond_ms, respond_ms,
+            "book_meeting_node latency wall_ms={:.0f} (attempts exhausted)",
+            wall_ms,
         )
         extra.update(call_outcome="follow_up_needed", follow_up_action="manual_booking_follow_up")
         next_node = "wrap_up"
     else:
-        t1 = time.perf_counter()
-        decision = await route_during_booking(state, brain)
-        route_ms = (time.perf_counter() - t1) * 1000
+        response, decision = await asyncio.gather(
+            brain.respond(
+                system_prompt=booking_prompt(state),
+                transcript=state["transcript"],
+            ),
+            route_during_booking(state, brain),
+        )
+        wall_ms = (time.perf_counter() - t0) * 1000
         logger.info(
-            "book_meeting_node latency respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
-            respond_ms, route_ms, respond_ms + route_ms,
+            "book_meeting_node latency wall_ms={:.0f} (respond+route parallel)",
+            wall_ms,
         )
         if decision == "wrap_up":
             extra.update(call_outcome="follow_up_needed", follow_up_action="manual_booking_follow_up")

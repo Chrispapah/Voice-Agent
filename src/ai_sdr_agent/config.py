@@ -41,7 +41,7 @@ class SDRSettings(BaseSettings):
     deepgram_time_cutoff_seconds: float = 0.2
     deepgram_post_punctuation_time_seconds: float = 0.08
     deepgram_single_utterance_for_first_response: bool = True
-    deepgram_mute_during_speech: bool = False
+    deepgram_mute_during_speech: bool = True
 
     tts_provider: Literal["elevenlabs", "azure"] = "elevenlabs"
     elevenlabs_api_key: str | None = None
