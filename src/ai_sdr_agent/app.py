@@ -5,9 +5,11 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
+from vocode.streaming.models.telephony import BaseCallConfig
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig
+from vocode.streaming.telephony.config_manager.base_config_manager import BaseConfigManager
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
 from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboundCallConfig
@@ -41,6 +43,35 @@ class TurnRequest(BaseModel):
 
 class OutboundCallRequest(BaseModel):
     lead_id: str
+
+
+class HybridCallConfigManager(BaseConfigManager):
+    """Prefer in-process configs, with Redis fallback across replicas."""
+
+    def __init__(self, redis_enabled: bool):
+        self._memory = InMemoryConfigManager()
+        self._redis = RedisConfigManager() if redis_enabled else None
+
+    async def save_config(self, conversation_id: str, config: BaseCallConfig):
+        await self._memory.save_config(conversation_id, config)
+        if self._redis is not None:
+            await self._redis.save_config(conversation_id, config)
+
+    async def get_config(self, conversation_id: str):
+        config = await self._memory.get_config(conversation_id)
+        if config is not None:
+            return config
+        if self._redis is None:
+            return None
+        config = await self._redis.get_config(conversation_id)
+        if config is not None:
+            await self._memory.save_config(conversation_id, config)
+        return config
+
+    async def delete_config(self, conversation_id: str):
+        await self._memory.delete_config(conversation_id)
+        if self._redis is not None:
+            await self._redis.delete_config(conversation_id)
 
 
 def create_app(settings: SDRSettings | None = None) -> FastAPI:
@@ -215,9 +246,14 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
 
 
 def _build_config_manager(settings: SDRSettings):
-    if settings.use_redis_config_manager and settings.redis_url:
-        return RedisConfigManager()
-    return InMemoryConfigManager()
+    redis_enabled = settings.use_redis_config_manager and bool(settings.redis_url)
+    if redis_enabled:
+        logger.info(
+            "Using hybrid call config manager with in-memory primary and Redis fallback."
+        )
+    else:
+        logger.info("Using in-memory call config manager.")
+    return HybridCallConfigManager(redis_enabled=redis_enabled)
 
 
 def _build_synthesizer_config(settings: SDRSettings):
