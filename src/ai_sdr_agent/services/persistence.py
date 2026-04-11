@@ -43,8 +43,7 @@ class InMemoryLeadRepository:
                 phone_number="+15551234567",
                 lead_email="michael.manis@harborlab.com",
                 lead_context=(
-                    "Downloaded the outbound sales playbook last week and requested "
-                    "a follow-up about routing more leads to reps automatically."
+                    "You are cold calling this lead to sell him on our software product, called Automated SDR. It's a tool that helps sales teams automate their outreach and follow-up processes."
                 ),
                 owner_name="Taylor Morgan",
                 calendar_id="sales-team",
