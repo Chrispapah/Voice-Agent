@@ -202,7 +202,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
         settings.normalized_base_url(),
         settings.config_manager_kind(),
         "deepgram",
-        settings.deepgram_model,
+        _resolve_telephony_deepgram_model(settings.deepgram_model),
         "elevenlabs",
         settings.elevenlabs_model_id,
         settings.elevenlabs_use_websocket,
@@ -230,7 +230,27 @@ def _build_synthesizer_config(settings: SDRSettings):
     )
 
 
+def _resolve_telephony_deepgram_model(raw_model: str | None) -> str:
+    model = (raw_model or "").strip() or "phonecall"
+    if model.lower() == "nova-2":
+        logger.warning(
+            "DEEPGRAM_MODEL={} is not telephony-optimized; using phonecall model for Twilio audio.",
+            model,
+        )
+        return "phonecall"
+    return model
+
+
 def _build_transcriber_config(settings: SDRSettings):
+    model = _resolve_telephony_deepgram_model(settings.deepgram_model)
+
+    use_single_utterance = settings.deepgram_single_utterance_for_first_response
+    if use_single_utterance:
+        logger.warning(
+            "Disabling single-utterance endpointing for first response to improve short reply detection."
+        )
+        use_single_utterance = False
+
     return DeepgramTranscriberConfig.from_telephone_input_device(
         endpointing_config=DeepgramEndpointingConfig(
             vad_threshold_ms=settings.deepgram_vad_threshold_ms,
@@ -239,11 +259,9 @@ def _build_transcriber_config(settings: SDRSettings):
                 time_cutoff_seconds=settings.deepgram_time_cutoff_seconds,
                 post_punctuation_time_seconds=settings.deepgram_post_punctuation_time_seconds,
             ),
-            use_single_utterance_endpointing_for_first_utterance=(
-                settings.deepgram_single_utterance_for_first_response
-            ),
+            use_single_utterance_endpointing_for_first_utterance=use_single_utterance,
         ),
         api_key=settings.deepgram_api_key,
-        model=settings.deepgram_model,
+        model=model,
         mute_during_speech=settings.deepgram_mute_during_speech,
     )

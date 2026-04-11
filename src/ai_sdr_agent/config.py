@@ -46,7 +46,7 @@ class SDRSettings(BaseSettings):
     elevenlabs_api_key: str | None = None
     elevenlabs_voice_id: str | None = None
     elevenlabs_model_id: str = "eleven_turbo_v2"
-    elevenlabs_use_websocket: bool = True
+    elevenlabs_use_websocket: bool = False
     elevenlabs_optimize_streaming_latency: int = 4
 
     azure_speech_key: str | None = None
@@ -129,6 +129,7 @@ class SDRSettings(BaseSettings):
             "llm_provider": self.llm_provider,
             "stt_provider": "deepgram",
             "tts_provider": "elevenlabs",
+            "tts_transport": "http_stream",
             "calendar": "stub",
             "email": "stub",
             "crm": "stub",
