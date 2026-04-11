@@ -69,6 +69,14 @@ class StubConversationBrain:
             "reps spend more time in qualified conversations. Would you be open to a short walkthrough?"
         )
 
+    _EXIT_PHRASES = (
+        "not interested", "stop calling", "remove me", "do not call",
+        "don't call", "goodbye", "good bye", "bye bye", "hang up",
+        "end the call", "end call", "leave me alone", "go away", "get lost",
+        "piss off", "fuck off", "fuck you", "screw you", "shut up",
+        "stop it", "i'm done", "i am done", "let me go",
+    )
+
     async def classify(
         self,
         *,
@@ -76,8 +84,8 @@ class StubConversationBrain:
         human_input: str,
         labels: Sequence[str],
     ) -> str:
-        text = human_input.lower()
-        if "not interested" in text or "stop calling" in text or "remove me" in text:
+        text = human_input.lower().strip()
+        if any(phrase in text for phrase in self._EXIT_PHRASES):
             return "wrap_up" if "wrap_up" in labels else "not_interested"
         if "busy" in text or "already have" in text or "send info" in text or "maybe later" in text:
             if "handle_objection" in labels:
@@ -87,7 +95,11 @@ class StubConversationBrain:
                 return "book_meeting"
             if "pitch" in labels:
                 return "pitch"
+            if "continue_booking" in labels:
+                return "continue_booking"
         if "tuesday" in text or "tomorrow" in text or "3 pm" in text or "10 am" in text:
+            if "continue_booking" in labels:
+                return "continue_booking"
             if "wrap_up" in labels:
                 return "wrap_up"
         return labels[0]

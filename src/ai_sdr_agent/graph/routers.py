@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from ai_sdr_agent.graph.prompts import (
+    BOOKING_ROUTER_PROMPT,
     OBJECTION_ROUTER_PROMPT,
     PITCH_ROUTER_PROMPT,
     QUALIFY_ROUTER_PROMPT,
@@ -47,3 +48,15 @@ async def route_after_objection(
         human_input=get_last_human_message(state),
         labels=("pitch", "wrap_up"),
     )
+
+
+async def route_during_booking(
+    state: ConversationState,
+    brain: ConversationBrain,
+) -> str:
+    result = await brain.classify(
+        instruction=BOOKING_ROUTER_PROMPT,
+        human_input=get_last_human_message(state),
+        labels=("continue_booking", "wrap_up"),
+    )
+    return "wrap_up" if result == "wrap_up" else "continue_booking"

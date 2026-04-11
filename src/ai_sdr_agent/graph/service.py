@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,18 @@ from ai_sdr_agent.services.brain import ConversationBrain
 from ai_sdr_agent.services.persistence import CallLogRepository, SessionStore
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
 from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway
+
+_EXIT_PATTERNS = re.compile(
+    r"\b("
+    r"goodbye|good bye|bye bye|hang up|end the call|end call|stop calling"
+    r"|leave me alone|go away|get lost|piss off|fuck off|fuck you"
+    r"|screw you|shut up|stop it|i('?m| am) done|let me go"
+    r"|not interested|remove me|do not call|don'?t call"
+    r")\b",
+    re.IGNORECASE,
+)
+
+MAX_CALL_TURNS = 12
 
 
 @dataclass
@@ -76,6 +89,18 @@ class SDRConversationService:
             )
         else:
             logger.info("Processing empty turn conversation_id={}", conversation_id)
+
+        force_exit = False
+        if human_input and _EXIT_PATTERNS.search(human_input):
+            force_exit = True
+            logger.info("Exit signal detected conversation_id={} text={!r}", conversation_id, human_input)
+        if state["turn_count"] >= MAX_CALL_TURNS:
+            force_exit = True
+            logger.info("Max turns reached conversation_id={} turn_count={}", conversation_id, state["turn_count"])
+        if force_exit and state["next_node"] != "complete":
+            state["next_node"] = "wrap_up"
+            state["call_outcome"] = "not_interested"
+
         updated_state = await self.graph.ainvoke(state)
         await self.dependencies.session_store.save(conversation_id, updated_state)
         await self.dependencies.call_log_repository.save_call_log(

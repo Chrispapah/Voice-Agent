@@ -97,3 +97,11 @@ Classify the prospect's reply after objection handling.
 - Return 'wrap_up' if they are still declining or want to end the call.
 Respond with only the label.
 """.strip()
+
+
+BOOKING_ROUTER_PROMPT = """
+The prospect was asked to choose a meeting slot. Classify their reply.
+- Return 'continue_booking' if they are trying to pick a slot or still engaged.
+- Return 'wrap_up' if they want to end the call, are frustrated, or refuse to book.
+Respond with only the label.
+""".strip()

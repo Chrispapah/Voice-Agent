@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+
+from loguru import logger
+
 from ai_sdr_agent.graph.prompts import (
     booking_prompt,
     greeting_prompt,
@@ -8,10 +12,18 @@ from ai_sdr_agent.graph.prompts import (
     qualify_prompt,
     wrap_up_prompt,
 )
-from ai_sdr_agent.graph.routers import get_last_human_message, route_after_objection, route_after_pitch, route_after_qualify
+from ai_sdr_agent.graph.routers import (
+    get_last_human_message,
+    route_after_objection,
+    route_after_pitch,
+    route_after_qualify,
+    route_during_booking,
+)
 from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.services.brain import ConversationBrain
 from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway, render_follow_up_email
+
+MAX_BOOKING_ATTEMPTS = 3
 
 
 def _append_agent_message(
@@ -41,18 +53,53 @@ def _infer_qualification_fields(state: ConversationState) -> None:
             state["pain_points"].append(marker)
 
 
+_ORDINAL_MAP: list[tuple[re.Pattern[str], int]] = [
+    (re.compile(r"\b(first|1st|number\s*one|option\s*one|option\s*1|the\s*one)\b", re.I), 0),
+    (re.compile(r"\b(second|2nd|number\s*two|option\s*two|option\s*2)\b", re.I), 1),
+    (re.compile(r"\b(third|3rd|number\s*three|option\s*three|option\s*3|last)\b", re.I), 2),
+]
+
+_TIME_KEYWORDS: list[tuple[re.Pattern[str], int]] = [
+    (re.compile(r"\btomorrow\b", re.I), 0),
+    (re.compile(r"\b(two|2)\s*day", re.I), 1),
+    (re.compile(r"\b(three|3)\s*day", re.I), 2),
+    (re.compile(r"\b3\s*(:00\s*)?p\.?m\b", re.I), 0),
+    (re.compile(r"\b10\s*(:00\s*)?a\.?m\b", re.I), 1),
+    (re.compile(r"\b5\s*(:00\s*)?p\.?m\b", re.I), 2),
+]
+
+
 def _detect_confirmed_slot(state: ConversationState) -> dict[str, str] | None:
-    last_human = get_last_human_message(state).lower()
-    for slot in state["available_slots"]:
+    slots = state["available_slots"]
+    if not slots:
+        return None
+    last_human = get_last_human_message(state).lower().strip()
+    if not last_human:
+        return None
+
+    for slot in slots:
         label = slot["label"].lower()
         start_time = slot["start_time"].lower()
-        if any(token in last_human for token in (slot["slot_id"].lower(), label, start_time[:16].lower())):
+        if slot["slot_id"].lower() in last_human:
             return slot
-        simple_label = label.replace("utc", "").strip()
+        if label in last_human:
+            return slot
+        simple_label = label.replace("utc", "").replace("in ", "").strip()
         if simple_label and simple_label in last_human:
             return slot
-    if "tomorrow" in last_human and state["available_slots"]:
-        return state["available_slots"][0]
+        if start_time[:16] in last_human:
+            return slot
+
+    for pattern, idx in _ORDINAL_MAP:
+        if pattern.search(last_human) and idx < len(slots):
+            logger.info("Slot matched via ordinal index={} text={!r}", idx, last_human)
+            return slots[idx]
+
+    for pattern, idx in _TIME_KEYWORDS:
+        if pattern.search(last_human) and idx < len(slots):
+            logger.info("Slot matched via time keyword index={} text={!r}", idx, last_human)
+            return slots[idx]
+
     return None
 
 
@@ -128,6 +175,8 @@ async def book_meeting_node(
     brain: ConversationBrain,
     calendar_gateway: CalendarGateway,
 ) -> ConversationState:
+    state["booking_attempts"] += 1
+
     if not state["available_slots"]:
         slots = await calendar_gateway.list_available_slots(
             calendar_id=state["calendar_id"],
@@ -165,10 +214,19 @@ async def book_meeting_node(
             "I will send the invite and follow-up details right after this call."
         )
         next_node = "wrap_up"
-    else:
+    elif state["booking_attempts"] >= MAX_BOOKING_ATTEMPTS:
+        logger.info("Booking attempts exhausted, wrapping up")
         state["call_outcome"] = "follow_up_needed"
         state["follow_up_action"] = "manual_booking_follow_up"
-        next_node = "book_meeting"
+        next_node = "wrap_up"
+    else:
+        decision = await route_during_booking(state, brain)
+        if decision == "wrap_up":
+            state["call_outcome"] = "follow_up_needed"
+            state["follow_up_action"] = "manual_booking_follow_up"
+            next_node = "wrap_up"
+        else:
+            next_node = "book_meeting"
     return _append_agent_message(state, response, "book_meeting", next_node)
 
 
