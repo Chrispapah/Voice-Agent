@@ -30,8 +30,11 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
 
     def start(self) -> None:
         super().start()
-        # Send greeting via normal agent output queue instead of initial_message.
-        # This prevents Vocode from ignoring user speech while the greeting is playing.
+        logger.info(
+            "SDRVocodeAgent started lead_id={} generate_responses={}",
+            self.agent_config.lead_id,
+            self.agent_config.generate_responses,
+        )
         self.produce_interruptible_agent_response_event_nonblocking(
             AgentResponseMessage(
                 message=BaseMessage(text=self.agent_config.initial_message_text),
@@ -56,24 +59,32 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             is_interrupt,
             human_input,
         )
-        if conversation_id not in self._initialized_conversations:
-            await self.conversation_service.start_session(
-                self.agent_config.lead_id,
-                conversation_id=conversation_id,
-            )
-            self._initialized_conversations.add(conversation_id)
+        try:
+            if conversation_id not in self._initialized_conversations:
+                await self.conversation_service.start_session(
+                    self.agent_config.lead_id,
+                    conversation_id=conversation_id,
+                )
+                self._initialized_conversations.add(conversation_id)
+                logger.info(
+                    "Initialized SDR session from phone call conversation_id={} lead_id={}",
+                    conversation_id,
+                    self.agent_config.lead_id,
+                )
+            state = await self.conversation_service.handle_turn(conversation_id, human_input)
             logger.info(
-                "Initialized SDR session from phone call conversation_id={} lead_id={}",
+                "SDR agent generated reply conversation_id={} text={!r}",
                 conversation_id,
-                self.agent_config.lead_id,
+                state["last_agent_response"],
             )
-        state = await self.conversation_service.handle_turn(conversation_id, human_input)
-        logger.info(
-            "SDR agent generated reply conversation_id={} text={!r}",
-            conversation_id,
-            state["last_agent_response"],
-        )
-        return state["last_agent_response"], False
+            return state["last_agent_response"], False
+        except Exception:
+            logger.exception(
+                "SDR agent respond() failed conversation_id={} text={!r}",
+                conversation_id,
+                human_input,
+            )
+            return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
 
 
 def build_agent_config(

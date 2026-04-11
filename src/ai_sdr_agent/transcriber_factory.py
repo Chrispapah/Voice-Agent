@@ -1,23 +1,22 @@
 from __future__ import annotations
 
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
-
+from loguru import logger
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig, TranscriberConfig
 from vocode.streaming.transcriber.deepgram_transcriber import DeepgramTranscriber
 from vocode.streaming.transcriber.default_factory import DefaultTranscriberFactory
 
 
-class StableDeepgramTranscriber(DeepgramTranscriber):
-    """Force final-only Deepgram results for short telephony utterances."""
+class LoggingDeepgramTranscriber(DeepgramTranscriber):
+    """Deepgram transcriber with startup logging for telephony diagnostics."""
 
-    def get_deepgram_url(self) -> str:
-        base_url = super().get_deepgram_url()
-        parts = urlsplit(base_url)
-        params = dict(parse_qsl(parts.query, keep_blank_values=True))
-        params["interim_results"] = "false"
-        return urlunsplit(
-            (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
-        )
+    async def _run_loop(self):
+        url = self.get_deepgram_url()
+        logger.info("Deepgram WS connecting url={}", url)
+        try:
+            return await super()._run_loop()
+        except Exception:
+            logger.exception("Deepgram transcriber loop crashed")
+            raise
 
 
 class SDRTranscriberFactory(DefaultTranscriberFactory):
@@ -26,6 +25,6 @@ class SDRTranscriberFactory(DefaultTranscriberFactory):
         transcriber_config: TranscriberConfig,
     ):
         if isinstance(transcriber_config, DeepgramTranscriberConfig):
-            return StableDeepgramTranscriber(transcriber_config)
+            return LoggingDeepgramTranscriber(transcriber_config)
         return super().create_transcriber(transcriber_config)
 
