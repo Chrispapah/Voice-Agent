@@ -38,10 +38,10 @@ class InMemoryLeadRepository:
         seed = leads or [
             LeadRecord(
                 lead_id="lead-001",
-                lead_name="Jordan Lee",
-                company="Northwind Logistics",
+                lead_name="Michael Manis",
+                company="HarborLab",
                 phone_number="+15551234567",
-                lead_email="jordan.lee@example.com",
+                lead_email="michael.manis@harborlab.com",
                 lead_context=(
                     "Downloaded the outbound sales playbook last week and requested "
                     "a follow-up about routing more leads to reps automatically."
