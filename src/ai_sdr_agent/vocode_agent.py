@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from loguru import logger
-from vocode.streaming.agent.base_agent import RespondAgent
+from vocode.streaming.agent.base_agent import AgentResponseMessage, RespondAgent
+from vocode.streaming.models.actions import EndOfTurn
 from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.message import BaseMessage
 
@@ -26,6 +27,22 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         super().__init__(agent_config=agent_config, **kwargs)
         self.conversation_service = conversation_service
         self._initialized_conversations: set[str] = set()
+
+    def start(self) -> None:
+        super().start()
+        # Send greeting via normal agent output queue instead of initial_message.
+        # This prevents Vocode from ignoring user speech while the greeting is playing.
+        self.produce_interruptible_agent_response_event_nonblocking(
+            AgentResponseMessage(
+                message=BaseMessage(text=self.agent_config.initial_message_text),
+                is_first=True,
+            ),
+            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+        )
+        self.produce_interruptible_agent_response_event_nonblocking(
+            AgentResponseMessage(message=EndOfTurn()),
+            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+        )
 
     async def respond(
         self,
@@ -73,7 +90,6 @@ def build_agent_config(
         calendar_id=calendar_id,
         sales_rep_name=sales_rep_name,
         initial_message_text=initial_message_text,
-        initial_message=BaseMessage(text=initial_message_text),
         # RespondAgent subclasses must use respond(), not generate_response().
         generate_responses=False,
         allow_agent_to_be_cut_off=allow_agent_to_be_cut_off,
