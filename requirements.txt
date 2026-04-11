@@ -1,13 +1,13 @@
 fastapi
 langchain==0.2.17
 langgraph==0.2.71
-langchain-groq==0.1.10
 langchain-openai==0.1.25
+langchain-anthropic==0.1.23
+langchain-groq==0.1.10
+jinja2
 loguru
-phonenumbers
 pydantic-settings
-pypdf
-pyngrok
+asyncpg
 python-dotenv
 redis
 twilio

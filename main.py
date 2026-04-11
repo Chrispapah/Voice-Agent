@@ -6,6 +6,6 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from vocode_contact_center.app import create_app
+from ai_sdr_agent.app import create_app
 
 app = create_app()

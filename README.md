@@ -1,35 +1,37 @@
-# PeopleCert voice contact center (Vocode)
+# AI SDR Voice Agent
 
-This project hosts **CertyPal**, PeopleCert’s AI voice assistant on a telephony path: inbound calls via Twilio SIP, Deepgram for speech-to-text, ElevenLabs for speech synthesis, and a LangChain-powered layer with optional LangGraph structured flows.
-
-Behavior and scope are aligned with PeopleCert candidate support (B&IT certifications, online proctored and classroom exams). Configure prompts in `src/vocode_contact_center/prompts.py` and the initial greeting via `.env`.
+This project runs an outbound AI SDR that follows up with prospects by phone, qualifies them, books meetings, and sends follow-up emails after the call. It uses Vocode for telephony, LangGraph for conversation control flow, LangChain-style tools behind adapter interfaces, Redis for active-call telephony config, and provider-agnostic stub integrations for early development.
 
 ## What this includes
 
-- FastAPI app with Vocode `TelephonyServer`
-- `/inbound_call` webhook for Twilio voice traffic
-- ElevenLabs telephone-output synthesizer config
-- Custom LangChain-backed Vocode agent (hybrid router + LangGraph)
-- Redis-backed call config using Vocode’s `RedisConfigManager`
-- Health endpoint to verify the app before wiring telephony
-- Optional PDF-backed answers in the information flow (`INFORMATION_PRODUCTS_*`)
+- FastAPI app with health, lead, session, and outbound call endpoints
+- LangGraph SDR conversation flow under `src/ai_sdr_agent/graph/`
+- Vocode agent bridge in `src/ai_sdr_agent/vocode_agent.py`
+- Stub calendar, email, CRM, and persistence adapters for local testing
+- Outbound call scheduling via Twilio + Deepgram + ElevenLabs/Azure
+- Follow-up email templating in `templates/follow_up_email.html`
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    caller[Caller] --> zadarma[ZadarmaNumber]
-    zadarma --> twilio[TwilioSipDomain]
-    twilio --> vocode[VocodeTelephonyServer]
-    vocode --> deepgram[DeepgramSTT]
-    vocode --> agent[CustomLangChainAgent]
-    agent --> llm[LangChainModel]
-    vocode --> elevenLabs[ElevenLabsTTS]
+    leadQueue[LeadQueue] --> scheduler[CallScheduler]
+    scheduler --> telephony[VocodeTwilioOutboundCall]
+    telephony --> stt[DeepgramSTT]
+    stt --> vocodeAgent[SDRVocodeAgent]
+    vocodeAgent --> sdrGraph[LangGraphSDRFlow]
+    sdrGraph --> tools[ToolAdapters]
+    tools --> calendar[CalendarAdapter]
+    tools --> email[EmailAdapter]
+    tools --> crm[CRMAdapter]
+    sdrGraph --> postgres[PostgresCallLogs]
+    telephony --> redis[RedisSessionState]
+    vocodeAgent --> tts[ElevenLabsOrAzureTTS]
 ```
 
-## 1. Install
+## Install
 
-Use Python `3.11` for the current Vocode dependency stack on Windows.
+Use Python `3.11`.
 
 ```powershell
 py -3.11 -m venv .venv
@@ -38,102 +40,83 @@ python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## 2. Start Redis
-
-Install `ffmpeg` once on the machine if it is not already available:
-
-```powershell
-winget install -e --id Gyan.FFmpeg.Essentials
-```
-
-If you have Docker available:
+If you need Redis locally:
 
 ```powershell
 docker compose up -d redis
 ```
 
-If you already run Redis elsewhere, point `REDISHOST` and related variables at that instance.
+## Configure
 
-## 3. Configure environment
+Copy `.env.example` to `.env`.
 
-Copy `.env.example` to `.env` and fill in:
+Minimum fields for local stub-only graph testing:
 
+- `LLM_PROVIDER=stub`
+- `USE_STUB_INTEGRATIONS=true`
+
+Minimum fields for real outbound telephony:
+
+- `BASE_URL`
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
-- `TWILIO_SIP_DOMAIN`
+- `TWILIO_PHONE_NUMBER`
 - `DEEPGRAM_API_KEY`
-- `ELEVENLABS_API_KEY`
-- `ELEVENLABS_VOICE_ID`
-- Provider key for `LANGCHAIN_PROVIDER` (e.g. `GROQ_API_KEY`)
+- `ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID`, or Azure speech settings
 
-Note: Vocode’s documented transcribers do not include ElevenLabs STT, so this project keeps Deepgram for speech-to-text and ElevenLabs for synthesis.
+Optional provider fields are included for later Google Calendar, email, and CRM integrations.
 
-For local development, either:
-
-- set `BASE_URL` to your public host, or
-- leave `BASE_URL` empty and provide `NGROK_AUTH_TOKEN` so the app can open a tunnel
-- on Railway, `RAILWAY_PUBLIC_DOMAIN` can provide the public host automatically
-
-PeopleCert-specific optional variables:
-
-- `AGENT_NAME` / `AGENT_INITIAL_MESSAGE` to override the default CertyPal opening
-- `INFORMATION_STORE_WEBSITE_URL` — primary peoplecert.org landing (default in code is `https://www.peoplecert.org`)
-- `INFORMATION_PRODUCTS_PDF_PATH` or `INFORMATION_PRODUCTS_PDF_URL` — **approved** PeopleCert help or policy PDF for document-backed answers (leave empty until you have an allowed URL or file)
-- `INFORMATION_PRODUCTS_ANSWER_LANGUAGE` — for skillset `Candidate_BIT_OLP_EN`, use `English` with an English TTS voice
-
-Other optional settings:
-
-- `TRANSFER_PHONE_NUMBER` for human handoff when your telephony flow uses it
-- `REDIS_URL` if your platform provides Redis as a single connection string
-- `SMS_ADAPTER_MODE=twilio` for real outbound Twilio messaging (registration confirmation flows)
-- `NLTK_AUTO_DOWNLOAD=true` only for local/dev where startup downloads are acceptable
-
-## 4. Run the app
+## Run
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 uvicorn main:app --host 0.0.0.0 --port 3000
 ```
 
-Check health:
+## Local validation flow
+
+1. Check health:
 
 ```powershell
 Invoke-WebRequest http://127.0.0.1:3000/healthz
 ```
 
-If the app has all required credentials, `healthz` reports `ok` and the app mounts `/inbound_call`. When the app is reachable publicly, `healthz` shows the `inbound_call_url` to paste into Twilio.
+2. Inspect the seeded test lead:
 
-## 5. Point Twilio at Vocode
-
-Once the app is reachable over HTTPS:
-
-1. In Twilio, open your SIP Domain.
-2. Under **Call Control Configuration** for incoming SIP calls, set the request URL to:
-
-```text
-https://YOUR-PUBLIC-HOST/inbound_call
+```powershell
+Invoke-WebRequest http://127.0.0.1:3000/leads
 ```
 
-3. Set the method to **HTTP POST** and save.
+3. Start a graph session without telephony:
 
-## 6. Deploy on Railway
+```powershell
+Invoke-WebRequest -Method POST http://127.0.0.1:3000/sessions -ContentType "application/json" -Body '{"lead_id":"lead-001"}'
+```
 
-This project includes Railway-friendly files (`nixpacks.toml`, `railway.json`, `.python-version`, `runtime.txt`). Set `NIXPACKS_PYTHON_VERSION=3.11`, add Redis, and configure the same Twilio, Deepgram, ElevenLabs, and LangChain variables as locally. After deploy, copy `inbound_call_url` from `https://YOUR-RAILWAY-DOMAIN/healthz` into the Twilio SIP domain webhook.
+4. Continue the conversation:
 
-## 7. Customizing CertyPal
+```powershell
+Invoke-WebRequest -Method POST http://127.0.0.1:3000/sessions/CONVERSATION_ID/turns -ContentType "application/json" -Body '{"human_input":"Yes, I oversee sales operations."}'
+```
 
-- **System prompt and rules:** `src/vocode_contact_center/prompts.py`
-- **Greeting and display name:** `.env` (`AGENT_INITIAL_MESSAGE`, `AGENT_NAME`) or defaults in `src/vocode_contact_center/settings.py`
-- **Hybrid router (graph vs generic):** `src/vocode_contact_center/orchestration/hybrid_service.py`
-- **Structured menus and flows:** `src/vocode_contact_center/voicebot_graph/`
-- **RAG-style PDF answers:** `src/vocode_contact_center/product_knowledge.py` plus `INFORMATION_PRODUCTS_*`
+5. When telephony credentials are configured, trigger an outbound call:
 
-Extend tools or CRM integrations via `src/vocode_contact_center/langchain_support.py` and the agent factory as needed.
+```powershell
+Invoke-WebRequest -Method POST http://127.0.0.1:3000/outbound/calls -ContentType "application/json" -Body '{"lead_id":"lead-001"}'
+```
 
-## 8. Limitations
+## Key directories
 
-- Twilio and carrier setup require your own credentials and a public HTTPS endpoint.
-- Human handoff depends on `TRANSFER_PHONE_NUMBER`, Genesys adapters, or your own telephony wiring.
-- Document answers only cover what is in the configured PDF; do not rely on the model to invent PeopleCert policy.
+- `src/ai_sdr_agent/app.py`: FastAPI app and runtime wiring
+- `src/ai_sdr_agent/graph/`: state, prompts, routers, nodes, and graph
+- `src/ai_sdr_agent/tools/`: provider-agnostic calendar, email, and CRM tool adapters
+- `src/ai_sdr_agent/services/`: pre-call loading, persistence, brain abstraction, and call scheduling
+- `templates/follow_up_email.html`: email template used after qualifying calls
 
-See `VALIDATION.md` for rollout and live-call checks.
+## Current limitations
+
+- External integrations are stub-first; Google Calendar, SendGrid/SMTP, CRM, and Postgres adapters are not yet implemented against live providers.
+- The seeded lead repository and call log store are in-memory for now.
+- The Vocode path is wired for outbound use, but production rollout still needs real provider credentials and live call validation.
+
+See `VALIDATION.md` for the SDR-specific rollout checklist.

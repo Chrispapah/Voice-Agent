@@ -1,11 +1,11 @@
 # Validation Checklist
 
-Use this checklist before moving production traffic away from Dialogflow.
+Use this checklist before enabling real outbound SDR calling.
 
 ## Local Readiness
 
-1. Start Redis.
-2. Fill `.env` with real provider credentials.
+1. Start Redis if you want Redis-backed Vocode call config storage.
+2. Fill `.env` with either stub mode settings or real provider credentials.
 3. Run:
 
 ```powershell
@@ -20,70 +20,62 @@ Invoke-WebRequest http://127.0.0.1:3000/healthz
 ```
 
 Expected:
-- `status` is `ok`
-- `public_base_url` is present
-- `twilio_webhook_path` is `/inbound_call`
+- `status` is `ok` for a fully configured telephony environment, or `degraded` when only stub mode is active
+- `provider_summary` reflects the current runtime mode
 
-On Railway, use:
+## Graph-Only SDR Flow
 
-```text
-https://YOUR-RAILWAY-DOMAIN/healthz
+Validate the non-telephony flow first:
+
+1. Start a session for `lead-001`.
+2. Confirm the first response is the greeting.
+3. Send a qualification answer such as `Yes, I run sales operations`.
+4. Confirm the next turn asks qualification questions or advances to the pitch.
+5. Raise an objection such as `We already have a process`.
+6. Confirm the graph enters objection handling rather than ending immediately.
+7. Confirm a booking phrase such as `Tomorrow at 3 PM works`.
+8. Confirm the state marks the meeting as booked and the follow-up action is set.
+
+## Stub Integrations
+
+Check the in-memory adapters:
+
+- A follow-up email is recorded after the wrap-up path.
+- CRM updates are recorded with the final call outcome.
+- Calendar booking is recorded when a slot is confirmed.
+- Session state persists across multiple `/sessions/{conversation_id}/turns` requests.
+
+## Outbound Telephony
+
+When Twilio, Deepgram, and TTS credentials are configured:
+
+1. Ensure `BASE_URL` is reachable over HTTPS.
+2. Call:
+
+```powershell
+Invoke-WebRequest -Method POST http://127.0.0.1:3000/outbound/calls -ContentType "application/json" -Body '{"lead_id":"lead-001"}'
 ```
 
-and copy `inbound_call_url` from the response.
+3. Confirm Twilio places the call and Vocode attaches to the conversation.
+4. Confirm the prospect hears the SDR greeting and can interrupt naturally.
+5. Confirm speech-to-text keeps pace with normal phone audio.
+6. Confirm the SDR graph advances one stage per turn rather than dumping multiple stages at once.
 
-## Twilio Routing
+## Call Outcome Cases
 
-1. Open your Twilio SIP Domain configuration.
-2. Set the incoming request URL to:
+Validate each of these manually:
 
-```text
-https://YOUR-PUBLIC-HOST/inbound_call
-```
+- Positive qualification leading to a booked meeting
+- Mild objection leading to a handled objection and renewed pitch
+- Hard decline leading to `not_interested`
+- Ambiguous response leading to `follow_up_needed`
 
-3. Set the method to `HTTP POST`.
-4. Keep Zadarma routing to the Twilio SIP Domain during the test window.
-5. Call the Zadarma number and verify the request reaches the Vocode server.
+## Production Readiness
 
-## Call Quality
+Only move to real prospect traffic when all of the following are true:
 
-Test each of these live:
-
-- Caller hears the ElevenLabs voice instead of Dialogflow TTS.
-- The agent can be interrupted naturally during longer answers.
-- The agent recovers after short pauses and does not talk over the caller excessively.
-- A simple question gets a short, phone-friendly response.
-- A longer support-style question produces a coherent multi-turn conversation.
-
-## Fallback And Escalation
-
-Test these phrases:
-
-- `I want a human`
-- `Can you transfer me to an agent?`
-- `Let me speak to a representative`
-
-Expected:
-- The custom agent does not hallucinate tool access.
-- It returns the fallback handoff message.
-- If you later add a live transfer workflow, verify that path separately before enabling it.
-
-## PeopleCert (CertyPal) smoke checks
-
-When this deployment is configured for PeopleCert candidate support, spot-check:
-
-- Opening matches the approved virtual-assistant disclosure (CertyPal / PeopleCert).
-- Misroute wording for non-B&IT exam types is available in the system prompt; SELT/LanguageCert mentions route toward human contact.
-- Sample scenarios: invalid voucher guidance, OLP stuck screen (refresh / restart), locked profile name (upload + support), results timeline, e-certificate location and hard-copy ordering.
-- Document-backed answers only use the configured `INFORMATION_PRODUCTS_*` PDF; no invented policy.
-
-## Production Cutover
-
-Only cut over fully when all of the following are true:
-
-- inbound calls consistently hit `/inbound_call`
-- Twilio SIP Domain request URL points at the Vocode HTTPS endpoint
-- transcripts and logs are being captured as expected
-- ElevenLabs latency is acceptable for phone use
-- fallback and escalation prompts behave predictably
-- you have a rollback path back to the old Twilio/Dialogflow webhook
+- graph behavior is stable in local API tests
+- outbound telephony works against your own phone number
+- booking, CRM, and email adapters are either production-ready or intentionally stubbed off
+- transcripts, call outcome logging, and session cleanup behave as expected
+- you have approved call scripts and compliance review for outbound AI calling
