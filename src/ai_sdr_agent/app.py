@@ -8,15 +8,14 @@ from pydantic import BaseModel
 from vocode.streaming.models.telephony import BaseCallConfig
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
-from vocode.streaming.models.transcriber import DeepgramTranscriberConfig
+from vocode.streaming.models.transcriber import (
+    DeepgramTranscriberConfig,
+    TimeEndpointingConfig,
+)
 from vocode.streaming.telephony.config_manager.base_config_manager import BaseConfigManager
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
 from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboundCallConfig
-from vocode.streaming.transcriber.deepgram_transcriber import (
-    DeepgramEndpointingConfig,
-    TimeSilentConfig,
-)
 
 from ai_sdr_agent.agent_factory import SDRAgentFactory
 from ai_sdr_agent.config import SDRSettings, get_settings
@@ -279,23 +278,15 @@ def _resolve_telephony_deepgram_model(raw_model: str | None) -> str:
 
 def _build_transcriber_config(settings: SDRSettings):
     model = _resolve_telephony_deepgram_model(settings.deepgram_model)
-
-    use_single_utterance = settings.deepgram_single_utterance_for_first_response
-    if use_single_utterance:
-        logger.warning(
-            "Disabling single-utterance endpointing for first response to improve short reply detection."
-        )
-        use_single_utterance = False
+    time_cutoff_seconds = max(settings.deepgram_time_cutoff_seconds, 0.2)
+    logger.info(
+        "Using time-based endpointing for telephony with cutoff={}s",
+        time_cutoff_seconds,
+    )
 
     return DeepgramTranscriberConfig.from_telephone_input_device(
-        endpointing_config=DeepgramEndpointingConfig(
-            vad_threshold_ms=settings.deepgram_vad_threshold_ms,
-            utterance_cutoff_ms=settings.deepgram_utterance_cutoff_ms,
-            time_silent_config=TimeSilentConfig(
-                time_cutoff_seconds=settings.deepgram_time_cutoff_seconds,
-                post_punctuation_time_seconds=settings.deepgram_post_punctuation_time_seconds,
-            ),
-            use_single_utterance_endpointing_for_first_utterance=use_single_utterance,
+        endpointing_config=TimeEndpointingConfig(
+            time_cutoff_seconds=time_cutoff_seconds
         ),
         api_key=settings.deepgram_api_key,
         model=model,
