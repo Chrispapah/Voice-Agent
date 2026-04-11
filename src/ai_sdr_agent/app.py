@@ -5,7 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
-from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, ElevenLabsSynthesizerConfig
+from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
@@ -93,7 +93,8 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             "status": "ok" if telephony_ready else "degraded",
             "app_name": settings.app_name,
             "llm_provider": settings.llm_provider,
-            "tts_provider": settings.tts_provider,
+            "stt_provider": "deepgram",
+            "tts_provider": "elevenlabs",
             "telephony_ready": telephony_ready,
             "missing_runtime_values": missing_runtime_values,
             "config_manager": settings.config_manager_kind(),
@@ -195,10 +196,16 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     )
     logger.info(
         "Application startup telephony_ready={} base_url={} config_manager={} "
-        "missing_runtime_values={} inbound_call_route_registered={} routes={}",
+        "stt_provider={} deepgram_model={} tts_provider={} elevenlabs_model_id={} "
+        "elevenlabs_websocket={} missing_runtime_values={} inbound_call_route_registered={} routes={}",
         telephony_ready,
         settings.normalized_base_url(),
         settings.config_manager_kind(),
+        "deepgram",
+        settings.deepgram_model,
+        "elevenlabs",
+        settings.elevenlabs_model_id,
+        settings.elevenlabs_use_websocket,
         missing_runtime_values,
         "/inbound_call" in registered_routes,
         registered_routes,
@@ -214,10 +221,6 @@ def _build_config_manager(settings: SDRSettings):
 
 
 def _build_synthesizer_config(settings: SDRSettings):
-    if settings.tts_provider == "azure":
-        return AzureSynthesizerConfig.from_telephone_output_device(
-            voice_name=settings.azure_voice_name,
-        )
     return ElevenLabsSynthesizerConfig.from_telephone_output_device(
         api_key=settings.elevenlabs_api_key or "",
         voice_id=settings.elevenlabs_voice_id or "",

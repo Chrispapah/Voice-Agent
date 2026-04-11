@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from loguru import logger
-from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, ElevenLabsSynthesizerConfig
+from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig
 from vocode.streaming.telephony.config_manager.base_config_manager import BaseConfigManager
@@ -95,10 +95,6 @@ class CallScheduler:
         )
 
     def _build_synthesizer_config(self):
-        if self.settings.tts_provider == "azure":
-            return AzureSynthesizerConfig.from_telephone_output_device(
-                voice_name=self.settings.azure_voice_name,
-            )
         return ElevenLabsSynthesizerConfig.from_telephone_output_device(
             api_key=self.settings.elevenlabs_api_key or "",
             voice_id=self.settings.elevenlabs_voice_id or "",

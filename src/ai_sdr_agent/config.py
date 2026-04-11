@@ -102,16 +102,10 @@ class SDRSettings(BaseSettings):
             missing.append("GROQ_API_KEY")
         if not self.deepgram_api_key:
             missing.append("DEEPGRAM_API_KEY")
-        if self.tts_provider == "elevenlabs":
-            if not self.elevenlabs_api_key:
-                missing.append("ELEVENLABS_API_KEY")
-            if not self.elevenlabs_voice_id:
-                missing.append("ELEVENLABS_VOICE_ID")
-        else:
-            if not self.azure_speech_key:
-                missing.append("AZURE_SPEECH_KEY")
-            if not self.azure_speech_region:
-                missing.append("AZURE_SPEECH_REGION")
+        if not self.elevenlabs_api_key:
+            missing.append("ELEVENLABS_API_KEY")
+        if not self.elevenlabs_voice_id:
+            missing.append("ELEVENLABS_VOICE_ID")
         if not self.twilio_account_sid:
             missing.append("TWILIO_ACCOUNT_SID")
         if not self.twilio_auth_token:
@@ -133,7 +127,8 @@ class SDRSettings(BaseSettings):
     def provider_summary(self) -> dict[str, str]:
         return {
             "llm_provider": self.llm_provider,
-            "tts_provider": self.tts_provider,
+            "stt_provider": "deepgram",
+            "tts_provider": "elevenlabs",
             "calendar": "stub",
             "email": "stub",
             "crm": "stub",
