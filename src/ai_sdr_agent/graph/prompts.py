@@ -105,3 +105,41 @@ The prospect was asked to choose a meeting slot. Classify their reply.
 - Return 'wrap_up' if they want to end the call, are frustrated, or refuse to book.
 Respond with only the label.
 """.strip()
+
+
+def qualification_extraction_prompt(existing_pain_points: list[str]) -> str:
+    known = ", ".join(existing_pain_points) if existing_pain_points else "none yet"
+    return f"""
+You are analyzing a live sales qualification conversation. Based on EVERYTHING
+the prospect has said so far in the transcript, extract the following fields.
+
+Fields to extract:
+
+1. is_decision_maker (true / false / null)
+   - true: the prospect confirmed they make or directly influence purchasing
+     decisions (e.g. "I own that", "I'm the VP of sales", "yes, it's my call").
+   - false: the prospect explicitly said they are NOT a decision-maker.
+   - null: not enough information to determine.
+
+2. budget_confirmed (true / false / null)
+   - true: the prospect indicated they have budget, spending authority, or
+     funding approved (e.g. "we have budget for this quarter", "already approved").
+   - false: the prospect said they have no budget or it was denied.
+   - null: not discussed or unclear.
+
+3. timeline (string / null)
+   - A short phrase capturing when the prospect needs a solution or is
+     evaluating (e.g. "this quarter", "next month", "before Q3").
+   - null: no timeline mentioned.
+
+4. pain_points (list of strings)
+   - Specific business problems or frustrations the prospect has expressed.
+   - Only include NEW pain points not already in the known list below.
+   - Use short, descriptive phrases (e.g. "slow lead follow-up",
+     "manual data entry", "reps missing hot leads").
+
+Already known pain points: {known}
+
+Return ONLY valid JSON matching this exact schema, with no extra text:
+{{"is_decision_maker": ..., "budget_confirmed": ..., "timeline": ..., "pain_points": [...]}}
+""".strip()

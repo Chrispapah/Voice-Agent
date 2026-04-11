@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
-from typing import Protocol, Sequence
+from typing import Any, Protocol, Sequence
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from loguru import logger
 
 try:
     from langchain_anthropic import ChatAnthropic
@@ -30,6 +32,14 @@ class ConversationBrain(Protocol):
         human_input: str,
         labels: Sequence[str],
     ) -> str:
+        ...
+
+    async def extract_qualification(
+        self,
+        *,
+        transcript: list[dict[str, str]],
+        existing_pain_points: list[str],
+    ) -> dict[str, Any]:
         ...
 
 
@@ -117,6 +127,22 @@ class StubConversationBrain:
                 return "handle_objection"
         return labels[0]
 
+    async def extract_qualification(
+        self,
+        *,
+        transcript: list[dict[str, str]],
+        existing_pain_points: list[str],
+    ) -> dict[str, Any]:
+        text = self._last_human_text(transcript).lower().strip()
+        updates: dict[str, Any] = {}
+        if any(p in text for p in ("i handle", "i'm the", "i am the", "i own", "my call")):
+            updates["is_decision_maker"] = True
+        if "budget" in text or "approved" in text:
+            updates["budget_confirmed"] = True
+        if "quarter" in text or "month" in text:
+            updates["timeline"] = self._last_human_text(transcript)
+        return updates
+
 
 class LangChainConversationBrain:
     def __init__(self, settings: SDRSettings):
@@ -182,6 +208,50 @@ class LangChainConversationBrain:
             if label in raw:
                 return label
         return labels[0]
+
+    async def extract_qualification(
+        self,
+        *,
+        transcript: list[dict[str, str]],
+        existing_pain_points: list[str],
+    ) -> dict[str, Any]:
+        from ai_sdr_agent.graph.prompts import qualification_extraction_prompt
+
+        system = qualification_extraction_prompt(existing_pain_points)
+        messages = [SystemMessage(content=system)]
+        for item in transcript:
+            if item["role"] == "human":
+                messages.append(HumanMessage(content=item["content"]))
+            else:
+                messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
+
+        response = await self._model.ainvoke(messages)
+        raw = str(response.content).strip()
+
+        # Strip markdown fences the LLM may wrap around JSON
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("Failed to parse qualification JSON, falling back to empty: {!r}", raw)
+            return {}
+
+        updates: dict[str, Any] = {}
+        if data.get("is_decision_maker") is not None:
+            updates["is_decision_maker"] = bool(data["is_decision_maker"])
+        if data.get("budget_confirmed") is not None:
+            updates["budget_confirmed"] = bool(data["budget_confirmed"])
+        if data.get("timeline") is not None:
+            updates["timeline"] = str(data["timeline"])
+        new_pain = data.get("pain_points") or []
+        if isinstance(new_pain, list) and new_pain:
+            combined = list(existing_pain_points) + [
+                p for p in new_pain if isinstance(p, str) and p not in existing_pain_points
+            ]
+            updates["pain_points"] = combined
+        return updates
 
 
 def build_conversation_brain(settings: SDRSettings) -> ConversationBrain:

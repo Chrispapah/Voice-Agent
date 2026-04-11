@@ -44,25 +44,6 @@ def _append_agent_message(
     return update
 
 
-def _infer_qualification_fields(state: ConversationState) -> dict:
-    text = get_last_human_message(state).lower()
-    updates: dict = {}
-    if any(term in text for term in ("i handle", "i'm the", "i am the", "yes")):
-        updates["is_decision_maker"] = True
-    if "budget" in text or "approved" in text:
-        updates["budget_confirmed"] = True
-    if "quarter" in text or "month" in text:
-        updates["timeline"] = get_last_human_message(state)
-    new_pain = [
-        marker
-        for marker in ("follow-up", "speed", "response time", "booking", "manual", "handoff")
-        if marker in text and marker not in state["pain_points"]
-    ]
-    if new_pain:
-        updates["pain_points"] = list(state["pain_points"]) + new_pain
-    return updates
-
-
 _ORDINAL_MAP: list[tuple[re.Pattern[str], int]] = [
     (re.compile(r"\b(first|1st|number\s*one|option\s*one|option\s*1|the\s*one)\b", re.I), 0),
     (re.compile(r"\b(second|2nd|number\s*two|option\s*two|option\s*2)\b", re.I), 1),
@@ -130,7 +111,10 @@ async def qualify_node(
     *,
     brain: ConversationBrain,
 ) -> dict:
-    qual_updates = _infer_qualification_fields(state)
+    qual_updates = await brain.extract_qualification(
+        transcript=state["transcript"],
+        existing_pain_points=state["pain_points"],
+    )
     response = await brain.respond(
         system_prompt=qualify_prompt(state),
         transcript=state["transcript"],
