@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,7 +110,11 @@ class SDRConversationService:
             state["next_node"] = "wrap_up"
             state["call_outcome"] = "not_interested"
 
+        turn_start = time.perf_counter()
         updated_state = await self.graph.ainvoke(state)
+        graph_ms = (time.perf_counter() - turn_start) * 1000
+
+        persist_start = time.perf_counter()
         await self.dependencies.session_store.save(conversation_id, updated_state)
         await self.dependencies.call_log_repository.save_call_log(
             CallLogRecord(
@@ -123,10 +128,18 @@ class SDRConversationService:
                 follow_up_action=updated_state["follow_up_action"],
             )
         )
+        persist_ms = (time.perf_counter() - persist_start) * 1000
+        total_ms = (time.perf_counter() - turn_start) * 1000
+
         logger.info(
-            "Completed SDR turn conversation_id={} route_decision={} response={!r}",
+            "Completed SDR turn conversation_id={} route_decision={} "
+            "latency_total_ms={:.0f} latency_graph_ms={:.0f} latency_persist_ms={:.0f} "
+            "response={!r}",
             conversation_id,
             updated_state["route_decision"],
+            total_ms,
+            graph_ms,
+            persist_ms,
             updated_state["last_agent_response"],
         )
         return updated_state

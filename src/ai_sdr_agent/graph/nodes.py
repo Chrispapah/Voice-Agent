@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import time
 
 from loguru import logger
 
@@ -100,10 +101,13 @@ async def greeting_node(
     *,
     brain: ConversationBrain,
 ) -> dict:
+    t0 = time.perf_counter()
     response = await brain.respond(
         system_prompt=greeting_prompt(state),
         transcript=state["transcript"],
     )
+    respond_ms = (time.perf_counter() - t0) * 1000
+    logger.info("greeting_node latency respond_ms={:.0f}", respond_ms)
     return _append_agent_message(state, response, "greeting", "qualify_lead")
 
 
@@ -113,15 +117,29 @@ async def qualify_node(
     brain: ConversationBrain,
 ) -> dict:
     new_attempts = state["qualify_attempts"] + 1
+
+    t0 = time.perf_counter()
     qual_updates = await brain.extract_qualification(
         transcript=state["transcript"],
         existing_pain_points=state["pain_points"],
     )
+    extract_ms = (time.perf_counter() - t0) * 1000
+
+    t1 = time.perf_counter()
     response = await brain.respond(
         system_prompt=qualify_prompt(state),
         transcript=state["transcript"],
     )
+    respond_ms = (time.perf_counter() - t1) * 1000
+
+    t2 = time.perf_counter()
     decision = await route_after_qualify(state, brain)
+    route_ms = (time.perf_counter() - t2) * 1000
+
+    logger.info(
+        "qualify_node latency extract_ms={:.0f} respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
+        extract_ms, respond_ms, route_ms, extract_ms + respond_ms + route_ms,
+    )
     extra: dict = {**qual_updates, "qualify_attempts": new_attempts}
 
     if decision == "not_interested":
@@ -140,11 +158,21 @@ async def pitch_node(
     *,
     brain: ConversationBrain,
 ) -> dict:
+    t0 = time.perf_counter()
     response = await brain.respond(
         system_prompt=pitch_prompt(state),
         transcript=state["transcript"],
     )
+    respond_ms = (time.perf_counter() - t0) * 1000
+
+    t1 = time.perf_counter()
     decision = await route_after_pitch(state, brain)
+    route_ms = (time.perf_counter() - t1) * 1000
+
+    logger.info(
+        "pitch_node latency respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
+        respond_ms, route_ms, respond_ms + route_ms,
+    )
     next_node = {
         "book_meeting": "book_meeting",
         "handle_objection": "handle_objection",
@@ -159,16 +187,27 @@ async def objection_node(
     brain: ConversationBrain,
 ) -> dict:
     new_count = state["objection_count"] + 1
+
+    t0 = time.perf_counter()
     response = await brain.respond(
         system_prompt=objection_prompt(state),
         transcript=state["transcript"],
     )
+    respond_ms = (time.perf_counter() - t0) * 1000
+
     extra: dict = {"objection_count": new_count}
     if new_count >= 2:
+        logger.info("objection_node latency respond_ms={:.0f} route_ms=0 total_ms={:.0f}", respond_ms, respond_ms)
         extra["call_outcome"] = "follow_up_needed"
         next_node = "wrap_up"
     else:
+        t1 = time.perf_counter()
         decision = await route_after_objection(state, brain)
+        route_ms = (time.perf_counter() - t1) * 1000
+        logger.info(
+            "objection_node latency respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
+            respond_ms, route_ms, respond_ms + route_ms,
+        )
         next_node = "pitch" if decision == "pitch" else "wrap_up"
     return _append_agent_message(state, response, "handle_objection", next_node, **extra)
 
@@ -199,10 +238,13 @@ async def book_meeting_node(
         ]
         extra["available_slots"] = available_slots
 
+    t0 = time.perf_counter()
     response = await brain.respond(
         system_prompt=booking_prompt(state),
         transcript=state["transcript"],
     )
+    respond_ms = (time.perf_counter() - t0) * 1000
+
     confirmed = _detect_confirmed_slot(state)
     if confirmed is not None:
         booking = await calendar_gateway.book_slot(
@@ -219,17 +261,31 @@ async def book_meeting_node(
             call_outcome="meeting_booked",
             follow_up_action="send_meeting_confirmation",
         )
+        book_ms = (time.perf_counter() - t0) * 1000 - respond_ms
+        logger.info(
+            "book_meeting_node latency respond_ms={:.0f} book_slot_ms={:.0f} total_ms={:.0f} (slot confirmed)",
+            respond_ms, book_ms, respond_ms + book_ms,
+        )
         response = (
             f"Great, I have you booked for {confirmed['label']}. "
             "I will send the invite and follow-up details right after this call."
         )
         next_node = "wrap_up"
     elif new_attempts >= MAX_BOOKING_ATTEMPTS:
-        logger.info("Booking attempts exhausted, wrapping up")
+        logger.info(
+            "book_meeting_node latency respond_ms={:.0f} route_ms=0 total_ms={:.0f} (attempts exhausted)",
+            respond_ms, respond_ms,
+        )
         extra.update(call_outcome="follow_up_needed", follow_up_action="manual_booking_follow_up")
         next_node = "wrap_up"
     else:
+        t1 = time.perf_counter()
         decision = await route_during_booking(state, brain)
+        route_ms = (time.perf_counter() - t1) * 1000
+        logger.info(
+            "book_meeting_node latency respond_ms={:.0f} route_ms={:.0f} total_ms={:.0f}",
+            respond_ms, route_ms, respond_ms + route_ms,
+        )
         if decision == "wrap_up":
             extra.update(call_outcome="follow_up_needed", follow_up_action="manual_booking_follow_up")
             next_node = "wrap_up"
@@ -248,10 +304,12 @@ async def wrap_up_node(
     sales_rep_name: str,
     from_name: str,
 ) -> dict:
+    t0 = time.perf_counter()
     response = await brain.respond(
         system_prompt=wrap_up_prompt(state),
         transcript=state["transcript"],
     )
+    respond_ms = (time.perf_counter() - t0) * 1000
     summary = (
         f"Outcome: {state['call_outcome']}. "
         f"Meeting booked: {'yes' if state['meeting_booked'] else 'no'}."
@@ -275,5 +333,10 @@ async def wrap_up_node(
         lead_id=state["lead_id"],
         call_outcome=state["call_outcome"],
         notes=summary,
+    )
+    side_effects_ms = (time.perf_counter() - t0) * 1000 - respond_ms
+    logger.info(
+        "wrap_up_node latency respond_ms={:.0f} side_effects_ms={:.0f} total_ms={:.0f}",
+        respond_ms, side_effects_ms, respond_ms + side_effects_ms,
     )
     return _append_agent_message(state, response, "wrap_up", "complete")
