@@ -2,7 +2,7 @@ fastapi
 langchain==0.2.17
 langgraph==0.2.71
 langchain-openai==0.1.25
-langchain-anthropic==0.1.23
+langchain-anthropic==0.1.22
 langchain-groq==0.1.10
 jinja2
 loguru
