@@ -289,6 +289,7 @@ def _build_transcriber_config(settings: SDRSettings):
             time_cutoff_seconds=time_cutoff_seconds
         ),
         api_key=settings.deepgram_api_key,
+        language=settings.deepgram_language,
         model=model,
         mute_during_speech=settings.deepgram_mute_during_speech,
     )

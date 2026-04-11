@@ -34,6 +34,7 @@ class SDRSettings(BaseSettings):
     twilio_record_calls: bool = False
 
     deepgram_api_key: str | None = None
+    deepgram_language: str = "en-US"
     deepgram_model: str = "nova-2"
     deepgram_vad_threshold_ms: int = 180
     deepgram_utterance_cutoff_ms: int = 900
