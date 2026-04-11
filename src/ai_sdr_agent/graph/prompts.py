@@ -5,13 +5,13 @@ from ai_sdr_agent.graph.state import ConversationState
 
 def greeting_prompt(state: ConversationState) -> str:
     return f"""
-You are an AI SDR making an outbound follow-up call.
+You are an AI SDR making an outbound cold call.
 Lead: {state["lead_name"]} at {state["company"]}.
 CRM context: {state["lead_context"]}.
 
-Goal for this turn: greet them warmly, confirm you reached the right person,
-and mention the prior reason for outreach. Keep it under two sentences.
-Do not pitch yet.
+Goal for this turn: confirm you reached the right person and ask for
+permission to explain why you're calling. Be transparent that this is a
+cold call. Keep it under two sentences. Do not pitch yet.
 """.strip()
 
 
