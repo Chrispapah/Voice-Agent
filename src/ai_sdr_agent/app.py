@@ -5,6 +5,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from loguru import logger
 from pydantic import BaseModel
+from vocode.streaming.models.synthesizer import AzureSynthesizerConfig, ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
@@ -168,6 +169,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
                         sales_rep_name=settings.default_sales_rep_name,
                         initial_message_text=settings.initial_greeting,
                     ),
+                    synthesizer_config=_build_synthesizer_config(settings),
                     twilio_config=TwilioConfig(
                         account_sid=settings.twilio_account_sid or "",
                         auth_token=settings.twilio_auth_token or "",
@@ -203,3 +205,17 @@ def _build_config_manager(settings: SDRSettings):
     if settings.use_redis_config_manager and settings.redis_url:
         return RedisConfigManager()
     return InMemoryConfigManager()
+
+
+def _build_synthesizer_config(settings: SDRSettings):
+    if settings.tts_provider == "azure":
+        return AzureSynthesizerConfig.from_telephone_output_device(
+            voice_name=settings.azure_voice_name,
+        )
+    return ElevenLabsSynthesizerConfig.from_telephone_output_device(
+        api_key=settings.elevenlabs_api_key or "",
+        voice_id=settings.elevenlabs_voice_id or "",
+        model_id=settings.elevenlabs_model_id,
+        optimize_streaming_latency=settings.elevenlabs_optimize_streaming_latency,
+        experimental_websocket=settings.elevenlabs_use_websocket,
+    )
