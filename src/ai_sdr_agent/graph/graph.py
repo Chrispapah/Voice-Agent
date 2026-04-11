@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from langgraph.graph import END, START, StateGraph
+from loguru import logger
 
 from ai_sdr_agent.graph.nodes import (
     book_meeting_node,
@@ -29,26 +30,26 @@ def build_sdr_graph(
 ):
     graph = StateGraph(ConversationState)
 
-    async def greeting_step(state: ConversationState) -> ConversationState:
+    async def greeting_step(state: ConversationState) -> dict:
         return await greeting_node(state, brain=brain)
 
-    async def qualify_step(state: ConversationState) -> ConversationState:
+    async def qualify_step(state: ConversationState) -> dict:
         return await qualify_node(state, brain=brain)
 
-    async def pitch_step(state: ConversationState) -> ConversationState:
+    async def pitch_step(state: ConversationState) -> dict:
         return await pitch_node(state, brain=brain)
 
-    async def objection_step(state: ConversationState) -> ConversationState:
+    async def objection_step(state: ConversationState) -> dict:
         return await objection_node(state, brain=brain)
 
-    async def booking_step(state: ConversationState) -> ConversationState:
+    async def booking_step(state: ConversationState) -> dict:
         return await book_meeting_node(
             state,
             brain=brain,
             calendar_gateway=calendar_gateway,
         )
 
-    async def wrap_up_step(state: ConversationState) -> ConversationState:
+    async def wrap_up_step(state: ConversationState) -> dict:
         return await wrap_up_node(
             state,
             brain=brain,
@@ -66,7 +67,7 @@ def build_sdr_graph(
     graph.add_node("handle_objection", objection_step)
     graph.add_node("book_meeting", booking_step)
     graph.add_node("wrap_up", wrap_up_step)
-    graph.add_node("complete", lambda state: state)
+    graph.add_node("complete", lambda state: {})
 
     graph.add_edge(START, "route_turn")
     graph.add_conditional_edges(
@@ -96,9 +97,14 @@ def build_sdr_graph(
     return graph.compile()
 
 
-def _route_turn(state: ConversationState) -> ConversationState:
-    state["route_decision"] = state["next_node"]
-    return state
+def _route_turn(state: ConversationState) -> dict:
+    target = state["next_node"]
+    logger.info(
+        "Routing to node={} from current_node={}",
+        target,
+        state.get("current_node", "start"),
+    )
+    return {"route_decision": target}
 
 
 def _route_decision(state: ConversationState) -> str:

@@ -72,12 +72,16 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     self.agent_config.lead_id,
                 )
             state = await self.conversation_service.handle_turn(conversation_id, human_input)
+            response = state["last_agent_response"]
+            if not response:
+                logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
+                return None, True
             logger.info(
                 "SDR agent generated reply conversation_id={} text={!r}",
                 conversation_id,
-                state["last_agent_response"],
+                response,
             )
-            return state["last_agent_response"], False
+            return response, False
         except Exception:
             logger.exception(
                 "SDR agent respond() failed conversation_id={} text={!r}",

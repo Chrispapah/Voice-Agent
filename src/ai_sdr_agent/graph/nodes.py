@@ -31,26 +31,36 @@ def _append_agent_message(
     content: str,
     node_name: str,
     next_node: str,
-) -> ConversationState:
-    state["transcript"].append({"role": "agent", "content": content})
-    state["current_node"] = node_name
-    state["last_agent_response"] = content
-    state["next_node"] = next_node
-    state["route_decision"] = "complete"
-    return state
+    **extra_fields,
+) -> dict:
+    update: dict = {
+        "transcript": state["transcript"] + [{"role": "agent", "content": content}],
+        "current_node": node_name,
+        "last_agent_response": content,
+        "next_node": next_node,
+        "route_decision": next_node,
+    }
+    update.update(extra_fields)
+    return update
 
 
-def _infer_qualification_fields(state: ConversationState) -> None:
+def _infer_qualification_fields(state: ConversationState) -> dict:
     text = get_last_human_message(state).lower()
+    updates: dict = {}
     if any(term in text for term in ("i handle", "i'm the", "i am the", "yes")):
-        state["is_decision_maker"] = True
+        updates["is_decision_maker"] = True
     if "budget" in text or "approved" in text:
-        state["budget_confirmed"] = True
+        updates["budget_confirmed"] = True
     if "quarter" in text or "month" in text:
-        state["timeline"] = get_last_human_message(state)
-    for marker in ("follow-up", "speed", "response time", "booking", "manual", "handoff"):
-        if marker in text and marker not in state["pain_points"]:
-            state["pain_points"].append(marker)
+        updates["timeline"] = get_last_human_message(state)
+    new_pain = [
+        marker
+        for marker in ("follow-up", "speed", "response time", "booking", "manual", "handoff")
+        if marker in text and marker not in state["pain_points"]
+    ]
+    if new_pain:
+        updates["pain_points"] = list(state["pain_points"]) + new_pain
+    return updates
 
 
 _ORDINAL_MAP: list[tuple[re.Pattern[str], int]] = [
@@ -107,7 +117,7 @@ async def greeting_node(
     state: ConversationState,
     *,
     brain: ConversationBrain,
-) -> ConversationState:
+) -> dict:
     response = await brain.respond(
         system_prompt=greeting_prompt(state),
         transcript=state["transcript"],
@@ -119,24 +129,25 @@ async def qualify_node(
     state: ConversationState,
     *,
     brain: ConversationBrain,
-) -> ConversationState:
-    _infer_qualification_fields(state)
+) -> dict:
+    qual_updates = _infer_qualification_fields(state)
     response = await brain.respond(
         system_prompt=qualify_prompt(state),
         transcript=state["transcript"],
     )
     decision = await route_after_qualify(state, brain)
     next_node = "pitch" if decision == "pitch" else "wrap_up"
+    extra: dict = {**qual_updates}
     if decision == "not_interested":
-        state["call_outcome"] = "not_interested"
-    return _append_agent_message(state, response, "qualify_lead", next_node)
+        extra["call_outcome"] = "not_interested"
+    return _append_agent_message(state, response, "qualify_lead", next_node, **extra)
 
 
 async def pitch_node(
     state: ConversationState,
     *,
     brain: ConversationBrain,
-) -> ConversationState:
+) -> dict:
     response = await brain.respond(
         system_prompt=pitch_prompt(state),
         transcript=state["transcript"],
@@ -154,19 +165,20 @@ async def objection_node(
     state: ConversationState,
     *,
     brain: ConversationBrain,
-) -> ConversationState:
-    state["objection_count"] += 1
+) -> dict:
+    new_count = state["objection_count"] + 1
     response = await brain.respond(
         system_prompt=objection_prompt(state),
         transcript=state["transcript"],
     )
-    if state["objection_count"] >= 2:
-        state["call_outcome"] = "follow_up_needed"
+    extra: dict = {"objection_count": new_count}
+    if new_count >= 2:
+        extra["call_outcome"] = "follow_up_needed"
         next_node = "wrap_up"
     else:
         decision = await route_after_objection(state, brain)
         next_node = "pitch" if decision == "pitch" else "wrap_up"
-    return _append_agent_message(state, response, "handle_objection", next_node)
+    return _append_agent_message(state, response, "handle_objection", next_node, **extra)
 
 
 async def book_meeting_node(
@@ -174,15 +186,17 @@ async def book_meeting_node(
     *,
     brain: ConversationBrain,
     calendar_gateway: CalendarGateway,
-) -> ConversationState:
-    state["booking_attempts"] += 1
+) -> dict:
+    new_attempts = state["booking_attempts"] + 1
+    extra: dict = {"booking_attempts": new_attempts}
 
-    if not state["available_slots"]:
+    available_slots = state["available_slots"]
+    if not available_slots:
         slots = await calendar_gateway.list_available_slots(
             calendar_id=state["calendar_id"],
             date_range="next_5_business_days",
         )
-        state["available_slots"] = [
+        available_slots = [
             {
                 "slot_id": slot.slot_id,
                 "start_time": slot.start_time.isoformat(),
@@ -191,6 +205,8 @@ async def book_meeting_node(
             }
             for slot in slots
         ]
+        extra["available_slots"] = available_slots
+
     response = await brain.respond(
         system_prompt=booking_prompt(state),
         transcript=state["transcript"],
@@ -204,30 +220,30 @@ async def book_meeting_node(
             title=f"Meeting with {state['lead_name']} - {state['company']}",
             description="Follow-up discovery call booked by the AI SDR.",
         )
-        state["meeting_booked"] = True
-        state["proposed_slot"] = confirmed["start_time"]
-        state["meeting_link"] = booking["link"]
-        state["call_outcome"] = "meeting_booked"
-        state["follow_up_action"] = "send_meeting_confirmation"
+        extra.update(
+            meeting_booked=True,
+            proposed_slot=confirmed["start_time"],
+            meeting_link=booking["link"],
+            call_outcome="meeting_booked",
+            follow_up_action="send_meeting_confirmation",
+        )
         response = (
             f"Great, I have you booked for {confirmed['label']}. "
             "I will send the invite and follow-up details right after this call."
         )
         next_node = "wrap_up"
-    elif state["booking_attempts"] >= MAX_BOOKING_ATTEMPTS:
+    elif new_attempts >= MAX_BOOKING_ATTEMPTS:
         logger.info("Booking attempts exhausted, wrapping up")
-        state["call_outcome"] = "follow_up_needed"
-        state["follow_up_action"] = "manual_booking_follow_up"
+        extra.update(call_outcome="follow_up_needed", follow_up_action="manual_booking_follow_up")
         next_node = "wrap_up"
     else:
         decision = await route_during_booking(state, brain)
         if decision == "wrap_up":
-            state["call_outcome"] = "follow_up_needed"
-            state["follow_up_action"] = "manual_booking_follow_up"
+            extra.update(call_outcome="follow_up_needed", follow_up_action="manual_booking_follow_up")
             next_node = "wrap_up"
         else:
             next_node = "book_meeting"
-    return _append_agent_message(state, response, "book_meeting", next_node)
+    return _append_agent_message(state, response, "book_meeting", next_node, **extra)
 
 
 async def wrap_up_node(
@@ -239,12 +255,11 @@ async def wrap_up_node(
     email_template_path,
     sales_rep_name: str,
     from_name: str,
-) -> ConversationState:
+) -> dict:
     response = await brain.respond(
         system_prompt=wrap_up_prompt(state),
         transcript=state["transcript"],
     )
-    state = _append_agent_message(state, response, "wrap_up", "complete")
     summary = (
         f"Outcome: {state['call_outcome']}. "
         f"Meeting booked: {'yes' if state['meeting_booked'] else 'no'}."
@@ -269,4 +284,4 @@ async def wrap_up_node(
         call_outcome=state["call_outcome"],
         notes=summary,
     )
-    return state
+    return _append_agent_message(state, response, "wrap_up", "complete")

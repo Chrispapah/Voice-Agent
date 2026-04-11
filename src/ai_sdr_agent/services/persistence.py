@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from typing import Protocol
 
 from ai_sdr_agent.models import CallLogRecord, LeadRecord
@@ -81,10 +82,13 @@ class InMemorySessionStore:
         self._sessions: dict[str, dict] = {}
 
     async def get(self, conversation_id: str) -> dict | None:
-        return self._sessions.get(conversation_id)
+        state = self._sessions.get(conversation_id)
+        if state is None:
+            return None
+        return copy.deepcopy(state)
 
     async def save(self, conversation_id: str, state: dict) -> None:
-        self._sessions[conversation_id] = state
+        self._sessions[conversation_id] = copy.deepcopy(state)
 
     async def delete(self, conversation_id: str) -> None:
         self._sessions.pop(conversation_id, None)

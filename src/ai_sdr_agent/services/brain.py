@@ -60,7 +60,7 @@ class StubConversationBrain:
                 "I can get something on the calendar. I have tomorrow at 3 PM UTC, "
                 "two days from now at 10 AM UTC, or three days from now at 5 PM UTC."
             )
-        if "wrap up" in system_prompt.lower():
+        if "wrap up" in system_prompt.lower() or "wrapping up" in system_prompt.lower():
             if "booked" in human_text.lower():
                 return "Perfect, you are all set. I will send a confirmation email right after this call."
             return "Thanks for your time. I will send a brief follow-up email so you have the next steps in writing."
@@ -75,6 +75,12 @@ class StubConversationBrain:
         "end the call", "end call", "leave me alone", "go away", "get lost",
         "piss off", "fuck off", "fuck you", "screw you", "shut up",
         "stop it", "i'm done", "i am done", "let me go",
+        "no thank you", "no thanks", "no thankyou", "nah", "nope",
+    )
+
+    _NEGATIVE_PHRASES = (
+        "no", "nah", "nope", "not really", "i don't think so",
+        "not at this time", "not right now", "i'm good",
     )
 
     async def classify(
@@ -102,6 +108,13 @@ class StubConversationBrain:
                 return "continue_booking"
             if "wrap_up" in labels:
                 return "wrap_up"
+        if text in self._NEGATIVE_PHRASES or any(text.startswith(p) for p in self._NEGATIVE_PHRASES):
+            if "not_interested" in labels:
+                return "not_interested"
+            if "wrap_up" in labels:
+                return "wrap_up"
+            if "handle_objection" in labels:
+                return "handle_objection"
         return labels[0]
 
 
@@ -155,15 +168,20 @@ class LangChainConversationBrain:
                     content=(
                         f"{instruction}\n\nReturn exactly one of these labels: "
                         + ", ".join(labels)
+                        + "\n\nRespond with ONLY the label, nothing else."
                     )
                 ),
                 HumanMessage(content=human_input),
             ]
         )
-        label = str(response.content).strip().lower()
-        if label not in labels:
-            return labels[0]
-        return label
+        raw = str(response.content).strip().lower()
+        raw = raw.strip("'\"`.").strip()
+        if raw in labels:
+            return raw
+        for label in labels:
+            if label in raw:
+                return label
+        return labels[0]
 
 
 def build_conversation_brain(settings: SDRSettings) -> ConversationBrain:

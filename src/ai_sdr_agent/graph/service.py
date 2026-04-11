@@ -21,6 +21,8 @@ _EXIT_PATTERNS = re.compile(
     r"|leave me alone|go away|get lost|piss off|fuck off|fuck you"
     r"|screw you|shut up|stop it|i('?m| am) done|let me go"
     r"|not interested|remove me|do not call|don'?t call"
+    r"|no thank you|no thanks|no thankyou"
+    r"|nah|nope"
     r")\b",
     re.IGNORECASE,
 )
@@ -89,6 +91,12 @@ class SDRConversationService:
             )
         else:
             logger.info("Processing empty turn conversation_id={}", conversation_id)
+
+        if state["next_node"] == "complete":
+            logger.info("Conversation already complete conversation_id={}", conversation_id)
+            state["last_agent_response"] = ""
+            await self.dependencies.session_store.save(conversation_id, state)
+            return state
 
         force_exit = False
         if human_input and _EXIT_PATTERNS.search(human_input):

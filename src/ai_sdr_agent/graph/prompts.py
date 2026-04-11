@@ -65,12 +65,12 @@ language and confirm the chosen slot clearly.
 
 def wrap_up_prompt(state: ConversationState) -> str:
     return f"""
-You are wrapping up an SDR call with {state["lead_name"]} from {state["company"]}.
+You need to wrap up this SDR call with {state["lead_name"]} from {state["company"]}.
 Current outcome: {state["call_outcome"]}.
 Meeting booked: {state["meeting_booked"]}.
 
-Goal for this turn: close the call politely, summarize the next step, and keep
-the final response brief.
+Goal for this turn: wrap up the conversation politely, summarize the next step,
+and keep the final response brief.
 """.strip()
 
 
