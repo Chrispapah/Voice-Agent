@@ -149,9 +149,12 @@ You are deciding the next step after the prospect answered a qualification quest
   so the agent can gather the referral details (name, role, contact info).
 - Return 'pitch' if enough qualification info has been gathered (at least role and
   one pain point are known) AND the prospect sounds open or curious.
-- Return 'not_interested' if the prospect explicitly declines, asks to stop,
-  or is clearly disengaged with NO offer to help further. Only use this when
-  the prospect gives a hard refusal with no opening.
+- Return 'not_interested' ONLY if the prospect clearly refuses or asks you to stop,
+  using explicit phrases (e.g. not interested, no thanks, stop calling, don't call,
+  remove me, we're not buying, wrong person). Do NOT use 'not_interested' for
+  short affirmatives, garbled speech-to-text, or fragments that contain "yeah",
+  "sure", "go ahead", "ok" without a clear refusal. Truncated audio often looks
+  like random words; when in doubt, prefer 'continue_qualifying'.
 
 Respond with only the label.
 """.strip()
