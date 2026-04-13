@@ -56,6 +56,7 @@ class SDRSettings(BaseSettings):
 
     redis_url: str | None = None
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_sdr"
+    supabase_url: str | None = None
     supabase_jwt_secret: str = "CHANGE-ME-set-SUPABASE_JWT_SECRET-in-env"
 
     google_calendar_credentials_json: str | None = None
