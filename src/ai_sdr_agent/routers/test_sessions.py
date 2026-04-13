@@ -17,6 +17,7 @@ from ai_sdr_agent.db.repositories import (
 )
 from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDependencies
 from ai_sdr_agent.services.brain import build_conversation_brain
+from ai_sdr_agent.services.latency_analytics import shared_latency_analytics
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
 from ai_sdr_agent.tools import StubCRMGateway, StubCalendarGateway, StubEmailGateway
 
@@ -61,6 +62,7 @@ def _build_service_for_bot(bot_config: dict, lead_repo, session_store, call_log_
             email_template_path=Path("templates/follow_up_email.html"),
             sales_rep_name=bot_config.get("sales_rep_name", "Sales Team"),
             from_name="AI SDR",
+            latency_analytics=shared_latency_analytics,
         ),
         bot_config=bot_config,
     )

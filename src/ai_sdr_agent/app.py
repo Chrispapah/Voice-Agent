@@ -3,7 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel
@@ -26,12 +26,14 @@ from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDepende
 from ai_sdr_agent.routers import test_sessions_router
 from ai_sdr_agent.services.brain import build_conversation_brain
 from ai_sdr_agent.services.call_scheduler import CallScheduler
+from ai_sdr_agent.services.latency_analytics import shared_latency_analytics
 from ai_sdr_agent.services.persistence import (
     InMemoryCallLogRepository,
     InMemoryLeadRepository,
     InMemorySessionStore,
 )
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
+from ai_sdr_agent.synthesizer_factory import SDRSynthesizerFactory
 from ai_sdr_agent.transcriber_factory import SDRTranscriberFactory
 from ai_sdr_agent.tools import StubCRMGateway, StubCalendarGateway, StubEmailGateway
 from ai_sdr_agent.vocode_agent import build_agent_config
@@ -107,6 +109,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             email_template_path=Path("templates/follow_up_email.html"),
             sales_rep_name=settings.default_sales_rep_name,
             from_name=settings.default_from_name,
+            latency_analytics=shared_latency_analytics,
         )
     )
     config_manager = _build_config_manager(settings)
@@ -139,6 +142,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     app.state.crm_gateway = crm_gateway
     app.state.config_manager = config_manager
     app.state.call_scheduler = call_scheduler
+    app.state.latency_analytics = shared_latency_analytics
 
     # ── AI engine router (authenticated via Supabase JWT) ──────────
     app.include_router(test_sessions_router)
@@ -158,6 +162,13 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             "config_manager": settings.config_manager_kind(),
             "provider_summary": settings.provider_summary(),
         }
+
+    @app.get("/analytics/latency")
+    async def latency_analytics(
+        recent_limit: int = Query(default=50, ge=1, le=200),
+    ):
+        """Aggregated turn latencies (graph + persist) and perceived phone latency (graph → first TTS chunk)."""
+        return await shared_latency_analytics.snapshot(recent_limit=recent_limit)
 
     @app.get("/debug/telephony")
     async def debug_telephony():
@@ -225,6 +236,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             base_url=settings.normalized_base_url(),
             config_manager=config_manager,
             transcriber_factory=SDRTranscriberFactory(),
+            synthesizer_factory=SDRSynthesizerFactory(),
             inbound_call_configs=[
                 TwilioInboundCallConfig(
                     url="/inbound_call",

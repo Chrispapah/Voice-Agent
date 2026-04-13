@@ -12,6 +12,7 @@ from ai_sdr_agent.graph.graph import build_sdr_graph
 from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.models import CallLogRecord
 from ai_sdr_agent.services.brain import ConversationBrain
+from ai_sdr_agent.services.latency_analytics import LatencyAnalyticsBuffer
 from ai_sdr_agent.services.persistence import CallLogRepository, SessionStore
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
 from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway
@@ -43,6 +44,7 @@ class SDRRuntimeDependencies:
     email_template_path: Path
     sales_rep_name: str
     from_name: str
+    latency_analytics: LatencyAnalyticsBuffer | None = None
 
 
 class SDRConversationService:
@@ -151,4 +153,14 @@ class SDRConversationService:
             persist_ms,
             updated_state["last_agent_response"],
         )
+        la = self.dependencies.latency_analytics
+        if la is not None:
+            await la.record_turn(
+                conversation_id=conversation_id,
+                turn_count=int(updated_state["turn_count"]),
+                route_decision=str(updated_state["route_decision"]),
+                latency_total_ms=total_ms,
+                latency_graph_ms=graph_ms,
+                latency_persist_ms=persist_ms,
+            )
         return updated_state

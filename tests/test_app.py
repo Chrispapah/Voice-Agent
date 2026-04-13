@@ -52,3 +52,15 @@ def test_unknown_session_returns_404():
     response = client.get("/sessions/missing-id")
 
     assert response.status_code == 404
+
+
+def test_latency_analytics_endpoint():
+    client = TestClient(create_app(build_test_settings()))
+    client.post("/sessions", json={"lead_id": "lead-001"})
+    r = client.get("/analytics/latency?recent_limit=10")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["sample_count"] >= 1
+    assert "latency_graph_ms" in data
+    assert "by_route_decision" in data
+    assert data["latency_total_ms"]["count"] == data["sample_count"]

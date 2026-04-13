@@ -7,6 +7,11 @@ from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.message import BaseMessage
 
 from ai_sdr_agent.graph.service import SDRConversationService
+from ai_sdr_agent.services.latency_analytics import (
+    clear_phone_turn_on_error,
+    mark_phone_turn_graph_done,
+    mark_phone_turn_respond_enter,
+)
 
 
 class SDRAgentConfig(AgentConfig, type="agent_sdr"):  # type: ignore[misc]
@@ -59,6 +64,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             is_interrupt,
             human_input,
         )
+        mark_phone_turn_respond_enter(conversation_id)
         try:
             if conversation_id not in self._initialized_conversations:
                 await self.conversation_service.start_session(
@@ -75,7 +81,9 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             response = state["last_agent_response"]
             if not response:
                 logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
+                clear_phone_turn_on_error(conversation_id)
                 return None, True
+            mark_phone_turn_graph_done(conversation_id)
             logger.info(
                 "SDR agent generated reply conversation_id={} text={!r}",
                 conversation_id,
@@ -88,6 +96,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 conversation_id,
                 human_input,
             )
+            mark_phone_turn_graph_done(conversation_id)
             return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
 
 
