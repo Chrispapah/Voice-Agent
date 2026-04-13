@@ -26,55 +26,85 @@ class ScheduledCallResult:
 
 
 class CallScheduler:
+    """Schedule outbound calls.  Accepts either SDRSettings (legacy) or per-bot config dict."""
+
     def __init__(
         self,
         *,
-        settings: SDRSettings,
+        settings: SDRSettings | None = None,
         config_manager: BaseConfigManager,
+        bot_config: dict | None = None,
     ):
         self.settings = settings
         self.config_manager = config_manager
+        self._bot_config = bot_config
+
+    def _cfg(self, key: str, default=None):
+        if self._bot_config:
+            return self._bot_config.get(key, default)
+        if self.settings:
+            return getattr(self.settings, key, default)
+        return default
+
+    def _telephony_ready(self) -> bool:
+        required = [
+            self._cfg("deepgram_api_key"),
+            self._cfg("elevenlabs_api_key"),
+            self._cfg("elevenlabs_voice_id"),
+            self._cfg("twilio_account_sid"),
+            self._cfg("twilio_auth_token"),
+            self._cfg("twilio_phone_number"),
+        ]
+        base_url = self.settings.normalized_base_url() if self.settings else self._cfg("base_url")
+        return all(required) and bool(base_url)
+
+    def _base_url(self) -> str:
+        if self.settings:
+            return self.settings.normalized_base_url() or ""
+        return self._cfg("base_url", "")
 
     async def schedule_outbound_call(self, lead: LeadRecord) -> ScheduledCallResult:
-        if not self.settings.telephony_ready():
-            raise RuntimeError(
-                "Telephony is not configured. Missing: "
-                + ", ".join(self.settings.missing_runtime_values())
-            )
-        if not self.settings.normalized_base_url():
+        if not self._telephony_ready():
+            raise RuntimeError("Telephony is not configured for this bot.")
+        base_url = self._base_url()
+        if not base_url:
             raise RuntimeError("BASE_URL is required for outbound calls.")
+
         agent_config = build_agent_config(
             lead_id=lead.lead_id,
             calendar_id=lead.calendar_id,
             sales_rep_name=lead.owner_name,
-            initial_message_text=self.settings.initial_greeting,
+            initial_message_text=self._cfg(
+                "initial_greeting",
+                "Hi, this is your AI assistant. Do you have a moment?",
+            ),
         )
         outbound_call = OutboundCall(
-            base_url=self.settings.normalized_base_url(),
+            base_url=base_url,
             to_phone=lead.phone_number,
-            from_phone=self.settings.twilio_phone_number or "",
+            from_phone=self._cfg("twilio_phone_number", ""),
             config_manager=self.config_manager,
             agent_config=agent_config,
             telephony_config=TwilioConfig(
-                account_sid=self.settings.twilio_account_sid or "",
-                auth_token=self.settings.twilio_auth_token or "",
-                record=self.settings.twilio_record_calls,
+                account_sid=self._cfg("twilio_account_sid", ""),
+                auth_token=self._cfg("twilio_auth_token", ""),
+                record=self._cfg("twilio_record_calls", False),
             ),
             transcriber_config=DeepgramTranscriberConfig.from_telephone_input_device(
                 endpointing_config=DeepgramEndpointingConfig(
-                    vad_threshold_ms=self.settings.deepgram_vad_threshold_ms,
-                    utterance_cutoff_ms=self.settings.deepgram_utterance_cutoff_ms,
+                    vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 180),
+                    utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 900),
                     time_silent_config=TimeSilentConfig(
-                        time_cutoff_seconds=self.settings.deepgram_time_cutoff_seconds,
-                        post_punctuation_time_seconds=self.settings.deepgram_post_punctuation_time_seconds,
+                        time_cutoff_seconds=self._cfg("deepgram_time_cutoff_seconds", 0.2),
+                        post_punctuation_time_seconds=self._cfg("deepgram_post_punctuation_time_seconds", 0.08),
                     ),
-                    use_single_utterance_endpointing_for_first_utterance=(
-                        self.settings.deepgram_single_utterance_for_first_response
+                    use_single_utterance_endpointing_for_first_utterance=self._cfg(
+                        "deepgram_single_utterance_for_first_response", True
                     ),
                 ),
-                api_key=self.settings.deepgram_api_key,
-                model=self.settings.deepgram_model,
-                mute_during_speech=self.settings.deepgram_mute_during_speech,
+                api_key=self._cfg("deepgram_api_key"),
+                model=self._cfg("deepgram_model", "nova-2"),
+                mute_during_speech=self._cfg("deepgram_mute_during_speech", True),
             ),
             synthesizer_config=self._build_synthesizer_config(),
             telephony_params={
@@ -96,9 +126,9 @@ class CallScheduler:
 
     def _build_synthesizer_config(self):
         return ElevenLabsSynthesizerConfig.from_telephone_output_device(
-            api_key=self.settings.elevenlabs_api_key or "",
-            voice_id=self.settings.elevenlabs_voice_id or "",
-            model_id=self.settings.elevenlabs_model_id,
-            optimize_streaming_latency=self.settings.elevenlabs_optimize_streaming_latency,
-            experimental_websocket=self.settings.elevenlabs_use_websocket,
+            api_key=self._cfg("elevenlabs_api_key", ""),
+            voice_id=self._cfg("elevenlabs_voice_id", ""),
+            model_id=self._cfg("elevenlabs_model_id", "eleven_turbo_v2"),
+            optimize_streaming_latency=self._cfg("elevenlabs_optimize_streaming_latency", 4),
+            experimental_websocket=self._cfg("elevenlabs_use_websocket", False),
         )

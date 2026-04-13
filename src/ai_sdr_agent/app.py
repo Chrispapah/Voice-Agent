@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 from pydantic import BaseModel
 from vocode.streaming.models.telephony import BaseCallConfig
@@ -19,7 +21,9 @@ from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboun
 
 from ai_sdr_agent.agent_factory import SDRAgentFactory
 from ai_sdr_agent.config import SDRSettings, get_settings
+from ai_sdr_agent.db.engine import init_db
 from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDependencies
+from ai_sdr_agent.routers import test_sessions_router
 from ai_sdr_agent.services.brain import build_conversation_brain
 from ai_sdr_agent.services.call_scheduler import CallScheduler
 from ai_sdr_agent.services.persistence import (
@@ -79,8 +83,9 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     missing_runtime_values = settings.missing_runtime_values()
     telephony_ready = not missing_runtime_values
 
+    # Legacy in-memory wiring (kept for backward compat / telephony path)
     lead_repository = InMemoryLeadRepository()
-    seed_lead = lead_repository._leads["lead-001"]  # typed seed used by all stubs
+    seed_lead = lead_repository._leads["lead-001"]
     calendar_gateway = StubCalendarGateway()
     email_gateway = StubEmailGateway()
     crm_gateway = StubCRMGateway(seed_leads=[seed_lead])
@@ -107,7 +112,24 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     config_manager = _build_config_manager(settings)
     call_scheduler = CallScheduler(settings=settings, config_manager=config_manager)
 
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+    @asynccontextmanager
+    async def lifespan(application: FastAPI):
+        logger.info("Initialising database...")
+        await init_db(settings.database_url)
+        logger.info("Database ready.")
+        yield
+
+    app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+
+    # CORS for Next.js frontend
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:3001", "http://localhost:3000", "*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.state.settings = settings
     app.state.conversation_service = conversation_service
     app.state.lead_repository = lead_repository
@@ -117,6 +139,11 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     app.state.crm_gateway = crm_gateway
     app.state.config_manager = config_manager
     app.state.call_scheduler = call_scheduler
+
+    # ── AI engine router (authenticated via Supabase JWT) ──────────
+    app.include_router(test_sessions_router)
+
+    # ── Legacy routes (telephony + backward compat) ────────────────
 
     @app.get("/healthz")
     async def healthz():

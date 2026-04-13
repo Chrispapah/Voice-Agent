@@ -28,7 +28,7 @@ _EXIT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-MAX_CALL_TURNS = 12
+_DEFAULT_MAX_CALL_TURNS = 12
 
 
 @dataclass
@@ -46,8 +46,9 @@ class SDRRuntimeDependencies:
 
 
 class SDRConversationService:
-    def __init__(self, dependencies: SDRRuntimeDependencies):
+    def __init__(self, dependencies: SDRRuntimeDependencies, bot_config: dict | None = None):
         self.dependencies = dependencies
+        self._bot_config = bot_config
         self.graph = build_sdr_graph(
             brain=dependencies.brain,
             calendar_gateway=dependencies.calendar_gateway,
@@ -58,9 +59,16 @@ class SDRConversationService:
             from_name=dependencies.from_name,
         )
 
-    async def start_session(self, lead_id: str, *, conversation_id: str | None = None) -> str:
+    async def start_session(
+        self,
+        lead_id: str,
+        *,
+        conversation_id: str | None = None,
+        bot_config: dict | None = None,
+    ) -> str:
         session_id = conversation_id or f"conv-{uuid.uuid4().hex[:12]}"
-        state = await self.dependencies.pre_call_loader.build_initial_state(lead_id)
+        cfg = bot_config or self._bot_config
+        state = await self.dependencies.pre_call_loader.build_initial_state(lead_id, bot_config=cfg)
         await self.dependencies.session_store.save(session_id, state)
         await self.dependencies.call_log_repository.save_call_log(
             CallLogRecord(
@@ -103,7 +111,8 @@ class SDRConversationService:
         if human_input and _EXIT_PATTERNS.search(human_input):
             force_exit = True
             logger.info("Exit signal detected conversation_id={} text={!r}", conversation_id, human_input)
-        if state["turn_count"] >= MAX_CALL_TURNS:
+        max_turns = state.get("bot_config", {}).get("max_call_turns", _DEFAULT_MAX_CALL_TURNS)
+        if state["turn_count"] >= max_turns:
             force_exit = True
             logger.info("Max turns reached conversation_id={} turn_count={}", conversation_id, state["turn_count"])
         if force_exit and state["next_node"] != "complete":

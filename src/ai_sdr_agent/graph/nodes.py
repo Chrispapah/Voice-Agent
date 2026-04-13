@@ -25,8 +25,12 @@ from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.services.brain import ConversationBrain
 from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway, render_follow_up_email
 
-MAX_QUALIFY_ATTEMPTS = 3
-MAX_BOOKING_ATTEMPTS = 3
+_DEFAULT_MAX_QUALIFY_ATTEMPTS = 3
+_DEFAULT_MAX_BOOKING_ATTEMPTS = 3
+
+
+def _bot_cfg(state: ConversationState, key: str, default=None):
+    return state.get("bot_config", {}).get(key, default)
 
 
 def _append_agent_message(
@@ -139,10 +143,11 @@ async def qualify_node(
     )
     extra: dict = {**qual_updates, "qualify_attempts": new_attempts}
 
+    max_qualify = _bot_cfg(state, "max_qualify_attempts", _DEFAULT_MAX_QUALIFY_ATTEMPTS)
     if decision == "not_interested":
         extra["call_outcome"] = "not_interested"
         next_node = "wrap_up"
-    elif decision == "pitch" or new_attempts >= MAX_QUALIFY_ATTEMPTS:
+    elif decision == "pitch" or new_attempts >= max_qualify:
         next_node = "pitch"
     else:
         next_node = "qualify_lead"
@@ -184,9 +189,10 @@ async def objection_node(
 ) -> dict:
     new_count = state["objection_count"] + 1
     extra: dict = {"objection_count": new_count}
+    max_objections = _bot_cfg(state, "max_objection_attempts", 2)
 
     t0 = time.perf_counter()
-    if new_count >= 2:
+    if new_count >= max_objections:
         response = await brain.respond(
             system_prompt=objection_prompt(state),
             transcript=state["transcript"],
@@ -266,7 +272,7 @@ async def book_meeting_node(
             "I will send the invite and follow-up details right after this call."
         )
         next_node = "wrap_up"
-    elif new_attempts >= MAX_BOOKING_ATTEMPTS:
+    elif new_attempts >= _bot_cfg(state, "max_booking_attempts", _DEFAULT_MAX_BOOKING_ATTEMPTS):
         response = await brain.respond(
             system_prompt=booking_prompt(state),
             transcript=state["transcript"],

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_sdr_agent.graph.state import ConversationState, build_initial_state
+from ai_sdr_agent.graph.state import BotConfigDict, ConversationState, build_initial_state
 from ai_sdr_agent.models import LeadRecord
 from ai_sdr_agent.services.persistence import LeadRepository
 from ai_sdr_agent.tools import CalendarGateway
@@ -19,7 +19,11 @@ class PreCallLoader:
     async def load_lead(self, lead_id: str) -> LeadRecord:
         return await self.lead_repository.get_lead(lead_id)
 
-    async def build_initial_state(self, lead_id: str) -> ConversationState:
+    async def build_initial_state(
+        self,
+        lead_id: str,
+        bot_config: BotConfigDict | None = None,
+    ) -> ConversationState:
         lead = await self.load_lead(lead_id)
         slots = await self.calendar_gateway.list_available_slots(
             calendar_id=lead.calendar_id,
@@ -42,4 +46,5 @@ class PreCallLoader:
                 }
                 for slot in slots
             ],
+            bot_config=bot_config,
         )

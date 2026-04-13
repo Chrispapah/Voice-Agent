@@ -24,6 +24,38 @@ class SlotPayload(TypedDict):
     label: str
 
 
+class BotConfigDict(TypedDict, total=False):
+    bot_id: str
+    llm_provider: str
+    llm_model_name: str
+    llm_temperature: float
+    llm_max_tokens: int
+    openai_api_key: str | None
+    anthropic_api_key: str | None
+    groq_api_key: str | None
+    elevenlabs_api_key: str | None
+    elevenlabs_voice_id: str | None
+    elevenlabs_model_id: str
+    deepgram_api_key: str | None
+    deepgram_model: str
+    deepgram_language: str
+    twilio_account_sid: str | None
+    twilio_auth_token: str | None
+    twilio_phone_number: str | None
+    initial_greeting: str
+    max_call_turns: int
+    max_objection_attempts: int
+    max_qualify_attempts: int
+    max_booking_attempts: int
+    sales_rep_name: str
+    prompt_greeting: str | None
+    prompt_qualify: str | None
+    prompt_pitch: str | None
+    prompt_objection: str | None
+    prompt_booking: str | None
+    prompt_wrapup: str | None
+
+
 class ConversationState(TypedDict):
     lead_id: str
     lead_name: str
@@ -32,6 +64,7 @@ class ConversationState(TypedDict):
     company: str
     calendar_id: str
     lead_context: str
+    bot_config: BotConfigDict
     transcript: list[TranscriptMessage]
     current_node: str
     next_node: str
@@ -56,6 +89,42 @@ class ConversationState(TypedDict):
     metadata: dict[str, str]
 
 
+_DEFAULT_BOT_CONFIG: BotConfigDict = {
+    "bot_id": "",
+    "llm_provider": "stub",
+    "llm_model_name": "gpt-4o-mini",
+    "llm_temperature": 0.4,
+    "llm_max_tokens": 300,
+    "openai_api_key": None,
+    "anthropic_api_key": None,
+    "groq_api_key": None,
+    "elevenlabs_api_key": None,
+    "elevenlabs_voice_id": None,
+    "elevenlabs_model_id": "eleven_turbo_v2",
+    "deepgram_api_key": None,
+    "deepgram_model": "nova-2",
+    "deepgram_language": "en-US",
+    "twilio_account_sid": None,
+    "twilio_auth_token": None,
+    "twilio_phone_number": None,
+    "initial_greeting": (
+        "Hi, this is John — I know I'm calling out of the blue. "
+        "Do you have 30 seconds so I can tell you why I'm reaching out?"
+    ),
+    "max_call_turns": 12,
+    "max_objection_attempts": 2,
+    "max_qualify_attempts": 3,
+    "max_booking_attempts": 3,
+    "sales_rep_name": "Sales Team",
+    "prompt_greeting": None,
+    "prompt_qualify": None,
+    "prompt_pitch": None,
+    "prompt_objection": None,
+    "prompt_booking": None,
+    "prompt_wrapup": None,
+}
+
+
 def build_initial_state(
     *,
     lead_id: str,
@@ -66,6 +135,7 @@ def build_initial_state(
     calendar_id: str,
     lead_context: str,
     available_slots: list[SlotPayload],
+    bot_config: BotConfigDict | None = None,
 ) -> ConversationState:
     return {
         "lead_id": lead_id,
@@ -75,6 +145,7 @@ def build_initial_state(
         "company": company,
         "calendar_id": calendar_id,
         "lead_context": lead_context,
+        "bot_config": bot_config or dict(_DEFAULT_BOT_CONFIG),
         "transcript": [],
         "current_node": "start",
         "next_node": "greeting",

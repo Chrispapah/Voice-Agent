@@ -10,12 +10,12 @@ from loguru import logger
 
 try:
     from langchain_anthropic import ChatAnthropic
-except ImportError:  # pragma: no cover - optional dependency in local dev
+except ImportError:  # pragma: no cover
     ChatAnthropic = None
 
 try:
     from langchain_groq import ChatGroq
-except ImportError:  # pragma: no cover - optional dependency in local dev
+except ImportError:  # pragma: no cover
     ChatGroq = None
 
 from ai_sdr_agent.config import SDRSettings
@@ -153,31 +153,51 @@ class StubConversationBrain:
 
 
 class LangChainConversationBrain:
-    def __init__(self, settings: SDRSettings):
-        self.settings = settings
-        if settings.llm_provider == "openai":
+    """LLM-backed brain. Accepts either SDRSettings (legacy) or a bot_config dict."""
+
+    def __init__(self, settings: SDRSettings | None = None, *, bot_config: dict | None = None):
+        if bot_config:
+            provider = bot_config.get("llm_provider", "openai")
+            model_name = bot_config.get("llm_model_name", "gpt-4o-mini")
+            temperature = bot_config.get("llm_temperature", 0.4)
+            max_tokens = bot_config.get("llm_max_tokens", 300)
+            openai_key = bot_config.get("openai_api_key")
+            anthropic_key = bot_config.get("anthropic_api_key")
+            groq_key = bot_config.get("groq_api_key")
+        elif settings:
+            provider = settings.llm_provider
+            model_name = settings.llm_model_name
+            temperature = settings.llm_temperature
+            max_tokens = settings.llm_max_tokens
+            openai_key = settings.openai_api_key
+            anthropic_key = settings.anthropic_api_key
+            groq_key = settings.groq_api_key
+        else:
+            raise ValueError("Either settings or bot_config must be provided")
+
+        if provider == "openai":
             self._model = ChatOpenAI(
-                model=settings.llm_model_name,
-                temperature=settings.llm_temperature,
-                max_tokens=settings.llm_max_tokens,
-                api_key=settings.openai_api_key,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                api_key=openai_key,
             )
-        elif settings.llm_provider == "groq" and ChatGroq is not None:
+        elif provider == "groq" and ChatGroq is not None:
             self._model = ChatGroq(
-                model=settings.llm_model_name,
-                temperature=settings.llm_temperature,
-                max_tokens=settings.llm_max_tokens,
-                api_key=settings.groq_api_key,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                api_key=groq_key,
             )
-        elif settings.llm_provider == "anthropic" and ChatAnthropic is not None:
+        elif provider == "anthropic" and ChatAnthropic is not None:
             self._model = ChatAnthropic(
-                model=settings.llm_model_name,
-                temperature=settings.llm_temperature,
-                max_tokens=settings.llm_max_tokens,
-                api_key=settings.anthropic_api_key,
+                model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                api_key=anthropic_key,
             )
         else:
-            raise ValueError(f"Unsupported llm_provider: {settings.llm_provider}")
+            raise ValueError(f"Unsupported llm_provider: {provider}")
 
     async def respond(self, *, system_prompt: str, transcript: list[dict[str, str]]) -> str:
         messages = [SystemMessage(content=system_prompt)]
@@ -236,7 +256,6 @@ class LangChainConversationBrain:
         response = await self._model.ainvoke(messages)
         raw = str(response.content).strip()
 
-        # Strip markdown fences the LLM may wrap around JSON
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
 
@@ -262,7 +281,16 @@ class LangChainConversationBrain:
         return updates
 
 
-def build_conversation_brain(settings: SDRSettings) -> ConversationBrain:
-    if settings.llm_provider == "stub":
+def build_conversation_brain(
+    settings: SDRSettings | None = None,
+    *,
+    bot_config: dict | None = None,
+) -> ConversationBrain:
+    """Build a brain from SDRSettings (legacy) or a per-bot config dict."""
+    provider = (
+        (bot_config or {}).get("llm_provider")
+        or (settings.llm_provider if settings else "stub")
+    )
+    if provider == "stub":
         return StubConversationBrain()
-    return LangChainConversationBrain(settings)
+    return LangChainConversationBrain(settings, bot_config=bot_config)
