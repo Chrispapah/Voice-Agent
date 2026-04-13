@@ -19,7 +19,7 @@ from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway
 _EXIT_PATTERNS = re.compile(
     r"\b("
     r"goodbye|good bye|bye bye|hang up|end the call|end call|stop calling"
-    r"|leave me alone|go away|get lost|piss off|fuck off|fuck you"
+    r"|leave me alone|go away|get lost(?!\s+in\b)|piss off|fuck off|fuck you"
     r"|screw you|shut up|stop it|i('?m| am) done|let me go"
     r"|not interested|remove me|do not call|don'?t call"
     r"|no thank you|no thanks|no thankyou"
