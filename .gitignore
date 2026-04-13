@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+.cursor/
+.vscode/
+.tmp_meta/
+pip_err.txt
+pip_out.txt
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local

@@ -1,0 +1,20 @@
+<html>
+  <body style="font-family: Arial, sans-serif; color: #1f2937;">
+    <p>Hi {{ lead_name }},</p>
+    <p>
+      Thanks again for taking the time to speak with us about {{ company }}.
+      This is a quick follow-up from {{ sales_rep_name }}.
+    </p>
+    {% if meeting_slot %}
+    <p>
+      Your meeting is currently set for <strong>{{ meeting_slot }}</strong>.
+      You will receive the full calendar invite separately.
+    </p>
+    {% endif %}
+    <p>{{ follow_up_summary }}</p>
+    <p>
+      If anything changes before then, just reply and we will adjust the plan.
+    </p>
+    <p>Best,<br />{{ sales_rep_name }}</p>
+  </body>
+</html>
