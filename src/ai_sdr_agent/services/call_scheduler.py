@@ -89,7 +89,7 @@ class CallScheduler:
             transcriber_config = DeepgramTranscriberConfig.from_telephone_input_device(
                 endpointing_config=DeepgramEndpointingConfig(
                     vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 80),
-                    utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 900),
+                    utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 2000),
                     time_silent_config=TimeSilentConfig(
                         time_cutoff_seconds=max(
                             self._cfg("deepgram_time_cutoff_seconds", 0.08), 0.04

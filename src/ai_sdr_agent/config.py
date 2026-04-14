@@ -38,8 +38,10 @@ class SDRSettings(BaseSettings):
     deepgram_model: str = "nova-2"
     # Endpointing: lower = final transcript sooner after a pause (more false end-of-turn / mid-sentence cuts).
     # Deepgram URL "endpointing" = vad_threshold_ms; time/punctuation = Vocode fallbacks when speech_final lags.
+    # utterance_cutoff_ms → Deepgram utterance_end_ms (Vocode enforces ≥1000). Higher = more tolerance for
+    # pauses within a thought; 2000ms has been a better default than 900ms on live calls.
     deepgram_vad_threshold_ms: int = 80
-    deepgram_utterance_cutoff_ms: int = 900
+    deepgram_utterance_cutoff_ms: int = 2000
     deepgram_time_cutoff_seconds: float = 0.08
     deepgram_post_punctuation_time_seconds: float = 0.035
     deepgram_single_utterance_for_first_response: bool = True
