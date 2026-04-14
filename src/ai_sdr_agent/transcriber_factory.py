@@ -33,8 +33,9 @@ def resolve_telephony_deepgram_model(raw_model: str | None) -> str:
 def build_telephony_deepgram_transcriber_config(settings: SDRSettings) -> DeepgramTranscriberConfig:
     """Deepgram VAD + silence/punctuation fallback (matches outbound scheduler when using SDRSettings)."""
     model = resolve_telephony_deepgram_model(settings.deepgram_model)
-    time_cutoff = max(settings.deepgram_time_cutoff_seconds, 0.05)
-    post_punct = max(settings.deepgram_post_punctuation_time_seconds, 0.03)
+    # Floors keep extreme env values from breaking STT; still allow aggressive sub-100ms VAD via vad_threshold_ms.
+    time_cutoff = max(settings.deepgram_time_cutoff_seconds, 0.04)
+    post_punct = max(settings.deepgram_post_punctuation_time_seconds, 0.02)
     logger.info(
         "Deepgram telephony endpointing model={} vad_ms={} utterance_cutoff_ms={} "
         "time_silent_cutoff={}s post_punctuation={}s",

@@ -94,7 +94,7 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "llm_provider": "stub",
     "llm_model_name": "gpt-4o-mini",
     "llm_temperature": 0.4,
-    "llm_max_tokens": 300,
+    "llm_max_tokens": 220,
     "openai_api_key": None,
     "anthropic_api_key": None,
     "groq_api_key": None,

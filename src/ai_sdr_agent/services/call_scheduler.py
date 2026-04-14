@@ -88,14 +88,14 @@ class CallScheduler:
         else:
             transcriber_config = DeepgramTranscriberConfig.from_telephone_input_device(
                 endpointing_config=DeepgramEndpointingConfig(
-                    vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 120),
+                    vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 80),
                     utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 900),
                     time_silent_config=TimeSilentConfig(
                         time_cutoff_seconds=max(
-                            self._cfg("deepgram_time_cutoff_seconds", 0.12), 0.05
+                            self._cfg("deepgram_time_cutoff_seconds", 0.08), 0.04
                         ),
                         post_punctuation_time_seconds=max(
-                            self._cfg("deepgram_post_punctuation_time_seconds", 0.05), 0.03
+                            self._cfg("deepgram_post_punctuation_time_seconds", 0.035), 0.02
                         ),
                     ),
                     use_single_utterance_endpointing_for_first_utterance=self._cfg(

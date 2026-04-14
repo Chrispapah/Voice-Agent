@@ -1,6 +1,25 @@
 from __future__ import annotations
 
+import re
+
 from ai_sdr_agent.graph.state import ConversationState
+
+# Appended to every spoken-response system prompt (defaults and custom).
+_VOICE_OUTPUT_RULES = """
+---
+Voice output (mandatory — this is read aloud by TTS in one pass):
+- Use one or two short sentences in most turns. Use at most three very short sentences only when listing meeting time options.
+- No paragraphs, bullet lists, markdown, or numbered lists.
+- Do not use line breaks; write a single continuous line of speech (commas and periods are fine).
+"""
+
+
+def format_reply_for_tts(text: str) -> str:
+    """Collapse newlines and extra whitespace so Vocode sends one synthesis string."""
+    t = text.replace("\r\n", "\n").replace("\r", "\n")
+    t = re.sub(r"\n+", " ", t)
+    t = re.sub(r"[ \t]+", " ", t)
+    return t.strip()
 
 
 def _template_vars(state: ConversationState) -> dict[str, str]:
@@ -28,6 +47,10 @@ def _apply_custom(state: ConversationState, key: str, default_fn) -> str:
     return default_fn(state)
 
 
+def _with_voice_rules(body: str) -> str:
+    return body.rstrip() + _VOICE_OUTPUT_RULES
+
+
 # ── Default prompt builders ─────────────────────────────────────────
 
 def _default_greeting_prompt(state: ConversationState) -> str:
@@ -35,9 +58,9 @@ def _default_greeting_prompt(state: ConversationState) -> str:
         f"You are an AI SDR making an outbound cold call.\n"
         f"Lead: {state['lead_name']} at {state['company']}.\n"
         f"CRM context: {state['lead_context']}.\n\n"
-        f"Goal for this turn: confirm you reached the right person and ask for "
-        f"permission to explain why you're calling. Be transparent that this is a "
-        f"cold call. Keep it under two sentences. Do not pitch yet."
+        f"Goal for this turn: confirm you reached the right person and ask permission "
+        f"to explain why you're calling. Be transparent that this is a cold call. "
+        f"Do not pitch yet."
     )
 
 
@@ -61,9 +84,8 @@ def _default_qualify_prompt(state: ConversationState) -> str:
         f"- Pain points: {known_pain}\n\n"
         f"Goal for this turn: ask the NEXT unanswered qualification question.\n"
         f"Prioritize: role/authority, then pain points, then budget, then timeline.\n"
-        f"Only ask ONE question at a time. Keep it concise and conversational.\n"
-        f"If the prospect just answered a question, acknowledge their answer briefly "
-        f"before asking the next one."
+        f"Only ask ONE question at a time. If they just answered, acknowledge in a few "
+        f"words, then ask the next question in the same spoken reply."
     )
 
 
@@ -73,8 +95,8 @@ def _default_pitch_prompt(state: ConversationState) -> str:
         f"You are the SDR for an AI outbound calling and follow-up platform.\n"
         f"Prospect: {state['lead_name']} at {state['company']}.\n"
         f"Pain points heard so far: {pain_points}.\n\n"
-        f"Goal for this turn: give a short, phone-friendly pitch focused on business "
-        f"outcomes and ask whether they would like to see more in a meeting."
+        f"Goal for this turn: one tight pitch focused on business outcomes, then one "
+        f"question about taking a next step. No feature dump."
     )
 
 
@@ -83,8 +105,8 @@ def _default_objection_prompt(state: ConversationState) -> str:
         f"You are handling an objection on a live SDR follow-up call.\n"
         f"Prospect: {state['lead_name']} at {state['company']}.\n"
         f"Context: {state['lead_context']}.\n\n"
-        f"Goal for this turn: acknowledge the concern empathetically, reframe with one "
-        f"helpful point, and ask for a low-commitment next step."
+        f"Goal for this turn: acknowledge, one helpful reframe, one low-commitment ask — "
+        f"still in one or two sentences total."
     )
 
 
@@ -94,8 +116,8 @@ def _default_booking_prompt(state: ConversationState) -> str:
         f"You are booking a meeting for the sales rep.\n"
         f"Prospect: {state['lead_name']} at {state['company']}.\n"
         f"Available slots:\n{slot_lines}\n\n"
-        f"Goal for this turn: book a meeting. Offer up to three options in natural "
-        f"language and confirm the chosen slot clearly."
+        f"Goal for this turn: book a meeting. Offer up to three time options in plain "
+        f"spoken language (no lists); when confirming, restate the chosen time in one short line."
     )
 
 
@@ -104,35 +126,34 @@ def _default_wrap_up_prompt(state: ConversationState) -> str:
         f"You need to wrap up this SDR call with {state['lead_name']} from {state['company']}.\n"
         f"Current outcome: {state['call_outcome']}.\n"
         f"Meeting booked: {state['meeting_booked']}.\n\n"
-        f"Goal for this turn: wrap up the conversation politely, summarize the next step, "
-        f"and keep the final response brief."
+        f"Goal for this turn: polite close, one sentence on next steps, done."
     )
 
 
 # ── Public API (used by nodes.py) ───────────────────────────────────
 
 def greeting_prompt(state: ConversationState) -> str:
-    return _apply_custom(state, "prompt_greeting", _default_greeting_prompt)
+    return _with_voice_rules(_apply_custom(state, "prompt_greeting", _default_greeting_prompt))
 
 
 def qualify_prompt(state: ConversationState) -> str:
-    return _apply_custom(state, "prompt_qualify", _default_qualify_prompt)
+    return _with_voice_rules(_apply_custom(state, "prompt_qualify", _default_qualify_prompt))
 
 
 def pitch_prompt(state: ConversationState) -> str:
-    return _apply_custom(state, "prompt_pitch", _default_pitch_prompt)
+    return _with_voice_rules(_apply_custom(state, "prompt_pitch", _default_pitch_prompt))
 
 
 def objection_prompt(state: ConversationState) -> str:
-    return _apply_custom(state, "prompt_objection", _default_objection_prompt)
+    return _with_voice_rules(_apply_custom(state, "prompt_objection", _default_objection_prompt))
 
 
 def booking_prompt(state: ConversationState) -> str:
-    return _apply_custom(state, "prompt_booking", _default_booking_prompt)
+    return _with_voice_rules(_apply_custom(state, "prompt_booking", _default_booking_prompt))
 
 
 def wrap_up_prompt(state: ConversationState) -> str:
-    return _apply_custom(state, "prompt_wrapup", _default_wrap_up_prompt)
+    return _with_voice_rules(_apply_custom(state, "prompt_wrapup", _default_wrap_up_prompt))
 
 
 # ── Router prompts (unchanged, not per-bot customizable) ───────────

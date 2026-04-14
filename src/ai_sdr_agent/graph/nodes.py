@@ -8,6 +8,7 @@ from loguru import logger
 
 from ai_sdr_agent.graph.prompts import (
     booking_prompt,
+    format_reply_for_tts,
     greeting_prompt,
     objection_prompt,
     pitch_prompt,
@@ -27,6 +28,18 @@ from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway, render
 
 _DEFAULT_MAX_QUALIFY_ATTEMPTS = 3
 _DEFAULT_MAX_BOOKING_ATTEMPTS = 3
+
+# Per-turn output token caps for voice (keep low for fast TTS first byte).
+_MAX_OUT_GREETING = 110
+_MAX_OUT_QUALIFY = 130
+_MAX_OUT_PITCH = 160
+_MAX_OUT_OBJECTION = 140
+_MAX_OUT_BOOKING = 200
+_MAX_OUT_WRAPUP = 120
+
+
+def _finalize_spoken_reply(text: str) -> str:
+    return format_reply_for_tts(text)
 
 
 def _bot_cfg(state: ConversationState, key: str, default=None):
@@ -107,9 +120,12 @@ async def greeting_node(
     brain: ConversationBrain,
 ) -> dict:
     t0 = time.perf_counter()
-    response = await brain.respond(
-        system_prompt=greeting_prompt(state),
-        transcript=state["transcript"],
+    response = _finalize_spoken_reply(
+        await brain.respond(
+            system_prompt=greeting_prompt(state),
+            transcript=state["transcript"],
+            max_tokens=_MAX_OUT_GREETING,
+        )
     )
     respond_ms = (time.perf_counter() - t0) * 1000
     logger.info("greeting_node latency respond_ms={:.0f}", respond_ms)
@@ -132,6 +148,7 @@ async def qualify_node(
         brain.respond(
             system_prompt=qualify_prompt(state),
             transcript=state["transcript"],
+            max_tokens=_MAX_OUT_QUALIFY,
         ),
         route_after_qualify(state, brain),
     )
@@ -142,6 +159,7 @@ async def qualify_node(
         wall_ms,
     )
     extra: dict = {**qual_updates, "qualify_attempts": new_attempts}
+    response = _finalize_spoken_reply(response)
 
     max_qualify = _bot_cfg(state, "max_qualify_attempts", _DEFAULT_MAX_QUALIFY_ATTEMPTS)
     if decision == "not_interested":
@@ -165,10 +183,12 @@ async def pitch_node(
         brain.respond(
             system_prompt=pitch_prompt(state),
             transcript=state["transcript"],
+            max_tokens=_MAX_OUT_PITCH,
         ),
         route_after_pitch(state, brain),
     )
     wall_ms = (time.perf_counter() - t0) * 1000
+    response = _finalize_spoken_reply(response)
 
     logger.info(
         "pitch_node latency wall_ms={:.0f} (respond+route parallel)",
@@ -193,9 +213,12 @@ async def objection_node(
 
     t0 = time.perf_counter()
     if new_count >= max_objections:
-        response = await brain.respond(
-            system_prompt=objection_prompt(state),
-            transcript=state["transcript"],
+        response = _finalize_spoken_reply(
+            await brain.respond(
+                system_prompt=objection_prompt(state),
+                transcript=state["transcript"],
+                max_tokens=_MAX_OUT_OBJECTION,
+            )
         )
         wall_ms = (time.perf_counter() - t0) * 1000
         logger.info("objection_node latency wall_ms={:.0f} (max objections reached)", wall_ms)
@@ -206,10 +229,12 @@ async def objection_node(
             brain.respond(
                 system_prompt=objection_prompt(state),
                 transcript=state["transcript"],
+                max_tokens=_MAX_OUT_OBJECTION,
             ),
             route_after_objection(state, brain),
         )
         wall_ms = (time.perf_counter() - t0) * 1000
+        response = _finalize_spoken_reply(response)
         logger.info(
             "objection_node latency wall_ms={:.0f} (respond+route parallel)",
             wall_ms,
@@ -273,9 +298,12 @@ async def book_meeting_node(
         )
         next_node = "wrap_up"
     elif new_attempts >= _bot_cfg(state, "max_booking_attempts", _DEFAULT_MAX_BOOKING_ATTEMPTS):
-        response = await brain.respond(
-            system_prompt=booking_prompt(state),
-            transcript=state["transcript"],
+        response = _finalize_spoken_reply(
+            await brain.respond(
+                system_prompt=booking_prompt(state),
+                transcript=state["transcript"],
+                max_tokens=_MAX_OUT_BOOKING,
+            )
         )
         wall_ms = (time.perf_counter() - t0) * 1000
         logger.info(
@@ -289,10 +317,12 @@ async def book_meeting_node(
             brain.respond(
                 system_prompt=booking_prompt(state),
                 transcript=state["transcript"],
+                max_tokens=_MAX_OUT_BOOKING,
             ),
             route_during_booking(state, brain),
         )
         wall_ms = (time.perf_counter() - t0) * 1000
+        response = _finalize_spoken_reply(response)
         logger.info(
             "book_meeting_node latency wall_ms={:.0f} (respond+route parallel)",
             wall_ms,
@@ -316,9 +346,12 @@ async def wrap_up_node(
     from_name: str,
 ) -> dict:
     t0 = time.perf_counter()
-    response = await brain.respond(
-        system_prompt=wrap_up_prompt(state),
-        transcript=state["transcript"],
+    response = _finalize_spoken_reply(
+        await brain.respond(
+            system_prompt=wrap_up_prompt(state),
+            transcript=state["transcript"],
+            max_tokens=_MAX_OUT_WRAPUP,
+        )
     )
     respond_ms = (time.perf_counter() - t0) * 1000
     summary = (

@@ -22,7 +22,13 @@ from ai_sdr_agent.config import SDRSettings
 
 
 class ConversationBrain(Protocol):
-    async def respond(self, *, system_prompt: str, transcript: list[dict[str, str]]) -> str:
+    async def respond(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+    ) -> str:
         ...
 
     async def classify(
@@ -51,16 +57,28 @@ class StubConversationBrain:
                 return message["content"]
         return ""
 
-    async def respond(self, *, system_prompt: str, transcript: list[dict[str, str]]) -> str:
+    async def respond(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+    ) -> str:
         human_text = self._last_human_text(transcript).strip()
-        if "greet them warmly" in system_prompt.lower():
+        pl = system_prompt.lower()
+        if "outbound cold call" in pl:
             return "Hi, this is Ava following up on your recent interest. Did I catch you at an okay time?"
-        if "qualify the prospect" in system_prompt.lower():
+        if "qualifying the prospect" in pl:
             return (
                 "Thanks. To make sure this is relevant, are you the person who owns sales process decisions "
                 "and are you looking to improve follow-up speed this quarter?"
             )
-        if "objection" in system_prompt.lower():
+        if "you are the sdr for an ai outbound" in pl:
+            return (
+                "We help teams automate outbound follow-up so prospects get contacted quickly and "
+                "reps spend more time in qualified conversations. Would you be open to a short walkthrough?"
+            )
+        if "handling an objection" in pl or "objection handling" in pl:
             return (
                 "That makes sense. Teams usually start small with one workflow, so the first step is low lift. "
                 "Would it help if I showed you what that looks like in a short demo?"
@@ -101,6 +119,27 @@ class StubConversationBrain:
         labels: Sequence[str],
     ) -> str:
         text = human_input.lower().strip()
+        labels_set = set(labels)
+        # Qualify router: move to pitch once the prospect has given substantive role/engagement
+        # (tests rely on these phrases; real LLM routing is smarter).
+        if (
+            "continue_qualifying" in labels_set
+            and "pitch" in labels_set
+            and "not_interested" in labels_set
+        ):
+            if any(
+                s in text
+                for s in (
+                    "oversee",
+                    "sales operations",
+                    "sales ops",
+                    "i lead",
+                    "i run sales",
+                    "let's do it",
+                    "sounds interesting",
+                )
+            ):
+                return "pitch"
         if any(phrase in text for phrase in self._EXIT_PHRASES):
             return "wrap_up" if "wrap_up" in labels else "not_interested"
         if "continue_qualifying" in labels:
@@ -160,7 +199,7 @@ class LangChainConversationBrain:
             provider = bot_config.get("llm_provider", "openai")
             model_name = bot_config.get("llm_model_name", "gpt-4o-mini")
             temperature = bot_config.get("llm_temperature", 0.4)
-            max_tokens = bot_config.get("llm_max_tokens", 300)
+            max_tokens = bot_config.get("llm_max_tokens", 220)
             openai_key = bot_config.get("openai_api_key")
             anthropic_key = bot_config.get("anthropic_api_key")
             groq_key = bot_config.get("groq_api_key")
@@ -199,14 +238,24 @@ class LangChainConversationBrain:
         else:
             raise ValueError(f"Unsupported llm_provider: {provider}")
 
-    async def respond(self, *, system_prompt: str, transcript: list[dict[str, str]]) -> str:
+        self._max_tokens = max_tokens
+
+    async def respond(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+    ) -> str:
         messages = [SystemMessage(content=system_prompt)]
         for item in transcript:
             if item["role"] == "human":
                 messages.append(HumanMessage(content=item["content"]))
             else:
                 messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
-        response = await self._model.ainvoke(messages)
+        limit = self._max_tokens if max_tokens is None else min(max_tokens, self._max_tokens)
+        model = self._model.bind(max_tokens=limit)
+        response = await model.ainvoke(messages)
         return str(response.content)
 
     async def classify(
