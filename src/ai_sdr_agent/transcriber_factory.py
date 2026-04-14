@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from loguru import logger
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig, TranscriberConfig, Transcription
@@ -20,20 +19,6 @@ from ai_sdr_agent.services.latency_analytics import (
 )
 
 _ENUM_PATTERN = re.compile(r"SamplingRate\.RATE_(\d+)")
-
-
-def _rewrite_deepgram_utterance_end_ms_url(url: str, transcriber: DeepgramTranscriber) -> str:
-    """Vocode uses max(utterance_cutoff_ms, 1000) for utterance_end_ms; override with configured ms."""
-    ep = transcriber.transcriber_config.endpointing_config
-    if not isinstance(ep, DeepgramEndpointingConfig):
-        return url
-    parsed = urlparse(url)
-    pairs = [(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if k != "utterance_end_ms"]
-    coef = transcriber._get_speed_coefficient()
-    ut_ms = max(1, int(ep.utterance_cutoff_ms * (1 / coef)))
-    pairs.append(("utterance_end_ms", str(ut_ms)))
-    new_query = urlencode(pairs)
-    return urlunparse(parsed._replace(query=new_query))
 
 
 def resolve_telephony_deepgram_model(raw_model: str | None) -> str:
@@ -137,7 +122,6 @@ class LoggingDeepgramTranscriber(DeepgramTranscriber):
     def get_deepgram_url(self) -> str:
         url = super().get_deepgram_url()
         url = _ENUM_PATTERN.sub(r"\1", url)
-        url = _rewrite_deepgram_utterance_end_ms_url(url, self)
         return url
 
     async def _run_loop(self):
