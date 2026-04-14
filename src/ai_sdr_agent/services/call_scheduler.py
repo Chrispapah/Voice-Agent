@@ -13,7 +13,7 @@ from vocode.streaming.transcriber.deepgram_transcriber import (
     TimeSilentConfig,
 )
 
-from ai_sdr_agent.config import SDRSettings
+from ai_sdr_agent.config import DEEPGRAM_UTTERANCE_CUTOFF_MS, SDRSettings
 from ai_sdr_agent.models import LeadRecord
 from ai_sdr_agent.transcriber_factory import (
     build_telephony_deepgram_transcriber_config,
@@ -89,7 +89,7 @@ class CallScheduler:
             transcriber_config = DeepgramTranscriberConfig.from_telephone_input_device(
                 endpointing_config=DeepgramEndpointingConfig(
                     vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 80),
-                    utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 2000),
+                    utterance_cutoff_ms=DEEPGRAM_UTTERANCE_CUTOFF_MS,
                     time_silent_config=TimeSilentConfig(
                         time_cutoff_seconds=max(
                             self._cfg("deepgram_time_cutoff_seconds", 0.08), 0.04

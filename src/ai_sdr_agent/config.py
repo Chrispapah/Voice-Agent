@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Final, Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Fixed in code (not overridable via env). Vocode passes this to Deepgram as utterance_end_ms
+# but clamps to ≥1000 in the websocket URL, so effective Deepgram value may be 1000ms.
+DEEPGRAM_UTTERANCE_CUTOFF_MS: Final[int] = 500
 
 
 class SDRSettings(BaseSettings):
@@ -38,14 +43,17 @@ class SDRSettings(BaseSettings):
     deepgram_model: str = "nova-2"
     # Endpointing: lower = final transcript sooner after a pause (more false end-of-turn / mid-sentence cuts).
     # Deepgram URL "endpointing" = vad_threshold_ms; time/punctuation = Vocode fallbacks when speech_final lags.
-    # utterance_cutoff_ms → Deepgram utterance_end_ms (Vocode enforces ≥1000). Higher = more tolerance for
-    # pauses within a thought; 2000ms has been a better default than 900ms on live calls.
     deepgram_vad_threshold_ms: int = 80
-    deepgram_utterance_cutoff_ms: int = 2000
+    deepgram_utterance_cutoff_ms: int = DEEPGRAM_UTTERANCE_CUTOFF_MS
     deepgram_time_cutoff_seconds: float = 0.08
     deepgram_post_punctuation_time_seconds: float = 0.035
     deepgram_single_utterance_for_first_response: bool = True
     deepgram_mute_during_speech: bool = True
+
+    @field_validator("deepgram_utterance_cutoff_ms", mode="before")
+    @classmethod
+    def _utterance_cutoff_fixed(cls, _value: object) -> int:
+        return DEEPGRAM_UTTERANCE_CUTOFF_MS
 
     tts_provider: Literal["elevenlabs", "azure"] = "elevenlabs"
     elevenlabs_api_key: str | None = None
