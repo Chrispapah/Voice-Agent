@@ -6,6 +6,8 @@ from loguru import logger
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig
+
+from ai_sdr_agent.google_speech_transcriber import SDRGoogleTranscriberConfig
 from vocode.streaming.telephony.config_manager.base_config_manager import BaseConfigManager
 from vocode.streaming.telephony.conversation.outbound_call import OutboundCall
 from vocode.streaming.transcriber.deepgram_transcriber import (
@@ -17,6 +19,7 @@ from ai_sdr_agent.config import SDRSettings
 from ai_sdr_agent.models import LeadRecord
 from ai_sdr_agent.transcriber_factory import (
     build_telephony_deepgram_transcriber_config,
+    build_telephony_google_transcriber_config,
     resolve_telephony_deepgram_model,
 )
 from ai_sdr_agent.vocode_agent import build_agent_config
@@ -51,8 +54,14 @@ class CallScheduler:
         return default
 
     def _telephony_ready(self) -> bool:
+        stt = self._cfg("stt_provider", "google")
+        stt_ok = (
+            bool(self._cfg("google_speech_api_key"))
+            if stt == "google"
+            else bool(self._cfg("deepgram_api_key"))
+        )
         required = [
-            self._cfg("deepgram_api_key"),
+            stt_ok,
             self._cfg("elevenlabs_api_key"),
             self._cfg("elevenlabs_voice_id"),
             self._cfg("twilio_account_sid"),
@@ -84,7 +93,18 @@ class CallScheduler:
             ),
         )
         if self.settings is not None and not self._bot_config:
-            transcriber_config = build_telephony_deepgram_transcriber_config(self.settings)
+            if self.settings.stt_provider == "google":
+                transcriber_config = build_telephony_google_transcriber_config(self.settings)
+            else:
+                transcriber_config = build_telephony_deepgram_transcriber_config(self.settings)
+        elif self._cfg("stt_provider", "google") == "google":
+            transcriber_config = SDRGoogleTranscriberConfig.from_telephone_input_device(
+                model=self._cfg("google_speech_model") or "phone_call",
+                language_code=self._cfg("google_speech_language_code", "en-US"),
+                mute_during_speech=self._cfg("google_mute_during_speech", True),
+                google_api_key=self._cfg("google_speech_api_key") or "",
+                utterance_silence_ms=self._cfg("google_utterance_silence_ms", 300),
+            )
         else:
             transcriber_config = DeepgramTranscriberConfig.from_telephone_input_device(
                 endpointing_config=DeepgramEndpointingConfig(

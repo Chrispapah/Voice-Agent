@@ -13,6 +13,7 @@ from vocode.streaming.transcriber.deepgram_transcriber import (
 from vocode.streaming.transcriber.default_factory import DefaultTranscriberFactory
 
 from ai_sdr_agent.config import SDRSettings
+from ai_sdr_agent.google_speech_transcriber import SDRGoogleTranscriber, SDRGoogleTranscriberConfig
 from ai_sdr_agent.services.latency_analytics import (
     mark_deepgram_final_transcript_enqueued_from_context,
     mark_last_inbound_audio_from_context,
@@ -31,6 +32,23 @@ def resolve_telephony_deepgram_model(raw_model: str | None) -> str:
         )
         return "phonecall"
     return model
+
+
+def build_telephony_google_transcriber_config(settings: SDRSettings) -> SDRGoogleTranscriberConfig:
+    """Google phone_call model (mulaw 8kHz) + ~utterance silence via client-side timer on interims."""
+    logger.info(
+        "Google Speech telephony model={} language={} utterance_silence_ms={}",
+        settings.google_speech_model,
+        settings.google_speech_language_code,
+        settings.google_utterance_silence_ms,
+    )
+    return SDRGoogleTranscriberConfig.from_telephone_input_device(
+        model=settings.google_speech_model,
+        language_code=settings.google_speech_language_code,
+        mute_during_speech=settings.google_mute_during_speech,
+        google_api_key=settings.google_speech_api_key or "",
+        utterance_silence_ms=settings.google_utterance_silence_ms,
+    )
 
 
 def build_telephony_deepgram_transcriber_config(settings: SDRSettings) -> DeepgramTranscriberConfig:
@@ -94,7 +112,7 @@ class _TranscriberInputQueueProxy:
 
 
 class _TranscriberOutputQueueProxy:
-    """Wraps the transcriber output queue to timestamp final Deepgram transcripts."""
+    """Wraps the transcriber output queue to timestamp final STT transcripts (Deepgram or Google)."""
 
     __slots__ = ("_inner",)
 
@@ -139,6 +157,12 @@ class SDRTranscriberFactory(DefaultTranscriberFactory):
         self,
         transcriber_config: TranscriberConfig,
     ):
+        if isinstance(transcriber_config, SDRGoogleTranscriberConfig):
+            tc = transcriber_config
+            inner = SDRGoogleTranscriber(tc)
+            inner.input_queue = _TranscriberInputQueueProxy(inner.input_queue)
+            inner.output_queue = _TranscriberOutputQueueProxy(inner.output_queue)
+            return inner
         if isinstance(transcriber_config, DeepgramTranscriberConfig):
             return LoggingDeepgramTranscriber(transcriber_config)
         return super().create_transcriber(transcriber_config)

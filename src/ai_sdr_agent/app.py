@@ -33,6 +33,7 @@ from ai_sdr_agent.synthesizer_factory import SDRSynthesizerFactory
 from ai_sdr_agent.transcriber_factory import (
     SDRTranscriberFactory,
     build_telephony_deepgram_transcriber_config,
+    build_telephony_google_transcriber_config,
     resolve_telephony_deepgram_model,
 )
 from ai_sdr_agent.tools import StubCRMGateway, StubCalendarGateway, StubEmailGateway
@@ -155,7 +156,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             "status": "ok" if telephony_ready else "degraded",
             "app_name": settings.app_name,
             "llm_provider": settings.llm_provider,
-            "stt_provider": "deepgram",
+            "stt_provider": settings.stt_provider,
             "tts_provider": "elevenlabs",
             "telephony_ready": telephony_ready,
             "missing_runtime_values": missing_runtime_values,
@@ -272,7 +273,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
         telephony_ready,
         settings.normalized_base_url(),
         settings.config_manager_kind(),
-        "deepgram",
+        settings.stt_provider,
         resolve_telephony_deepgram_model(settings.deepgram_model),
         "elevenlabs",
         settings.elevenlabs_model_id,
@@ -307,4 +308,6 @@ def _build_synthesizer_config(settings: SDRSettings):
 
 
 def _build_transcriber_config(settings: SDRSettings):
+    if settings.stt_provider == "google":
+        return build_telephony_google_transcriber_config(settings)
     return build_telephony_deepgram_transcriber_config(settings)

@@ -33,6 +33,16 @@ class SDRSettings(BaseSettings):
     twilio_phone_number: str | None = None
     twilio_record_calls: bool = False
 
+    stt_provider: Literal["deepgram", "google"] = "google"
+
+    google_speech_api_key: str | None = None
+    google_speech_language_code: str = "en-US"
+    # phone_call + enhanced matches Twilio mulaw telephony (see google_speech_transcriber).
+    google_speech_model: str | None = "phone_call"
+    # Silence after last interim before emitting a final (client-side; approximates utterance endpointing).
+    google_utterance_silence_ms: int = 300
+    google_mute_during_speech: bool = True
+
     deepgram_api_key: str | None = None
     deepgram_language: str = "en-US"
     deepgram_model: str = "nova-2"
@@ -107,7 +117,9 @@ class SDRSettings(BaseSettings):
             missing.append("ANTHROPIC_API_KEY")
         if self.llm_provider == "groq" and not self.groq_api_key:
             missing.append("GROQ_API_KEY")
-        if not self.deepgram_api_key:
+        if self.stt_provider == "google" and not self.google_speech_api_key:
+            missing.append("GOOGLE_SPEECH_API_KEY")
+        if self.stt_provider == "deepgram" and not self.deepgram_api_key:
             missing.append("DEEPGRAM_API_KEY")
         if not self.elevenlabs_api_key:
             missing.append("ELEVENLABS_API_KEY")
@@ -134,7 +146,7 @@ class SDRSettings(BaseSettings):
     def provider_summary(self) -> dict[str, str]:
         return {
             "llm_provider": self.llm_provider,
-            "stt_provider": "deepgram",
+            "stt_provider": self.stt_provider,
             "tts_provider": "elevenlabs",
             "tts_transport": "http_stream",
             "calendar": "stub",

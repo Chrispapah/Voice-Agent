@@ -13,6 +13,7 @@ redis
 twilio
 uvicorn
 vocode==0.1.113
+google-cloud-speech>=2.26.0,<3.0.0
 sqlalchemy[asyncio]
 python-jose[cryptography]
 cryptography
