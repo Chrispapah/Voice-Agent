@@ -18,11 +18,15 @@ class SDRGoogleTranscriberConfig(GoogleTranscriberConfig, type=TranscriberType.G
     """Extends vocode's config with API key + client-side utterance silence (ms after last interim)."""
 
     google_api_key: str = ""
-    utterance_silence_ms: int = 300
+    utterance_silence_ms: int = 80
+
+
+# Minimum timer delay; threading resolution is coarse—below ~40ms gains are unreliable.
+_GOOGLE_SILENCE_MS_FLOOR = 40
 
 
 class SDRGoogleTranscriber(BaseThreadAsyncTranscriber[SDRGoogleTranscriberConfig]):
-    """Streaming STT via google-cloud-speech with API key; optional 300ms-style silence finals."""
+    """Streaming STT via google-cloud-speech; aggressive low-latency silence-based finals."""
 
     def __init__(self, transcriber_config: SDRGoogleTranscriberConfig):
         super().__init__(transcriber_config)
@@ -37,7 +41,7 @@ class SDRGoogleTranscriber(BaseThreadAsyncTranscriber[SDRGoogleTranscriberConfig
             client_options=ClientOptions(api_key=transcriber_config.google_api_key)
         )
 
-        self._silence_s = max(transcriber_config.utterance_silence_ms, 50) / 1000.0
+        self._silence_s = max(transcriber_config.utterance_silence_ms, _GOOGLE_SILENCE_MS_FLOOR) / 1000.0
         self._timer: Timer | None = None
         self._timer_lock = Lock()
         self._pending_interim_text: str | None = None

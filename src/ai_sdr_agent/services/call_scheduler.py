@@ -103,7 +103,7 @@ class CallScheduler:
                 language_code=self._cfg("google_speech_language_code", "en-US"),
                 mute_during_speech=self._cfg("google_mute_during_speech", True),
                 google_api_key=self._cfg("google_speech_api_key") or "",
-                utterance_silence_ms=self._cfg("google_utterance_silence_ms", 300),
+                utterance_silence_ms=self._cfg("google_utterance_silence_ms", 80),
             )
         else:
             transcriber_config = DeepgramTranscriberConfig.from_telephone_input_device(
