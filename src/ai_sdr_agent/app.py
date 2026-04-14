@@ -10,10 +10,6 @@ from pydantic import BaseModel
 from vocode.streaming.models.telephony import BaseCallConfig
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 from vocode.streaming.models.telephony import TwilioConfig
-from vocode.streaming.models.transcriber import (
-    DeepgramTranscriberConfig,
-    TimeEndpointingConfig,
-)
 from vocode.streaming.telephony.config_manager.base_config_manager import BaseConfigManager
 from vocode.streaming.telephony.config_manager.in_memory_config_manager import InMemoryConfigManager
 from vocode.streaming.telephony.config_manager.redis_config_manager import RedisConfigManager
@@ -34,7 +30,11 @@ from ai_sdr_agent.services.persistence import (
 )
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
 from ai_sdr_agent.synthesizer_factory import SDRSynthesizerFactory
-from ai_sdr_agent.transcriber_factory import SDRTranscriberFactory
+from ai_sdr_agent.transcriber_factory import (
+    SDRTranscriberFactory,
+    build_telephony_deepgram_transcriber_config,
+    resolve_telephony_deepgram_model,
+)
 from ai_sdr_agent.tools import StubCRMGateway, StubCalendarGateway, StubEmailGateway
 from ai_sdr_agent.vocode_agent import build_agent_config
 
@@ -273,7 +273,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
         settings.normalized_base_url(),
         settings.config_manager_kind(),
         "deepgram",
-        _resolve_telephony_deepgram_model(settings.deepgram_model),
+        resolve_telephony_deepgram_model(settings.deepgram_model),
         "elevenlabs",
         settings.elevenlabs_model_id,
         settings.elevenlabs_use_websocket,
@@ -306,31 +306,5 @@ def _build_synthesizer_config(settings: SDRSettings):
     )
 
 
-def _resolve_telephony_deepgram_model(raw_model: str | None) -> str:
-    model = (raw_model or "").strip() or "phonecall"
-    if model.lower() == "nova-2":
-        logger.warning(
-            "DEEPGRAM_MODEL={} is not telephony-optimized; using phonecall model for Twilio audio.",
-            model,
-        )
-        return "phonecall"
-    return model
-
-
 def _build_transcriber_config(settings: SDRSettings):
-    model = _resolve_telephony_deepgram_model(settings.deepgram_model)
-    time_cutoff_seconds = max(settings.deepgram_time_cutoff_seconds, 0.2)
-    logger.info(
-        "Using time-based endpointing for telephony with cutoff={}s",
-        time_cutoff_seconds,
-    )
-
-    return DeepgramTranscriberConfig.from_telephone_input_device(
-        endpointing_config=TimeEndpointingConfig(
-            time_cutoff_seconds=time_cutoff_seconds
-        ),
-        api_key=settings.deepgram_api_key,
-        language=settings.deepgram_language,
-        model=model,
-        mute_during_speech=settings.deepgram_mute_during_speech,
-    )
+    return build_telephony_deepgram_transcriber_config(settings)

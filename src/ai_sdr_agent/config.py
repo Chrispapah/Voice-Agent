@@ -36,10 +36,11 @@ class SDRSettings(BaseSettings):
     deepgram_api_key: str | None = None
     deepgram_language: str = "en-US"
     deepgram_model: str = "nova-2"
-    deepgram_vad_threshold_ms: int = 180
+    # Endpointing: lower = react sooner after the caller pauses (more false "end of turn" risk).
+    deepgram_vad_threshold_ms: int = 120
     deepgram_utterance_cutoff_ms: int = 900
-    deepgram_time_cutoff_seconds: float = 0.2
-    deepgram_post_punctuation_time_seconds: float = 0.08
+    deepgram_time_cutoff_seconds: float = 0.12
+    deepgram_post_punctuation_time_seconds: float = 0.05
     deepgram_single_utterance_for_first_response: bool = True
     deepgram_mute_during_speech: bool = True
 

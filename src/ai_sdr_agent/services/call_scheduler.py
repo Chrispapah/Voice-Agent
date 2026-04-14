@@ -15,6 +15,10 @@ from vocode.streaming.transcriber.deepgram_transcriber import (
 
 from ai_sdr_agent.config import SDRSettings
 from ai_sdr_agent.models import LeadRecord
+from ai_sdr_agent.transcriber_factory import (
+    build_telephony_deepgram_transcriber_config,
+    resolve_telephony_deepgram_model,
+)
 from ai_sdr_agent.vocode_agent import build_agent_config
 
 
@@ -79,6 +83,30 @@ class CallScheduler:
                 "Hi, this is your AI assistant. Do you have a moment?",
             ),
         )
+        if self.settings is not None and not self._bot_config:
+            transcriber_config = build_telephony_deepgram_transcriber_config(self.settings)
+        else:
+            transcriber_config = DeepgramTranscriberConfig.from_telephone_input_device(
+                endpointing_config=DeepgramEndpointingConfig(
+                    vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 120),
+                    utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 900),
+                    time_silent_config=TimeSilentConfig(
+                        time_cutoff_seconds=max(
+                            self._cfg("deepgram_time_cutoff_seconds", 0.12), 0.05
+                        ),
+                        post_punctuation_time_seconds=max(
+                            self._cfg("deepgram_post_punctuation_time_seconds", 0.05), 0.03
+                        ),
+                    ),
+                    use_single_utterance_endpointing_for_first_utterance=self._cfg(
+                        "deepgram_single_utterance_for_first_response", True
+                    ),
+                ),
+                api_key=self._cfg("deepgram_api_key"),
+                language=self._cfg("deepgram_language", "en-US"),
+                model=resolve_telephony_deepgram_model(self._cfg("deepgram_model", "nova-2")),
+                mute_during_speech=self._cfg("deepgram_mute_during_speech", True),
+            )
         outbound_call = OutboundCall(
             base_url=base_url,
             to_phone=lead.phone_number,
@@ -90,22 +118,7 @@ class CallScheduler:
                 auth_token=self._cfg("twilio_auth_token", ""),
                 record=self._cfg("twilio_record_calls", False),
             ),
-            transcriber_config=DeepgramTranscriberConfig.from_telephone_input_device(
-                endpointing_config=DeepgramEndpointingConfig(
-                    vad_threshold_ms=self._cfg("deepgram_vad_threshold_ms", 180),
-                    utterance_cutoff_ms=self._cfg("deepgram_utterance_cutoff_ms", 900),
-                    time_silent_config=TimeSilentConfig(
-                        time_cutoff_seconds=self._cfg("deepgram_time_cutoff_seconds", 0.2),
-                        post_punctuation_time_seconds=self._cfg("deepgram_post_punctuation_time_seconds", 0.08),
-                    ),
-                    use_single_utterance_endpointing_for_first_utterance=self._cfg(
-                        "deepgram_single_utterance_for_first_response", True
-                    ),
-                ),
-                api_key=self._cfg("deepgram_api_key"),
-                model=self._cfg("deepgram_model", "nova-2"),
-                mute_during_speech=self._cfg("deepgram_mute_during_speech", True),
-            ),
+            transcriber_config=transcriber_config,
             synthesizer_config=self._build_synthesizer_config(),
             telephony_params={
                 "lead_id": lead.lead_id,

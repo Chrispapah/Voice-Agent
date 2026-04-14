@@ -5,12 +5,60 @@ import re
 
 from loguru import logger
 from vocode.streaming.models.transcriber import DeepgramTranscriberConfig, TranscriberConfig, Transcription
-from vocode.streaming.transcriber.deepgram_transcriber import DeepgramTranscriber
+from vocode.streaming.transcriber.deepgram_transcriber import (
+    DeepgramEndpointingConfig,
+    DeepgramTranscriber,
+    TimeSilentConfig,
+)
 from vocode.streaming.transcriber.default_factory import DefaultTranscriberFactory
 
+from ai_sdr_agent.config import SDRSettings
 from ai_sdr_agent.services.latency_analytics import mark_deepgram_final_transcript_enqueued_from_context
 
 _ENUM_PATTERN = re.compile(r"SamplingRate\.RATE_(\d+)")
+
+
+def resolve_telephony_deepgram_model(raw_model: str | None) -> str:
+    """Twilio sends 8-bit mulaw; prefer telephony-tuned Deepgram models."""
+    model = (raw_model or "").strip() or "phonecall"
+    if model.lower() == "nova-2":
+        logger.warning(
+            "DEEPGRAM_MODEL={} is not telephony-optimized; using phonecall model for Twilio audio.",
+            model,
+        )
+        return "phonecall"
+    return model
+
+
+def build_telephony_deepgram_transcriber_config(settings: SDRSettings) -> DeepgramTranscriberConfig:
+    """Deepgram VAD + silence/punctuation fallback (matches outbound scheduler when using SDRSettings)."""
+    model = resolve_telephony_deepgram_model(settings.deepgram_model)
+    time_cutoff = max(settings.deepgram_time_cutoff_seconds, 0.05)
+    post_punct = max(settings.deepgram_post_punctuation_time_seconds, 0.03)
+    logger.info(
+        "Deepgram telephony endpointing model={} vad_ms={} utterance_cutoff_ms={} "
+        "time_silent_cutoff={}s post_punctuation={}s",
+        model,
+        settings.deepgram_vad_threshold_ms,
+        settings.deepgram_utterance_cutoff_ms,
+        time_cutoff,
+        post_punct,
+    )
+    return DeepgramTranscriberConfig.from_telephone_input_device(
+        endpointing_config=DeepgramEndpointingConfig(
+            vad_threshold_ms=settings.deepgram_vad_threshold_ms,
+            utterance_cutoff_ms=settings.deepgram_utterance_cutoff_ms,
+            time_silent_config=TimeSilentConfig(
+                time_cutoff_seconds=time_cutoff,
+                post_punctuation_time_seconds=post_punct,
+            ),
+            use_single_utterance_endpointing_for_first_utterance=settings.deepgram_single_utterance_for_first_response,
+        ),
+        api_key=settings.deepgram_api_key,
+        language=settings.deepgram_language,
+        model=model,
+        mute_during_speech=settings.deepgram_mute_during_speech,
+    )
 
 
 class _TranscriberOutputQueueProxy:
