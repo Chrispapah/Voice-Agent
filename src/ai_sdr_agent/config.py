@@ -40,7 +40,7 @@ class SDRSettings(BaseSettings):
     # phone_call + enhanced matches Twilio mulaw telephony (see google_speech_transcriber).
     google_speech_model: str | None = "phone_call"
     # Client-side: silence after last interim before a "final" (lower = snappier, more mid-sentence cuts). Floored in code at 40ms.
-    google_utterance_silence_ms: int = 80
+    google_utterance_silence_ms: int = 500
     google_mute_during_speech: bool = True
 
     deepgram_api_key: str | None = None
