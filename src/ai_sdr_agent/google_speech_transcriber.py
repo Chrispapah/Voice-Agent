@@ -18,7 +18,7 @@ class SDRGoogleTranscriberConfig(GoogleTranscriberConfig, type=TranscriberType.G
     """Extends vocode's config with API key + client-side utterance silence (ms after last interim)."""
 
     google_api_key: str = ""
-    utterance_silence_ms: int = 500
+    utterance_silence_ms: int = 300
 
 
 # Minimum timer delay; threading resolution is coarse—below ~40ms gains are unreliable.
