@@ -6,8 +6,8 @@ from typing import Final, Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Fixed in code (not overridable via env). Vocode passes this to Deepgram as utterance_end_ms
-# but clamps to ≥1000 in the websocket URL, so effective Deepgram value may be 1000ms.
+# Fixed in code (not overridable via env). Sent to Deepgram as utterance_end_ms (see transcriber_factory:
+# Vocode's default get_deepgram_url floors at 1000ms; LoggingDeepgramTranscriber rewrites the query).
 DEEPGRAM_UTTERANCE_CUTOFF_MS: Final[int] = 500
 
 
