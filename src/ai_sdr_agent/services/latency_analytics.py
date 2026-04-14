@@ -29,6 +29,8 @@ class PerceivedTurnSample:
     """Phone turn timings in one worker (perf_counter-based).
 
     stt_final_* are set when Deepgram enqueues a final transcript (see transcriber hook).
+    last_inbound_audio_to_final_stt_ms approximates endpointing + Deepgram delay from the
+    last raw audio chunk we sent until that final (felt delay not covered by stt_final_* alone).
     """
 
     conversation_id: str
@@ -37,15 +39,32 @@ class PerceivedTurnSample:
     perceived_total_ms: float
     stt_final_to_respond_ms: float | None
     stt_final_to_first_audio_ms: float | None
+    last_inbound_audio_to_final_stt_ms: float | None
     recorded_at: float
 
 
-_turn_perf: dict[str, tuple[float, float | None, float | None]] = {}
-"""conversation_id -> (respond_enter_pc, graph_done_pc | None, stt_final_emit_pc | None)"""
+_turn_perf: dict[str, tuple[float, float | None, tuple[float, float | None] | None]] = {}
+"""conversation_id -> (respond_enter_pc, graph_done_pc | None, stt_bundle | None)
+stt_bundle is (stt_final_enqueue_pc, last_inbound_audio_pc | None)."""
 
 _turn_lock = threading.Lock()
-# Latest Deepgram final transcript enqueue time per call (consumption in respond_enter).
-_pending_stt_final_pc: dict[str, float] = {}
+# Latest Deepgram final transcript timing per call (consumption in respond_enter).
+_pending_stt_final_pc: dict[str, tuple[float, float | None]] = {}
+_last_inbound_audio_pc: dict[str, float] = {}
+
+
+def mark_last_inbound_audio_from_context() -> None:
+    """Call when raw inbound audio is put on the Deepgram transcriber input queue (telephony)."""
+    try:
+        from vocode import conversation_id as vocode_conversation_id
+
+        cid = vocode_conversation_id.value
+    except (LookupError, RuntimeError):
+        return
+    if not cid or not isinstance(cid, str):
+        return
+    with _turn_lock:
+        _last_inbound_audio_pc[cid] = time.perf_counter()
 
 
 def mark_deepgram_final_transcript_enqueued_from_context() -> None:
@@ -59,15 +78,17 @@ def mark_deepgram_final_transcript_enqueued_from_context() -> None:
     if not cid or not isinstance(cid, str):
         return
     with _turn_lock:
-        _pending_stt_final_pc[cid] = time.perf_counter()
+        t_final = time.perf_counter()
+        t_last = _last_inbound_audio_pc.get(cid)
+        _pending_stt_final_pc[cid] = (t_final, t_last)
 
 
 def mark_phone_turn_respond_enter(conversation_id: str) -> None:
     """Call at start of SDRVocodeAgent.respond (final text handed to agent)."""
     with _turn_lock:
-        t_stt = _pending_stt_final_pc.pop(conversation_id, None)
+        stt_bundle = _pending_stt_final_pc.pop(conversation_id, None)
         t0 = time.perf_counter()
-        _turn_perf[conversation_id] = (t0, None, t_stt)
+        _turn_perf[conversation_id] = (t0, None, stt_bundle)
 
 
 def mark_phone_turn_graph_done(conversation_id: str) -> None:
@@ -76,13 +97,15 @@ def mark_phone_turn_graph_done(conversation_id: str) -> None:
         cur = _turn_perf.get(conversation_id)
         if cur is None:
             return
-        t0, _, t_stt = cur
-        _turn_perf[conversation_id] = (t0, time.perf_counter(), t_stt)
+        t0, _, stt_bundle = cur
+        _turn_perf[conversation_id] = (t0, time.perf_counter(), stt_bundle)
 
 
 def clear_phone_turn_on_error(conversation_id: str) -> None:
     with _turn_lock:
         _turn_perf.pop(conversation_id, None)
+        _pending_stt_final_pc.pop(conversation_id, None)
+        _last_inbound_audio_pc.pop(conversation_id, None)
 
 
 def _finalize_perceived_turn(conversation_id: str, t_audio: float) -> PerceivedTurnSample | None:
@@ -90,14 +113,21 @@ def _finalize_perceived_turn(conversation_id: str, t_audio: float) -> PerceivedT
         cur = _turn_perf.pop(conversation_id, None)
     if cur is None:
         return None
-    t0, t1, t_stt = cur
+    t0, t1, stt_bundle = cur
     if t1 is None:
         t1 = t0
+    t_stt: float | None = None
+    t_last_in: float | None = None
+    if stt_bundle is not None:
+        t_stt, t_last_in = stt_bundle
     graph_ms = (t1 - t0) * 1000.0
     post_ms = (t_audio - t1) * 1000.0
     total_ms = (t_audio - t0) * 1000.0
     stt_to_resp = (t0 - t_stt) * 1000.0 if t_stt is not None else None
     stt_to_audio = (t_audio - t_stt) * 1000.0 if t_stt is not None else None
+    last_audio_to_final = (
+        (t_stt - t_last_in) * 1000.0 if (t_stt is not None and t_last_in is not None) else None
+    )
     return PerceivedTurnSample(
         conversation_id=conversation_id,
         graph_ms=graph_ms,
@@ -105,6 +135,7 @@ def _finalize_perceived_turn(conversation_id: str, t_audio: float) -> PerceivedT
         perceived_total_ms=total_ms,
         stt_final_to_respond_ms=stt_to_resp,
         stt_final_to_first_audio_ms=stt_to_audio,
+        last_inbound_audio_to_final_stt_ms=last_audio_to_final,
         recorded_at=time.time(),
     )
 
@@ -124,13 +155,17 @@ def note_first_tts_audio_chunk_from_context() -> None:
         return
     logger.info(
         "perceived_latency conversation_id={} stt_final_to_respond_ms={} stt_final_to_first_audio_ms={} "
-        "graph_ms={:.0f} post_graph_to_first_audio_ms={:.0f} respond_to_first_audio_ms={:.0f}",
+        "last_inbound_audio_to_final_stt_ms={} graph_ms={:.0f} post_graph_to_first_audio_ms={:.0f} "
+        "respond_to_first_audio_ms={:.0f}",
         sample.conversation_id,
         f"{sample.stt_final_to_respond_ms:.0f}"
         if sample.stt_final_to_respond_ms is not None
         else "n/a",
         f"{sample.stt_final_to_first_audio_ms:.0f}"
         if sample.stt_final_to_first_audio_ms is not None
+        else "n/a",
+        f"{sample.last_inbound_audio_to_final_stt_ms:.0f}"
+        if sample.last_inbound_audio_to_final_stt_ms is not None
         else "n/a",
         sample.graph_ms,
         sample.post_graph_to_first_audio_ms,
@@ -230,6 +265,11 @@ class LatencyAnalyticsBuffer:
             for x in perceived_items
             if x.stt_final_to_first_audio_ms is not None
         ]
+        last_audio_to_final = [
+            x.last_inbound_audio_to_final_stt_ms
+            for x in perceived_items
+            if x.last_inbound_audio_to_final_stt_ms is not None
+        ]
         recent_perceived = [asdict(x) for x in perceived_items[-recent_limit:]]
         return {
             "buffer_maxlen": self._maxlen,
@@ -248,6 +288,7 @@ class LatencyAnalyticsBuffer:
                 "post_graph_to_first_audio_ms": _stats(p_post),
                 "stt_final_to_respond_ms": _stats(stt_resp),
                 "stt_final_to_first_audio_ms": _stats(stt_audio),
+                "last_inbound_audio_to_final_stt_ms": _stats(last_audio_to_final),
                 "recent": recent_perceived,
             },
         }

@@ -13,7 +13,10 @@ from vocode.streaming.transcriber.deepgram_transcriber import (
 from vocode.streaming.transcriber.default_factory import DefaultTranscriberFactory
 
 from ai_sdr_agent.config import SDRSettings
-from ai_sdr_agent.services.latency_analytics import mark_deepgram_final_transcript_enqueued_from_context
+from ai_sdr_agent.services.latency_analytics import (
+    mark_deepgram_final_transcript_enqueued_from_context,
+    mark_last_inbound_audio_from_context,
+)
 
 _ENUM_PATTERN = re.compile(r"SamplingRate\.RATE_(\d+)")
 
@@ -62,6 +65,34 @@ def build_telephony_deepgram_transcriber_config(settings: SDRSettings) -> Deepgr
     )
 
 
+def _chunk_is_inbound_audio(item: object) -> bool:
+    """True for raw telephony audio; false for vocode Deepgram CloseStream JSON."""
+    if not isinstance(item, (bytes, bytearray)):
+        return False
+    if len(item) == 0:
+        return False
+    if item.startswith(b"{") and b"CloseStream" in item:
+        return False
+    return True
+
+
+class _TranscriberInputQueueProxy:
+    """Timestamps last raw inbound audio chunk per call (for last_audio → STT final metrics)."""
+
+    __slots__ = ("_inner",)
+
+    def __init__(self, inner: asyncio.Queue) -> None:
+        self._inner = inner
+
+    def put_nowait(self, item) -> None:
+        if _chunk_is_inbound_audio(item):
+            mark_last_inbound_audio_from_context()
+        return self._inner.put_nowait(item)
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
 class _TranscriberOutputQueueProxy:
     """Wraps the transcriber output queue to timestamp final Deepgram transcripts."""
 
@@ -85,6 +116,7 @@ class LoggingDeepgramTranscriber(DeepgramTranscriber):
 
     def __init__(self, transcriber_config: DeepgramTranscriberConfig):
         super().__init__(transcriber_config)
+        self.input_queue = _TranscriberInputQueueProxy(self.input_queue)
         self.output_queue = _TranscriberOutputQueueProxy(self.output_queue)
 
     def get_deepgram_url(self) -> str:
