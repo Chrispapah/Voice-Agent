@@ -224,6 +224,17 @@ async def test_respond_preserves_turn_result_when_outer_task_is_cancelled():
     assert svc.handle_turn.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_duplicate_short_interrupt_is_skipped():
+    agent, svc = _make_agent(prefill_ack_enabled=False)
+    first_result = await agent.respond(" hello ", "conv-dupe", is_interrupt=True)
+    second_result = await agent.respond("hello", "conv-dupe", is_interrupt=True)
+
+    assert first_result == ("Main reply.", False)
+    assert second_result == (None, False)
+    assert svc.handle_turn.await_count == 1
+
+
 def test_parse_agent_prefill_ack_phrases_pipe_separated():
     assert parse_agent_prefill_ack_phrases("A.|B.") == ("A.", "B.")
 

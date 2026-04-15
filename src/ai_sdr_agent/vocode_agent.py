@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from loguru import logger
 from vocode.streaming.agent.base_agent import AgentResponseMessage, RespondAgent
@@ -27,6 +28,11 @@ class SDRAgentConfig(AgentConfig, type="agent_sdr"):  # type: ignore[misc]
     prefill_ack_phrases: tuple[str, ...] = DEFAULT_AGENT_PREFILL_ACK_PHRASES
 
 
+_DUPLICATE_SHORT_INTERRUPT_WINDOW_S = 1.5
+_DUPLICATE_SHORT_INTERRUPT_MAX_WORDS = 2
+_DUPLICATE_SHORT_INTERRUPT_MAX_CHARS = 24
+
+
 class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
     def __init__(
         self,
@@ -39,6 +45,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         self.conversation_service = conversation_service
         self._initialized_conversations: set[str] = set()
         self._inflight_turns: dict[str, asyncio.Task[tuple[str | None, bool]]] = {}
+        self._recent_short_interrupts: dict[str, tuple[str, float]] = {}
         self._respond_locks: dict[str, asyncio.Lock] = {}
         phrases = list(agent_config.prefill_ack_phrases) or list(DEFAULT_AGENT_PREFILL_ACK_PHRASES)
         if len(phrases) >= 2:
@@ -53,6 +60,35 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             lock = asyncio.Lock()
             self._respond_locks[conversation_id] = lock
         return lock
+
+    @staticmethod
+    def _normalize_interrupt_text(text: str) -> str:
+        return " ".join(text.lower().split())
+
+    @staticmethod
+    def _is_short_interrupt_text(text: str) -> bool:
+        words = text.split()
+        return 0 < len(words) <= _DUPLICATE_SHORT_INTERRUPT_MAX_WORDS and len(text) <= _DUPLICATE_SHORT_INTERRUPT_MAX_CHARS
+
+    def _should_skip_duplicate_short_interrupt(
+        self,
+        *,
+        conversation_id: str,
+        human_input: str,
+        is_interrupt: bool,
+    ) -> bool:
+        if not is_interrupt:
+            return False
+        normalized = self._normalize_interrupt_text(human_input)
+        if not normalized or not self._is_short_interrupt_text(normalized):
+            return False
+        now = time.monotonic()
+        previous = self._recent_short_interrupts.get(conversation_id)
+        self._recent_short_interrupts[conversation_id] = (normalized, now)
+        if previous is None:
+            return False
+        last_text, last_ts = previous
+        return last_text == normalized and (now - last_ts) <= _DUPLICATE_SHORT_INTERRUPT_WINDOW_S
 
     @staticmethod
     def _clear_current_task_cancellation_state() -> int:
@@ -90,6 +126,17 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         is_interrupt: bool = False,
     ) -> tuple[str | None, bool]:
+        if self._should_skip_duplicate_short_interrupt(
+            conversation_id=conversation_id,
+            human_input=human_input,
+            is_interrupt=is_interrupt,
+        ):
+            logger.info(
+                "Skipping duplicate short interrupt transcript conversation_id={} text={!r}",
+                conversation_id,
+                human_input,
+            )
+            return None, False
         inflight_turn = self._inflight_turns.get(conversation_id)
         if is_interrupt and inflight_turn is not None and not inflight_turn.done():
             logger.info(
@@ -164,6 +211,9 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 await self.conversation_service.start_session(
                     self.agent_config.lead_id,
                     conversation_id=conversation_id,
+                    initial_agent_message=self.agent_config.initial_message_text,
+                    initial_current_node="greeting",
+                    initial_next_node="qualify_lead",
                 )
                 self._initialized_conversations.add(conversation_id)
                 logger.info(
