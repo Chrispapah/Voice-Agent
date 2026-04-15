@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
@@ -325,6 +326,21 @@ class LangChainConversationBrain:
         started_at = time.perf_counter()
         try:
             response = await model.ainvoke(messages)
+        except asyncio.CancelledError:
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            logger.warning(
+                "LLM call cancelled call_id={} conversation_id={} turn_id={} turn_count={} "
+                "node={} step={} operation={} latency_ms={:.0f}",
+                call_id,
+                _trace_value(trace, "conversation_id"),
+                _trace_value(trace, "turn_id"),
+                _trace_value(trace, "turn_count"),
+                _trace_value(trace, "node"),
+                _trace_value(trace, "step"),
+                operation,
+                latency_ms,
+            )
+            raise
         except Exception:
             latency_ms = (time.perf_counter() - started_at) * 1000
             logger.exception(
