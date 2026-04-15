@@ -83,12 +83,31 @@ def _log_interrupt_buffer_event(
 
 
 @dataclass
+class _TurnOutcome:
+    response: str | None
+    should_stop: bool
+    skip_reason: str | None = None
+
+
+@dataclass
+class _TurnRequest:
+    text: str
+    normalized: str
+    is_interrupt: bool
+    sequence: int | None
+    generation: int
+    future: asyncio.Future[_TurnOutcome]
+    started_at: float = field(default_factory=time.perf_counter)
+
+
+@dataclass
 class _ConversationRuntimeState:
     turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     latest_interrupt_sequence: int = 0
-    latest_interrupt_text: str | None = None
-    latest_interrupt_normalized: str | None = None
-    active_normalized_text: str | None = None
+    next_generation: int = 0
+    current_turn: _TurnRequest | None = None
+    pending_turn: _TurnRequest | None = None
+    in_flight_turn_task: asyncio.Task[None] | None = None
     last_committed_text: str | None = None
     last_committed_normalized: str | None = None
     last_committed_source: str | None = None
@@ -118,6 +137,23 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
     def _get_runtime_state(self, conversation_id: str) -> _ConversationRuntimeState:
         return self._conversation_runtime.setdefault(conversation_id, _ConversationRuntimeState())
 
+    @staticmethod
+    def _resolve_turn_future(
+        request: _TurnRequest,
+        *,
+        response: str | None,
+        should_stop: bool,
+        skip_reason: str | None = None,
+    ) -> None:
+        if not request.future.done():
+            request.future.set_result(
+                _TurnOutcome(
+                    response=response,
+                    should_stop=should_stop,
+                    skip_reason=skip_reason,
+                )
+            )
+
     def _register_interrupt(
         self,
         conversation_id: str,
@@ -131,42 +167,8 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 "drop_empty_interrupt",
             )
             return None, normalized_input, "empty_interrupt"
-        if runtime_state.active_normalized_text == normalized_input:
-            _log_interrupt_buffer_event(
-                conversation_id,
-                "drop_active_repeat_interrupt",
-                active_text=runtime_state.last_committed_text or runtime_state.active_normalized_text,
-                text=human_input,
-            )
-            return None, normalized_input, "duplicate_active_input"
-        if runtime_state.latest_interrupt_normalized == normalized_input:
-            _log_interrupt_buffer_event(
-                conversation_id,
-                "drop_repeated_interrupt",
-                text=human_input,
-            )
-            return None, normalized_input, "duplicate_interrupt"
-        previous_text = runtime_state.latest_interrupt_text
         runtime_state.latest_interrupt_sequence += 1
-        interrupt_sequence = runtime_state.latest_interrupt_sequence
-        runtime_state.latest_interrupt_text = human_input
-        runtime_state.latest_interrupt_normalized = normalized_input
-        if previous_text is None:
-            _log_interrupt_buffer_event(
-                conversation_id,
-                "buffer_interrupt",
-                sequence=interrupt_sequence,
-                text=human_input,
-            )
-        else:
-            _log_interrupt_buffer_event(
-                conversation_id,
-                "replace_pending_interrupt",
-                sequence=interrupt_sequence,
-                previous_text=previous_text,
-                text=human_input,
-            )
-        return interrupt_sequence, normalized_input, None
+        return runtime_state.latest_interrupt_sequence, normalized_input, None
 
     def _recent_duplicate_reason(
         self,
@@ -220,6 +222,250 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         runtime_state.last_committed_source = "interrupt" if is_interrupt else "final"
         runtime_state.last_committed_at = time.perf_counter()
 
+    async def _ensure_session_initialized(self, conversation_id: str) -> None:
+        if conversation_id in self._initialized_conversations:
+            return
+        start_session_t0 = time.perf_counter()
+        await self.conversation_service.start_session(
+            self.agent_config.lead_id,
+            conversation_id=conversation_id,
+        )
+        start_session_ms = (time.perf_counter() - start_session_t0) * 1000
+        _log_agent_step_latency(
+            conversation_id,
+            "start_session",
+            start_session_ms,
+            lead_id=self.agent_config.lead_id,
+        )
+        self._initialized_conversations.add(conversation_id)
+        logger.info(
+            "Initialized SDR session from phone call conversation_id={} lead_id={}",
+            conversation_id,
+            self.agent_config.lead_id,
+        )
+
+    @staticmethod
+    def _build_turn_request(
+        runtime_state: _ConversationRuntimeState,
+        *,
+        human_input: str,
+        normalized_input: str,
+        is_interrupt: bool,
+        sequence: int | None,
+    ) -> _TurnRequest:
+        loop = asyncio.get_running_loop()
+        runtime_state.next_generation += 1
+        return _TurnRequest(
+            text=human_input,
+            normalized=normalized_input,
+            is_interrupt=is_interrupt,
+            sequence=sequence,
+            generation=runtime_state.next_generation,
+            future=loop.create_future(),
+        )
+
+    async def _start_turn_request(
+        self,
+        conversation_id: str,
+        runtime_state: _ConversationRuntimeState,
+        *,
+        request: _TurnRequest,
+    ) -> None:
+        await self._ensure_session_initialized(conversation_id)
+        runtime_state.current_turn = request
+        runtime_state.in_flight_turn_task = asyncio.create_task(
+            self._run_turn_request(conversation_id, request)
+        )
+        _log_interrupt_buffer_event(
+            conversation_id,
+            "start_inflight_turn",
+            generation=request.generation,
+            text=request.text,
+            source="interrupt" if request.is_interrupt else "final",
+        )
+
+    async def _run_turn_request(
+        self,
+        conversation_id: str,
+        request: _TurnRequest,
+    ) -> None:
+        runtime_state = self._get_runtime_state(conversation_id)
+        handle_turn_t0 = time.perf_counter()
+        try:
+            state = await self.conversation_service.handle_turn(conversation_id, request.text)
+            handle_turn_ms = (time.perf_counter() - handle_turn_t0) * 1000
+        except Exception:
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_failed",
+                (time.perf_counter() - request.started_at) * 1000,
+            )
+            logger.exception(
+                "SDR agent background turn failed conversation_id={} text={!r}",
+                conversation_id,
+                request.text,
+            )
+            async with runtime_state.turn_lock:
+                if runtime_state.current_turn is request:
+                    runtime_state.current_turn = None
+                    runtime_state.in_flight_turn_task = None
+                    next_request = runtime_state.pending_turn
+                    runtime_state.pending_turn = None
+                    if next_request is not None:
+                        await self._start_turn_request(
+                            conversation_id,
+                            runtime_state,
+                            request=next_request,
+                        )
+                else:
+                    next_request = None
+            self._resolve_turn_future(
+                request,
+                response="I'm sorry, I'm having a technical issue. Could you hold on a moment?",
+                should_stop=False,
+            )
+            return
+        mark_phone_turn_graph_done(conversation_id)
+        async with runtime_state.turn_lock:
+            if runtime_state.current_turn is not request:
+                self._resolve_turn_future(
+                    request,
+                    response=None,
+                    should_stop=False,
+                    skip_reason="stale_completed_reply",
+                )
+                return
+            _log_agent_step_latency(
+                conversation_id,
+                "handle_turn",
+                handle_turn_ms,
+                turn_count=state["turn_count"],
+                route_decision=state["route_decision"],
+            )
+            self._record_committed_input(
+                runtime_state,
+                human_input=request.text,
+                normalized_input=request.normalized,
+                is_interrupt=request.is_interrupt,
+            )
+            response = state["last_agent_response"]
+            queued_request = runtime_state.pending_turn
+            next_request = queued_request if response else None
+            abandoned_request = queued_request if not response else None
+            suppress_reply = next_request is not None
+            runtime_state.current_turn = None
+            runtime_state.pending_turn = None
+            runtime_state.in_flight_turn_task = None
+            if next_request is not None:
+                await self._start_turn_request(
+                    conversation_id,
+                    runtime_state,
+                    request=next_request,
+                )
+        if abandoned_request is not None:
+            self._resolve_turn_future(
+                abandoned_request,
+                response=None,
+                should_stop=False,
+                skip_reason="conversation_complete",
+            )
+        if not response:
+            logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
+            clear_phone_turn_on_error(conversation_id)
+            self._resolve_turn_future(
+                request,
+                response=None,
+                should_stop=True,
+            )
+            return
+        if suppress_reply:
+            self._resolve_turn_future(
+                request,
+                response=None,
+                should_stop=False,
+                skip_reason="stale_completed_reply",
+            )
+            return
+        logger.info(
+            "SDR agent generated reply conversation_id={} text={!r}",
+            conversation_id,
+            response,
+        )
+        self._resolve_turn_future(
+            request,
+            response=response,
+            should_stop=False,
+        )
+
+    async def _queue_turn_request(
+        self,
+        conversation_id: str,
+        runtime_state: _ConversationRuntimeState,
+        *,
+        request: _TurnRequest,
+    ) -> None:
+        existing_request = runtime_state.current_turn
+        if existing_request is None:
+            if request.is_interrupt:
+                _log_interrupt_buffer_event(
+                    conversation_id,
+                    "flush_interrupt",
+                    sequence=request.sequence,
+                    text=request.text,
+                )
+            await self._start_turn_request(
+                conversation_id,
+                runtime_state,
+                request=request,
+            )
+            task = runtime_state.in_flight_turn_task
+            assert task is not None
+            task.add_done_callback(lambda completed_task: completed_task.exception())
+            return
+        if existing_request.normalized == request.normalized:
+            _log_interrupt_buffer_event(
+                conversation_id,
+                "drop_current_repeat",
+                text=request.text,
+                active_text=existing_request.text,
+            )
+            self._resolve_turn_future(
+                request,
+                response=None,
+                should_stop=False,
+                skip_reason="duplicate_inflight_turn",
+            )
+            return
+        pending_request = runtime_state.pending_turn
+        if pending_request is not None:
+            _log_interrupt_buffer_event(
+                conversation_id,
+                "replace_pending_turn",
+                previous_text=pending_request.text,
+                text=request.text,
+            )
+            self._resolve_turn_future(
+                pending_request,
+                response=None,
+                should_stop=False,
+                skip_reason="superseded_pending_turn",
+            )
+        else:
+            _log_interrupt_buffer_event(
+                conversation_id,
+                "buffer_pending_turn",
+                text=request.text,
+                source="interrupt" if request.is_interrupt else "final",
+            )
+        runtime_state.pending_turn = request
+        if request.is_interrupt:
+            _log_interrupt_buffer_event(
+                conversation_id,
+                "queue_interrupt_refinement",
+                sequence=request.sequence,
+                text=request.text,
+            )
+
     def start(self) -> None:
         super().start()
         logger.info(
@@ -271,6 +517,24 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 )
                 return None, False
         async with runtime_state.turn_lock:
+            if is_interrupt and interrupt_sequence != runtime_state.latest_interrupt_sequence:
+                _log_interrupt_buffer_event(
+                    conversation_id,
+                    "skip_stale_interrupt",
+                    sequence=interrupt_sequence,
+                    latest_sequence=runtime_state.latest_interrupt_sequence,
+                    text=human_input,
+                )
+                total_ms = (time.perf_counter() - respond_start) * 1000
+                _log_agent_step_latency(
+                    conversation_id,
+                    "respond_coalesced_skip",
+                    total_ms,
+                    reason="stale_interrupt",
+                    sequence=interrupt_sequence,
+                    latest_sequence=runtime_state.latest_interrupt_sequence,
+                )
+                return None, False
             queue_wait_ms = (time.perf_counter() - respond_start) * 1000
             _log_agent_step_latency(
                 conversation_id,
@@ -278,37 +542,6 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 queue_wait_ms,
                 is_interrupt=is_interrupt,
             )
-            if is_interrupt:
-                latest_interrupt_sequence = runtime_state.latest_interrupt_sequence
-                if interrupt_sequence != latest_interrupt_sequence:
-                    _log_interrupt_buffer_event(
-                        conversation_id,
-                        "skip_stale_interrupt",
-                        sequence=interrupt_sequence,
-                        latest_sequence=latest_interrupt_sequence,
-                        text=human_input,
-                    )
-                    total_ms = (time.perf_counter() - respond_start) * 1000
-                    _log_agent_step_latency(
-                        conversation_id,
-                        "respond_coalesced_skip",
-                        total_ms,
-                        reason="stale_interrupt",
-                        sequence=interrupt_sequence,
-                        latest_sequence=latest_interrupt_sequence,
-                    )
-                    return None, False
-                if runtime_state.latest_interrupt_text is not None:
-                    human_input = runtime_state.latest_interrupt_text
-                    normalized_input = (
-                        runtime_state.latest_interrupt_normalized or normalized_input
-                    )
-                _log_interrupt_buffer_event(
-                    conversation_id,
-                    "flush_interrupt",
-                    sequence=interrupt_sequence,
-                    text=human_input,
-                )
             duplicate_reason = self._recent_duplicate_reason(
                 conversation_id,
                 human_input,
@@ -325,85 +558,49 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     reason=duplicate_reason,
                 )
                 return None, False
-            runtime_state.active_normalized_text = normalized_input or None
-            mark_phone_turn_respond_enter(conversation_id)
-            try:
-                if conversation_id not in self._initialized_conversations:
-                    start_session_t0 = time.perf_counter()
-                    await self.conversation_service.start_session(
-                        self.agent_config.lead_id,
-                        conversation_id=conversation_id,
-                    )
-                    start_session_ms = (time.perf_counter() - start_session_t0) * 1000
-                    _log_agent_step_latency(
-                        conversation_id,
-                        "start_session",
-                        start_session_ms,
-                        lead_id=self.agent_config.lead_id,
-                    )
-                    self._initialized_conversations.add(conversation_id)
-                    logger.info(
-                        "Initialized SDR session from phone call conversation_id={} lead_id={}",
-                        conversation_id,
-                        self.agent_config.lead_id,
-                    )
-                handle_turn_t0 = time.perf_counter()
-                state = await self.conversation_service.handle_turn(conversation_id, human_input)
-                handle_turn_ms = (time.perf_counter() - handle_turn_t0) * 1000
-                _log_agent_step_latency(
-                    conversation_id,
-                    "handle_turn",
-                    handle_turn_ms,
-                    turn_count=state["turn_count"],
-                    route_decision=state["route_decision"],
-                )
-                response = state["last_agent_response"]
-                if not response:
-                    total_ms = (time.perf_counter() - respond_start) * 1000
-                    _log_agent_step_latency(conversation_id, "respond_total", total_ms)
-                    logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
-                    clear_phone_turn_on_error(conversation_id)
-                    return None, True
-                self._record_committed_input(
-                    runtime_state,
-                    human_input=human_input,
-                    normalized_input=normalized_input,
-                    is_interrupt=is_interrupt,
-                )
-                mark_phone_turn_graph_done(conversation_id)
-                total_ms = (time.perf_counter() - respond_start) * 1000
-                _log_agent_step_latency(
-                    conversation_id,
-                    "respond_total",
-                    total_ms,
-                    turn_count=state["turn_count"],
-                )
-                logger.info(
-                    "SDR agent generated reply conversation_id={} text={!r}",
-                    conversation_id,
-                    response,
-                )
-                return response, False
-            except Exception:
-                total_ms = (time.perf_counter() - respond_start) * 1000
-                _log_agent_step_latency(conversation_id, "respond_failed", total_ms)
-                logger.exception(
-                    "SDR agent respond() failed conversation_id={} text={!r}",
-                    conversation_id,
-                    human_input,
-                )
-                mark_phone_turn_graph_done(conversation_id)
-                return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
-            finally:
-                runtime_state.active_normalized_text = None
-                if (
-                    is_interrupt
-                    and interrupt_sequence is not None
-                    and interrupt_sequence == runtime_state.latest_interrupt_sequence
-                    and runtime_state.latest_interrupt_normalized == normalized_input
-                ):
-                    runtime_state.latest_interrupt_text = None
-                    runtime_state.latest_interrupt_normalized = None
+            request = self._build_turn_request(
+                runtime_state,
+                human_input=human_input,
+                normalized_input=normalized_input,
+                is_interrupt=is_interrupt,
+                sequence=interrupt_sequence,
+            )
+            await self._queue_turn_request(
+                conversation_id,
+                runtime_state,
+                request=request,
+            )
+        mark_phone_turn_respond_enter(conversation_id)
+        try:
+            outcome = await asyncio.shield(request.future)
+        except asyncio.CancelledError:
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_wait_cancelled",
+                total_ms,
+                is_interrupt=is_interrupt,
+                generation=request.generation,
+            )
+            raise
+        if outcome.skip_reason is not None:
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_coalesced_skip",
+                total_ms,
+                reason=outcome.skip_reason,
+                generation=request.generation,
+            )
+            return None, False
+        total_ms = (time.perf_counter() - respond_start) * 1000
+        _log_agent_step_latency(
+            conversation_id,
+            "respond_total",
+            total_ms,
+            generation=request.generation,
+        )
+        return outcome.response, outcome.should_stop
 
 
 def build_agent_config(
