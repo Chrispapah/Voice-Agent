@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -80,11 +81,30 @@ def _log_interrupt_buffer_event(
 
 
 @dataclass
+class _QueuedTurnResult:
+    response: str | None
+    should_stop: bool
+    skip_reason: str | None = None
+
+
+@dataclass
+class _QueuedTurn:
+    text: str
+    normalized: str
+    is_interrupt: bool
+    sequence: int | None
+    received_at: float
+    result_future: asyncio.Future[_QueuedTurnResult]
+
+
+@dataclass
 class _ConversationRuntimeState:
-    turn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    state_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    work_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    queued_turns: deque[_QueuedTurn] = field(default_factory=deque)
+    active_turn: _QueuedTurn | None = None
     latest_interrupt_sequence: int = 0
-    latest_interrupt_text: str | None = None
-    latest_interrupt_normalized: str | None = None
+    worker_task: asyncio.Task[None] | None = None
 
 
 class SDRAgentConfig(AgentConfig, type="agent_sdr"):  # type: ignore[misc]
@@ -110,47 +130,271 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
     def _get_runtime_state(self, conversation_id: str) -> _ConversationRuntimeState:
         return self._conversation_runtime.setdefault(conversation_id, _ConversationRuntimeState())
 
-    def _register_interrupt(
+    @staticmethod
+    def _resolve_turn_result(
+        turn: _QueuedTurn,
+        result: _QueuedTurnResult,
+    ) -> None:
+        if not turn.result_future.done():
+            turn.result_future.set_result(result)
+
+    def _ensure_worker(
+        self,
+        conversation_id: str,
+        runtime_state: _ConversationRuntimeState,
+    ) -> None:
+        worker_task = runtime_state.worker_task
+        if worker_task is not None and not worker_task.done():
+            return
+        runtime_state.worker_task = asyncio.create_task(
+            self._run_conversation_worker(conversation_id, runtime_state)
+        )
+        logger.info("Started conversation turn worker conversation_id={}", conversation_id)
+
+    async def _enqueue_turn(
         self,
         conversation_id: str,
         human_input: str,
+        *,
+        is_interrupt: bool,
         runtime_state: _ConversationRuntimeState,
-    ) -> tuple[int | None, str, bool]:
+    ) -> tuple[_QueuedTurn | None, str | None]:
+        loop = asyncio.get_running_loop()
         normalized_input = _normalize_interrupt_text(human_input)
-        if not normalized_input:
+        async with runtime_state.state_lock:
+            if is_interrupt:
+                if not normalized_input:
+                    _log_interrupt_buffer_event(
+                        conversation_id,
+                        "drop_empty_interrupt",
+                    )
+                    return None, "empty_interrupt"
+                active_turn = runtime_state.active_turn
+                if active_turn is not None and active_turn.normalized == normalized_input:
+                    _log_interrupt_buffer_event(
+                        conversation_id,
+                        "drop_active_repeat_interrupt",
+                        active_text=active_turn.text,
+                        text=human_input,
+                    )
+                    return None, "duplicate_active_input"
+                last_queued_turn = (
+                    runtime_state.queued_turns[-1] if runtime_state.queued_turns else None
+                )
+                if last_queued_turn is not None and last_queued_turn.is_interrupt:
+                    if last_queued_turn.normalized == normalized_input:
+                        _log_interrupt_buffer_event(
+                            conversation_id,
+                            "drop_repeated_interrupt",
+                            text=human_input,
+                        )
+                        return None, "duplicate_interrupt"
+                    runtime_state.queued_turns.pop()
+                    self._resolve_turn_result(
+                        last_queued_turn,
+                        _QueuedTurnResult(
+                            response=None,
+                            should_stop=False,
+                            skip_reason="stale_interrupt",
+                        ),
+                    )
+                    runtime_state.latest_interrupt_sequence += 1
+                    turn = _QueuedTurn(
+                        text=human_input,
+                        normalized=normalized_input,
+                        is_interrupt=True,
+                        sequence=runtime_state.latest_interrupt_sequence,
+                        received_at=time.perf_counter(),
+                        result_future=loop.create_future(),
+                    )
+                    runtime_state.queued_turns.append(turn)
+                    _log_interrupt_buffer_event(
+                        conversation_id,
+                        "replace_pending_interrupt",
+                        sequence=turn.sequence,
+                        previous_text=last_queued_turn.text,
+                        text=human_input,
+                    )
+                else:
+                    runtime_state.latest_interrupt_sequence += 1
+                    turn = _QueuedTurn(
+                        text=human_input,
+                        normalized=normalized_input,
+                        is_interrupt=True,
+                        sequence=runtime_state.latest_interrupt_sequence,
+                        received_at=time.perf_counter(),
+                        result_future=loop.create_future(),
+                    )
+                    runtime_state.queued_turns.append(turn)
+                    _log_interrupt_buffer_event(
+                        conversation_id,
+                        "buffer_interrupt",
+                        sequence=turn.sequence,
+                        text=human_input,
+                    )
+            else:
+                turn = _QueuedTurn(
+                    text=human_input,
+                    normalized=normalized_input,
+                    is_interrupt=False,
+                    sequence=None,
+                    received_at=time.perf_counter(),
+                    result_future=loop.create_future(),
+                )
+                runtime_state.queued_turns.append(turn)
+                logger.info(
+                    "Queued turn conversation_id={} is_interrupt={} queue_depth={} text={!r}",
+                    conversation_id,
+                    is_interrupt,
+                    len(runtime_state.queued_turns),
+                    human_input,
+                )
+            runtime_state.work_ready.set()
+            self._ensure_worker(conversation_id, runtime_state)
+            return turn, None
+
+    async def _process_turn(
+        self,
+        conversation_id: str,
+        turn: _QueuedTurn,
+        *,
+        remaining_turns: int,
+    ) -> _QueuedTurnResult:
+        queue_wait_ms = (time.perf_counter() - turn.received_at) * 1000
+        _log_agent_step_latency(
+            conversation_id,
+            "respond_queue_wait",
+            queue_wait_ms,
+            is_interrupt=turn.is_interrupt,
+            sequence=turn.sequence,
+            remaining_turns=remaining_turns,
+        )
+        if turn.is_interrupt:
             _log_interrupt_buffer_event(
                 conversation_id,
-                "drop_empty_interrupt",
+                "flush_interrupt",
+                sequence=turn.sequence,
+                text=turn.text,
             )
-            return None, normalized_input, True
-        if runtime_state.latest_interrupt_normalized == normalized_input:
-            _log_interrupt_buffer_event(
+        mark_phone_turn_respond_enter(conversation_id)
+        try:
+            if conversation_id not in self._initialized_conversations:
+                start_session_t0 = time.perf_counter()
+                await self.conversation_service.start_session(
+                    self.agent_config.lead_id,
+                    conversation_id=conversation_id,
+                )
+                start_session_ms = (time.perf_counter() - start_session_t0) * 1000
+                _log_agent_step_latency(
+                    conversation_id,
+                    "start_session",
+                    start_session_ms,
+                    lead_id=self.agent_config.lead_id,
+                )
+                self._initialized_conversations.add(conversation_id)
+                logger.info(
+                    "Initialized SDR session from phone call conversation_id={} lead_id={}",
+                    conversation_id,
+                    self.agent_config.lead_id,
+                )
+            handle_turn_t0 = time.perf_counter()
+            state = await self.conversation_service.handle_turn(conversation_id, turn.text)
+            handle_turn_ms = (time.perf_counter() - handle_turn_t0) * 1000
+            _log_agent_step_latency(
                 conversation_id,
-                "drop_repeated_interrupt",
-                text=human_input,
+                "handle_turn",
+                handle_turn_ms,
+                turn_count=state["turn_count"],
+                route_decision=state["route_decision"],
             )
-            return None, normalized_input, True
-        previous_text = runtime_state.latest_interrupt_text
-        runtime_state.latest_interrupt_sequence += 1
-        interrupt_sequence = runtime_state.latest_interrupt_sequence
-        runtime_state.latest_interrupt_text = human_input
-        runtime_state.latest_interrupt_normalized = normalized_input
-        if previous_text is None:
-            _log_interrupt_buffer_event(
+            response = state["last_agent_response"]
+            if not response:
+                total_ms = (time.perf_counter() - turn.received_at) * 1000
+                _log_agent_step_latency(conversation_id, "respond_total", total_ms)
+                logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
+                clear_phone_turn_on_error(conversation_id)
+                return _QueuedTurnResult(response=None, should_stop=True)
+            mark_phone_turn_graph_done(conversation_id)
+            total_ms = (time.perf_counter() - turn.received_at) * 1000
+            _log_agent_step_latency(
                 conversation_id,
-                "buffer_interrupt",
-                sequence=interrupt_sequence,
-                text=human_input,
+                "respond_total",
+                total_ms,
+                turn_count=state["turn_count"],
             )
-        else:
-            _log_interrupt_buffer_event(
+            logger.info(
+                "SDR agent generated reply conversation_id={} text={!r}",
                 conversation_id,
-                "replace_pending_interrupt",
-                sequence=interrupt_sequence,
-                previous_text=previous_text,
-                text=human_input,
+                response,
             )
-        return interrupt_sequence, normalized_input, False
+            return _QueuedTurnResult(response=response, should_stop=False)
+        except Exception:
+            total_ms = (time.perf_counter() - turn.received_at) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_failed",
+                total_ms,
+                is_interrupt=turn.is_interrupt,
+                sequence=turn.sequence,
+            )
+            logger.exception(
+                "SDR agent respond() failed conversation_id={} text={!r}",
+                conversation_id,
+                turn.text,
+            )
+            mark_phone_turn_graph_done(conversation_id)
+            return _QueuedTurnResult(
+                response="I'm sorry, I'm having a technical issue. Could you hold on a moment?",
+                should_stop=False,
+            )
+
+    async def _run_conversation_worker(
+        self,
+        conversation_id: str,
+        runtime_state: _ConversationRuntimeState,
+    ) -> None:
+        current_task = asyncio.current_task()
+        try:
+            while True:
+                await runtime_state.work_ready.wait()
+                while True:
+                    async with runtime_state.state_lock:
+                        if not runtime_state.queued_turns:
+                            runtime_state.work_ready.clear()
+                            break
+                        turn = runtime_state.queued_turns.popleft()
+                        runtime_state.active_turn = turn
+                        remaining_turns = len(runtime_state.queued_turns)
+                    try:
+                        result = await self._process_turn(
+                            conversation_id,
+                            turn,
+                            remaining_turns=remaining_turns,
+                        )
+                    finally:
+                        async with runtime_state.state_lock:
+                            if runtime_state.active_turn is turn:
+                                runtime_state.active_turn = None
+                    self._resolve_turn_result(turn, result)
+        except asyncio.CancelledError:
+            logger.warning("Conversation turn worker cancelled conversation_id={}", conversation_id)
+            async with runtime_state.state_lock:
+                active_turn = runtime_state.active_turn
+                queued_turns = list(runtime_state.queued_turns)
+                runtime_state.active_turn = None
+                runtime_state.queued_turns.clear()
+                runtime_state.work_ready.clear()
+            turns_to_cancel = queued_turns
+            if active_turn is not None:
+                turns_to_cancel.insert(0, active_turn)
+            for pending_turn in turns_to_cancel:
+                if not pending_turn.result_future.done():
+                    pending_turn.result_future.cancel()
+            raise
+        finally:
+            async with runtime_state.state_lock:
+                if runtime_state.worker_task is current_task:
+                    runtime_state.worker_task = None
 
     def start(self) -> None:
         super().start()
@@ -179,139 +423,49 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
     ) -> tuple[str | None, bool]:
         respond_start = time.perf_counter()
         runtime_state = self._get_runtime_state(conversation_id)
-        interrupt_sequence: int | None = None
-        normalized_interrupt = ""
         logger.info(
             "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
             conversation_id,
             is_interrupt,
             human_input,
         )
-        if is_interrupt:
-            interrupt_sequence, normalized_interrupt, should_skip_interrupt = self._register_interrupt(
-                conversation_id,
-                human_input,
-                runtime_state,
-            )
-            if should_skip_interrupt:
-                total_ms = (time.perf_counter() - respond_start) * 1000
-                _log_agent_step_latency(
-                    conversation_id,
-                    "respond_coalesced_skip",
-                    total_ms,
-                    reason="duplicate_interrupt",
-                )
-                return None, False
-        async with runtime_state.turn_lock:
-            queue_wait_ms = (time.perf_counter() - respond_start) * 1000
+        turn, skip_reason = await self._enqueue_turn(
+            conversation_id,
+            human_input,
+            is_interrupt=is_interrupt,
+            runtime_state=runtime_state,
+        )
+        if turn is None:
+            total_ms = (time.perf_counter() - respond_start) * 1000
             _log_agent_step_latency(
                 conversation_id,
-                "respond_queue_wait",
-                queue_wait_ms,
-                is_interrupt=is_interrupt,
+                "respond_coalesced_skip",
+                total_ms,
+                reason=skip_reason,
             )
-            if is_interrupt:
-                latest_interrupt_sequence = runtime_state.latest_interrupt_sequence
-                if interrupt_sequence != latest_interrupt_sequence:
-                    _log_interrupt_buffer_event(
-                        conversation_id,
-                        "skip_stale_interrupt",
-                        sequence=interrupt_sequence,
-                        latest_sequence=latest_interrupt_sequence,
-                        text=human_input,
-                    )
-                    total_ms = (time.perf_counter() - respond_start) * 1000
-                    _log_agent_step_latency(
-                        conversation_id,
-                        "respond_coalesced_skip",
-                        total_ms,
-                        reason="stale_interrupt",
-                        sequence=interrupt_sequence,
-                        latest_sequence=latest_interrupt_sequence,
-                    )
-                    return None, False
-                if runtime_state.latest_interrupt_text is not None:
-                    human_input = runtime_state.latest_interrupt_text
-                    normalized_interrupt = (
-                        runtime_state.latest_interrupt_normalized or normalized_interrupt
-                    )
-                _log_interrupt_buffer_event(
-                    conversation_id,
-                    "flush_interrupt",
-                    sequence=interrupt_sequence,
-                    text=human_input,
-                )
-            mark_phone_turn_respond_enter(conversation_id)
-            try:
-                if conversation_id not in self._initialized_conversations:
-                    start_session_t0 = time.perf_counter()
-                    await self.conversation_service.start_session(
-                        self.agent_config.lead_id,
-                        conversation_id=conversation_id,
-                    )
-                    start_session_ms = (time.perf_counter() - start_session_t0) * 1000
-                    _log_agent_step_latency(
-                        conversation_id,
-                        "start_session",
-                        start_session_ms,
-                        lead_id=self.agent_config.lead_id,
-                    )
-                    self._initialized_conversations.add(conversation_id)
-                    logger.info(
-                        "Initialized SDR session from phone call conversation_id={} lead_id={}",
-                        conversation_id,
-                        self.agent_config.lead_id,
-                    )
-                handle_turn_t0 = time.perf_counter()
-                state = await self.conversation_service.handle_turn(conversation_id, human_input)
-                handle_turn_ms = (time.perf_counter() - handle_turn_t0) * 1000
-                _log_agent_step_latency(
-                    conversation_id,
-                    "handle_turn",
-                    handle_turn_ms,
-                    turn_count=state["turn_count"],
-                    route_decision=state["route_decision"],
-                )
-                response = state["last_agent_response"]
-                if not response:
-                    total_ms = (time.perf_counter() - respond_start) * 1000
-                    _log_agent_step_latency(conversation_id, "respond_total", total_ms)
-                    logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
-                    clear_phone_turn_on_error(conversation_id)
-                    return None, True
-                mark_phone_turn_graph_done(conversation_id)
-                total_ms = (time.perf_counter() - respond_start) * 1000
-                _log_agent_step_latency(
-                    conversation_id,
-                    "respond_total",
-                    total_ms,
-                    turn_count=state["turn_count"],
-                )
-                logger.info(
-                    "SDR agent generated reply conversation_id={} text={!r}",
-                    conversation_id,
-                    response,
-                )
-                return response, False
-            except Exception:
-                total_ms = (time.perf_counter() - respond_start) * 1000
-                _log_agent_step_latency(conversation_id, "respond_failed", total_ms)
-                logger.exception(
-                    "SDR agent respond() failed conversation_id={} text={!r}",
-                    conversation_id,
-                    human_input,
-                )
-                mark_phone_turn_graph_done(conversation_id)
-                return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
-            finally:
-                if (
-                    is_interrupt
-                    and interrupt_sequence is not None
-                    and interrupt_sequence == runtime_state.latest_interrupt_sequence
-                    and runtime_state.latest_interrupt_normalized == normalized_interrupt
-                ):
-                    runtime_state.latest_interrupt_text = None
-                    runtime_state.latest_interrupt_normalized = None
+            return None, False
+        try:
+            result = await asyncio.shield(turn.result_future)
+        except asyncio.CancelledError:
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_wait_cancelled",
+                total_ms,
+                is_interrupt=is_interrupt,
+                sequence=turn.sequence,
+            )
+            raise
+        if result.skip_reason is not None:
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_coalesced_skip",
+                total_ms,
+                reason=result.skip_reason,
+                sequence=turn.sequence,
+            )
+        return result.response, result.should_stop
 
 
 def build_agent_config(
