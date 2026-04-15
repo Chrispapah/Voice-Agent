@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import time
+import uuid
 from dataclasses import dataclass
 from typing import Any, Protocol, Sequence
 
@@ -21,6 +23,33 @@ except ImportError:  # pragma: no cover
 from ai_sdr_agent.config import SDRSettings
 
 
+def _trace_value(trace: dict[str, Any] | None, key: str, default: str = "-") -> str:
+    if not trace:
+        return default
+    value = trace.get(key)
+    if value is None:
+        return default
+    return str(value)
+
+
+def _preview_text(text: str, limit: int = 80) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
+def _last_human_text(transcript: list[dict[str, str]]) -> str:
+    for message in reversed(transcript):
+        if message["role"] == "human":
+            return message["content"]
+    return ""
+
+
+def _count_role_messages(transcript: list[dict[str, str]], role: str) -> int:
+    return sum(1 for message in transcript if message["role"] == role)
+
+
 class ConversationBrain(Protocol):
     async def respond(
         self,
@@ -28,6 +57,7 @@ class ConversationBrain(Protocol):
         system_prompt: str,
         transcript: list[dict[str, str]],
         max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
     ) -> str:
         ...
 
@@ -37,6 +67,7 @@ class ConversationBrain(Protocol):
         instruction: str,
         human_input: str,
         labels: Sequence[str],
+        trace: dict[str, Any] | None = None,
     ) -> str:
         ...
 
@@ -45,6 +76,7 @@ class ConversationBrain(Protocol):
         *,
         transcript: list[dict[str, str]],
         existing_pain_points: list[str],
+        trace: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -52,10 +84,7 @@ class ConversationBrain(Protocol):
 @dataclass
 class StubConversationBrain:
     def _last_human_text(self, transcript: list[dict[str, str]]) -> str:
-        for message in reversed(transcript):
-            if message["role"] == "human":
-                return message["content"]
-        return ""
+        return _last_human_text(transcript)
 
     async def respond(
         self,
@@ -63,6 +92,7 @@ class StubConversationBrain:
         system_prompt: str,
         transcript: list[dict[str, str]],
         max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
     ) -> str:
         human_text = self._last_human_text(transcript).strip()
         pl = system_prompt.lower()
@@ -117,6 +147,7 @@ class StubConversationBrain:
         instruction: str,
         human_input: str,
         labels: Sequence[str],
+        trace: dict[str, Any] | None = None,
     ) -> str:
         text = human_input.lower().strip()
         labels_set = set(labels)
@@ -179,6 +210,7 @@ class StubConversationBrain:
         *,
         transcript: list[dict[str, str]],
         existing_pain_points: list[str],
+        trace: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         text = self._last_human_text(transcript).lower().strip()
         updates: dict[str, Any] = {}
@@ -238,7 +270,94 @@ class LangChainConversationBrain:
         else:
             raise ValueError(f"Unsupported llm_provider: {provider}")
 
+        self._provider = provider
+        self._model_name = model_name
         self._max_tokens = max_tokens
+
+    async def _ainvoke_with_logging(
+        self,
+        model: Any,
+        messages: list[Any],
+        *,
+        operation: str,
+        trace: dict[str, Any] | None = None,
+        max_tokens: int | None = None,
+        prompt_chars: int | None = None,
+        transcript: list[dict[str, str]] | None = None,
+        input_text: str | None = None,
+        labels: Sequence[str] | None = None,
+    ) -> Any:
+        call_id = uuid.uuid4().hex[:8]
+        preview_source = input_text if input_text is not None else (
+            _last_human_text(transcript) if transcript is not None else ""
+        )
+        transcript_messages = len(transcript) if transcript is not None else "-"
+        transcript_human_messages = (
+            _count_role_messages(transcript, "human") if transcript is not None else "-"
+        )
+        transcript_agent_messages = (
+            _count_role_messages(transcript, "agent") if transcript is not None else "-"
+        )
+        logger.info(
+            "LLM call start call_id={} conversation_id={} turn_id={} turn_count={} "
+            "node={} step={} operation={} provider={} model={} max_tokens={} "
+            "message_count={} prompt_chars={} transcript_messages={} "
+            "transcript_human_messages={} transcript_agent_messages={} "
+            "labels={} input_preview={!r}",
+            call_id,
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            _trace_value(trace, "step"),
+            operation,
+            self._provider,
+            self._model_name,
+            max_tokens if max_tokens is not None else "-",
+            len(messages),
+            prompt_chars if prompt_chars is not None else "-",
+            transcript_messages,
+            transcript_human_messages,
+            transcript_agent_messages,
+            ",".join(labels) if labels else "-",
+            _preview_text(preview_source),
+        )
+        started_at = time.perf_counter()
+        try:
+            response = await model.ainvoke(messages)
+        except Exception:
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            logger.exception(
+                "LLM call failed call_id={} conversation_id={} turn_id={} turn_count={} "
+                "node={} step={} operation={} latency_ms={:.0f}",
+                call_id,
+                _trace_value(trace, "conversation_id"),
+                _trace_value(trace, "turn_id"),
+                _trace_value(trace, "turn_count"),
+                _trace_value(trace, "node"),
+                _trace_value(trace, "step"),
+                operation,
+                latency_ms,
+            )
+            raise
+        latency_ms = (time.perf_counter() - started_at) * 1000
+        output_text = str(getattr(response, "content", response))
+        logger.info(
+            "LLM call end call_id={} conversation_id={} turn_id={} turn_count={} "
+            "node={} step={} operation={} latency_ms={:.0f} output_chars={} "
+            "output_preview={!r}",
+            call_id,
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            _trace_value(trace, "step"),
+            operation,
+            latency_ms,
+            len(output_text),
+            _preview_text(output_text),
+        )
+        return response
 
     async def respond(
         self,
@@ -246,6 +365,7 @@ class LangChainConversationBrain:
         system_prompt: str,
         transcript: list[dict[str, str]],
         max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
     ) -> str:
         messages = [SystemMessage(content=system_prompt)]
         for item in transcript:
@@ -255,7 +375,15 @@ class LangChainConversationBrain:
                 messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
         limit = self._max_tokens if max_tokens is None else min(max_tokens, self._max_tokens)
         model = self._model.bind(max_tokens=limit)
-        response = await model.ainvoke(messages)
+        response = await self._ainvoke_with_logging(
+            model,
+            messages,
+            operation="respond",
+            trace=trace,
+            max_tokens=limit,
+            prompt_chars=len(system_prompt),
+            transcript=transcript,
+        )
         return str(response.content)
 
     async def classify(
@@ -264,18 +392,26 @@ class LangChainConversationBrain:
         instruction: str,
         human_input: str,
         labels: Sequence[str],
+        trace: dict[str, Any] | None = None,
     ) -> str:
-        response = await self._model.ainvoke(
-            [
-                SystemMessage(
-                    content=(
-                        f"{instruction}\n\nReturn exactly one of these labels: "
-                        + ", ".join(labels)
-                        + "\n\nRespond with ONLY the label, nothing else."
-                    )
-                ),
-                HumanMessage(content=human_input),
-            ]
+        messages = [
+            SystemMessage(
+                content=(
+                    f"{instruction}\n\nReturn exactly one of these labels: "
+                    + ", ".join(labels)
+                    + "\n\nRespond with ONLY the label, nothing else."
+                )
+            ),
+            HumanMessage(content=human_input),
+        ]
+        response = await self._ainvoke_with_logging(
+            self._model,
+            messages,
+            operation="classify",
+            trace=trace,
+            prompt_chars=len(instruction),
+            input_text=human_input,
+            labels=labels,
         )
         raw = str(response.content).strip().lower()
         raw = raw.strip("'\"`.").strip()
@@ -291,6 +427,7 @@ class LangChainConversationBrain:
         *,
         transcript: list[dict[str, str]],
         existing_pain_points: list[str],
+        trace: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from ai_sdr_agent.graph.prompts import qualification_extraction_prompt
 
@@ -302,7 +439,14 @@ class LangChainConversationBrain:
             else:
                 messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
 
-        response = await self._model.ainvoke(messages)
+        response = await self._ainvoke_with_logging(
+            self._model,
+            messages,
+            operation="extract_qualification",
+            trace=trace,
+            prompt_chars=len(system),
+            transcript=transcript,
+        )
         raw = str(response.content).strip()
 
         if raw.startswith("```"):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 from loguru import logger
 from vocode.streaming.agent.base_agent import AgentResponseMessage, RespondAgent
 from vocode.streaming.models.actions import EndOfTurn
@@ -12,6 +14,42 @@ from ai_sdr_agent.services.latency_analytics import (
     mark_phone_turn_graph_done,
     mark_phone_turn_respond_enter,
 )
+
+
+def _format_details(**details: object) -> str:
+    parts: list[str] = []
+    for key, value in details.items():
+        if value is None:
+            continue
+        if isinstance(value, str):
+            parts.append(f"{key}={value!r}")
+        else:
+            parts.append(f"{key}={value}")
+    return " ".join(parts)
+
+
+def _log_agent_step_latency(
+    conversation_id: str,
+    step_name: str,
+    latency_ms: float,
+    **details: object,
+) -> None:
+    detail_text = _format_details(**details)
+    if detail_text:
+        logger.info(
+            "Agent step latency conversation_id={} step={} latency_ms={:.0f} details={}",
+            conversation_id,
+            step_name,
+            latency_ms,
+            detail_text,
+        )
+        return
+    logger.info(
+        "Agent step latency conversation_id={} step={} latency_ms={:.0f}",
+        conversation_id,
+        step_name,
+        latency_ms,
+    )
 
 
 class SDRAgentConfig(AgentConfig, type="agent_sdr"):  # type: ignore[misc]
@@ -58,6 +96,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         is_interrupt: bool = False,
     ) -> tuple[str | None, bool]:
+        respond_start = time.perf_counter()
         logger.info(
             "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
             conversation_id,
@@ -67,9 +106,17 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         mark_phone_turn_respond_enter(conversation_id)
         try:
             if conversation_id not in self._initialized_conversations:
+                start_session_t0 = time.perf_counter()
                 await self.conversation_service.start_session(
                     self.agent_config.lead_id,
                     conversation_id=conversation_id,
+                )
+                start_session_ms = (time.perf_counter() - start_session_t0) * 1000
+                _log_agent_step_latency(
+                    conversation_id,
+                    "start_session",
+                    start_session_ms,
+                    lead_id=self.agent_config.lead_id,
                 )
                 self._initialized_conversations.add(conversation_id)
                 logger.info(
@@ -77,13 +124,31 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     conversation_id,
                     self.agent_config.lead_id,
                 )
+            handle_turn_t0 = time.perf_counter()
             state = await self.conversation_service.handle_turn(conversation_id, human_input)
+            handle_turn_ms = (time.perf_counter() - handle_turn_t0) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "handle_turn",
+                handle_turn_ms,
+                turn_count=state["turn_count"],
+                route_decision=state["route_decision"],
+            )
             response = state["last_agent_response"]
             if not response:
+                total_ms = (time.perf_counter() - respond_start) * 1000
+                _log_agent_step_latency(conversation_id, "respond_total", total_ms)
                 logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
                 clear_phone_turn_on_error(conversation_id)
                 return None, True
             mark_phone_turn_graph_done(conversation_id)
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_total",
+                total_ms,
+                turn_count=state["turn_count"],
+            )
             logger.info(
                 "SDR agent generated reply conversation_id={} text={!r}",
                 conversation_id,
@@ -91,6 +156,8 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             )
             return response, False
         except Exception:
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(conversation_id, "respond_failed", total_ms)
             logger.exception(
                 "SDR agent respond() failed conversation_id={} text={!r}",
                 conversation_id,

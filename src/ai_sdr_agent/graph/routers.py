@@ -37,6 +37,15 @@ _SOFT_ENGAGEMENT = re.compile(
 )
 
 
+def _trace_value(trace: dict[str, object] | None, key: str, default: str = "-") -> str:
+    if not trace:
+        return default
+    value = trace.get(key)
+    if value is None:
+        return default
+    return str(value)
+
+
 def apply_qualify_router_safety(human_input: str, decision: str) -> str:
     if decision != "not_interested":
         return decision
@@ -64,45 +73,99 @@ def get_last_human_message(state: ConversationState) -> str:
 async def route_after_qualify(
     state: ConversationState,
     brain: ConversationBrain,
+    *,
+    trace: dict[str, object] | None = None,
 ) -> str:
     human = get_last_human_message(state)
     decision = await brain.classify(
         instruction=QUALIFY_ROUTER_PROMPT,
         human_input=human,
         labels=("continue_qualifying", "pitch", "not_interested"),
+        trace=trace,
     )
-    return apply_qualify_router_safety(human, decision)
+    safe_decision = apply_qualify_router_safety(human, decision)
+    logger.info(
+        "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+        "router=qualify raw_decision={} final_decision={}",
+        _trace_value(trace, "conversation_id"),
+        _trace_value(trace, "turn_id"),
+        _trace_value(trace, "turn_count"),
+        _trace_value(trace, "node"),
+        decision,
+        safe_decision,
+    )
+    return safe_decision
 
 
 async def route_after_pitch(
     state: ConversationState,
     brain: ConversationBrain,
+    *,
+    trace: dict[str, object] | None = None,
 ) -> str:
-    return await brain.classify(
+    decision = await brain.classify(
         instruction=PITCH_ROUTER_PROMPT,
         human_input=get_last_human_message(state),
         labels=("book_meeting", "handle_objection", "wrap_up"),
+        trace=trace,
     )
+    logger.info(
+        "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+        "router=pitch decision={}",
+        _trace_value(trace, "conversation_id"),
+        _trace_value(trace, "turn_id"),
+        _trace_value(trace, "turn_count"),
+        _trace_value(trace, "node"),
+        decision,
+    )
+    return decision
 
 
 async def route_after_objection(
     state: ConversationState,
     brain: ConversationBrain,
+    *,
+    trace: dict[str, object] | None = None,
 ) -> str:
-    return await brain.classify(
+    decision = await brain.classify(
         instruction=OBJECTION_ROUTER_PROMPT,
         human_input=get_last_human_message(state),
         labels=("pitch", "wrap_up"),
+        trace=trace,
     )
+    logger.info(
+        "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+        "router=objection decision={}",
+        _trace_value(trace, "conversation_id"),
+        _trace_value(trace, "turn_id"),
+        _trace_value(trace, "turn_count"),
+        _trace_value(trace, "node"),
+        decision,
+    )
+    return decision
 
 
 async def route_during_booking(
     state: ConversationState,
     brain: ConversationBrain,
+    *,
+    trace: dict[str, object] | None = None,
 ) -> str:
     result = await brain.classify(
         instruction=BOOKING_ROUTER_PROMPT,
         human_input=get_last_human_message(state),
         labels=("continue_booking", "wrap_up"),
+        trace=trace,
     )
-    return "wrap_up" if result == "wrap_up" else "continue_booking"
+    decision = "wrap_up" if result == "wrap_up" else "continue_booking"
+    logger.info(
+        "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+        "router=booking raw_decision={} final_decision={}",
+        _trace_value(trace, "conversation_id"),
+        _trace_value(trace, "turn_id"),
+        _trace_value(trace, "turn_count"),
+        _trace_value(trace, "node"),
+        result,
+        decision,
+    )
+    return decision
