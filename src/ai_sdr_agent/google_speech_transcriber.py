@@ -14,6 +14,25 @@ from vocode.streaming.models.transcriber import (
 )
 from vocode.streaming.transcriber.base_transcriber import BaseThreadAsyncTranscriber
 
+
+def _current_conversation_id_for_logs() -> str:
+    try:
+        from vocode import conversation_id as vocode_conversation_id
+
+        cid = vocode_conversation_id.value
+    except (LookupError, RuntimeError):
+        return "unknown"
+    if isinstance(cid, str) and cid:
+        return cid
+    return "unknown"
+
+
+def _preview_transcript(text: str, *, limit: int = 96) -> str:
+    normalized = " ".join(text.split()).strip()
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
+
 class SDRGoogleTranscriberConfig(GoogleTranscriberConfig, type=TranscriberType.GOOGLE.value):  # type: ignore
     """Extends vocode's config with API key + client-side utterance silence (ms after last interim)."""
 
@@ -48,6 +67,30 @@ class SDRGoogleTranscriber(BaseThreadAsyncTranscriber[SDRGoogleTranscriberConfig
         self._pending_confidence: float = 0.0
         self._generation = 0
         self._last_timer_emitted_text: str | None = None
+
+    @staticmethod
+    def _log_final_event(
+        *,
+        action: str,
+        source: str,
+        text: str,
+        confidence: float,
+        generation: int | str = "-",
+        silence_ms: int | str = "-",
+    ) -> None:
+        stripped = text.strip()
+        logger.info(
+            "Google Speech final {} conversation_id={} source={} generation={} silence_ms={} "
+            "chars={} confidence={:.2f} text={!r}",
+            action,
+            _current_conversation_id_for_logs(),
+            source,
+            generation,
+            silence_ms,
+            len(stripped),
+            confidence,
+            _preview_transcript(stripped),
+        )
 
     def create_google_streaming_config(self):
         extra_params: dict = {}
@@ -95,6 +138,14 @@ class SDRGoogleTranscriber(BaseThreadAsyncTranscriber[SDRGoogleTranscriberConfig
                     return
                 stripped = text.strip()
                 self._last_timer_emitted_text = stripped
+                self._log_final_event(
+                    action="emitted",
+                    source="silence_timer",
+                    text=text,
+                    confidence=self._pending_confidence,
+                    generation=gen,
+                    silence_ms=int(self._silence_s * 1000),
+                )
                 self.output_janus_queue.sync_q.put_nowait(
                     Transcription(
                         message=text,
@@ -148,9 +199,21 @@ class SDRGoogleTranscriber(BaseThreadAsyncTranscriber[SDRGoogleTranscriberConfig
         if is_final:
             self._cancel_timer()
             if message.strip() and message.strip() == self._last_timer_emitted_text:
+                self._log_final_event(
+                    action="ignored",
+                    source="google_native_duplicate_after_timer",
+                    text=message,
+                    confidence=confidence,
+                )
                 self._last_timer_emitted_text = None
                 return
             self._last_timer_emitted_text = None
+            self._log_final_event(
+                action="emitted",
+                source="google_native",
+                text=message,
+                confidence=confidence,
+            )
             self.output_janus_queue.sync_q.put_nowait(
                 Transcription(message=message, confidence=confidence, is_final=True)
             )
