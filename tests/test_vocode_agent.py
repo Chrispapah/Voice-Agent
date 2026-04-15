@@ -22,6 +22,7 @@ def _make_agent(
     *,
     prefill_ack_enabled: bool = True,
     prefill_ack_phrases: tuple[str, ...] = ("Okay.", "Got it."),
+    prefill_ack_on_safe_interrupts: bool = True,
 ) -> tuple[SDRVocodeAgent, AsyncMock]:
     cfg = SDRAgentConfig(
         lead_id="lead-1",
@@ -30,6 +31,7 @@ def _make_agent(
         initial_message_text="Hi",
         prefill_ack_enabled=prefill_ack_enabled,
         prefill_ack_phrases=prefill_ack_phrases,
+        prefill_ack_on_safe_interrupts=prefill_ack_on_safe_interrupts,
         generate_responses=False,
     )
     svc = AsyncMock()
@@ -101,7 +103,7 @@ async def test_prefill_skipped_empty_human_input():
 
 @pytest.mark.asyncio
 async def test_prefill_skipped_on_interrupt():
-    agent, svc = _make_agent()
+    agent, svc = _make_agent(prefill_ack_on_safe_interrupts=False)
     with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking") as produce:
         await agent.respond("Hello", "conv-4", is_interrupt=True)
     produce.assert_not_called()
@@ -139,6 +141,17 @@ async def test_prefill_ack_is_always_interruptible():
         await agent.respond("Hello", "conv-7", is_interrupt=False)
     assert produce.call_count == 1
     assert produce.call_args.kwargs["is_interruptible"] is True
+
+
+@pytest.mark.asyncio
+async def test_prefill_emits_for_safe_affirmative_interrupt():
+    agent, _ = _make_agent()
+    with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking") as produce:
+        await agent.respond("yes", "conv-safe-int", is_interrupt=True)
+    assert produce.call_count == 1
+    first_msg = produce.call_args_list[0][0][0]
+    assert isinstance(first_msg, AgentResponseMessage)
+    assert isinstance(first_msg.message, BotBackchannel)
 
 
 @pytest.mark.asyncio

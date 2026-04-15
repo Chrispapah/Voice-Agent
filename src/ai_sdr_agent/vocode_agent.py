@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import re
 
 from loguru import logger
 from vocode.streaming.agent.base_agent import AgentResponseMessage, RespondAgent
@@ -26,11 +27,16 @@ class SDRAgentConfig(AgentConfig, type="agent_sdr"):  # type: ignore[misc]
     initial_message_text: str
     prefill_ack_enabled: bool = False
     prefill_ack_phrases: tuple[str, ...] = DEFAULT_AGENT_PREFILL_ACK_PHRASES
+    prefill_ack_on_safe_interrupts: bool = True
 
 
 _DUPLICATE_SHORT_INTERRUPT_WINDOW_S = 1.5
 _DUPLICATE_SHORT_INTERRUPT_MAX_WORDS = 2
 _DUPLICATE_SHORT_INTERRUPT_MAX_CHARS = 24
+_SAFE_INTERRUPT_ACK_PATTERN = re.compile(
+    r"^(yes|yeah|yep|ok|okay|sure|go ahead|please do|sounds good|mm hmm|mhm|uh huh)$",
+    re.IGNORECASE,
+)
 
 
 class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
@@ -89,6 +95,16 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             return False
         last_text, last_ts = previous
         return last_text == normalized and (now - last_ts) <= _DUPLICATE_SHORT_INTERRUPT_WINDOW_S
+
+    def _should_allow_prefill_for_interrupt(self, human_input: str, is_interrupt: bool) -> bool:
+        if not is_interrupt:
+            return True
+        if not self.agent_config.prefill_ack_on_safe_interrupts:
+            return False
+        normalized = self._normalize_interrupt_text(human_input)
+        if not normalized or not self._is_short_interrupt_text(normalized):
+            return False
+        return _SAFE_INTERRUPT_ACK_PATTERN.fullmatch(normalized) is not None
 
     @staticmethod
     def _clear_current_task_cancellation_state() -> int:
@@ -280,8 +296,12 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         if not human_input.strip():
             logger.debug("Prefill ack skipped (empty input) conversation_id={}", conversation_id)
             return False
-        if is_interrupt:
-            logger.debug("Prefill ack skipped (interrupt) conversation_id={}", conversation_id)
+        if not self._should_allow_prefill_for_interrupt(human_input, is_interrupt):
+            logger.debug(
+                "Prefill ack skipped (interrupt not safe for ack) conversation_id={} text={!r}",
+                conversation_id,
+                human_input,
+            )
             return False
         pre_state = await self.conversation_service.get_state(conversation_id)
         if pre_state["next_node"] == "complete":
@@ -309,9 +329,10 @@ def build_agent_config(
     sales_rep_name: str,
     initial_message_text: str,
     allow_agent_to_be_cut_off: bool = True,
-    interrupt_sensitivity: str = "high",
+    interrupt_sensitivity: str = "low",
     prefill_ack_enabled: bool = False,
     prefill_ack_phrases: tuple[str, ...] = DEFAULT_AGENT_PREFILL_ACK_PHRASES,
+    prefill_ack_on_safe_interrupts: bool = True,
 ) -> SDRAgentConfig:
     return SDRAgentConfig(
         lead_id=lead_id,
@@ -320,6 +341,7 @@ def build_agent_config(
         initial_message_text=initial_message_text,
         prefill_ack_enabled=prefill_ack_enabled,
         prefill_ack_phrases=prefill_ack_phrases,
+        prefill_ack_on_safe_interrupts=prefill_ack_on_safe_interrupts,
         # RespondAgent subclasses must use respond(), not generate_response().
         generate_responses=False,
         allow_agent_to_be_cut_off=allow_agent_to_be_cut_off,

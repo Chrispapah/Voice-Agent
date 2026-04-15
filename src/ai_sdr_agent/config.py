@@ -104,6 +104,11 @@ class SDRSettings(BaseSettings):
     # Verbal backchannel before graph turn (parallel with LangGraph); pipe-separated phrases.
     agent_prefill_ack_enabled: bool = False
     agent_prefill_ack_phrases: str = "Okay.|Got it.|I hear you."
+    # Telephony-specific turn-taking. Lower interrupt sensitivity reduces mid-utterance cuts.
+    telephony_interrupt_sensitivity: Literal["low", "high"] = "low"
+    # Allow latency-hiding prefill even when Vocode marked the turn as an interrupt, as long
+    # as the transcript looks like a short affirmative/backchannel.
+    agent_prefill_ack_on_safe_interrupts: bool = True
 
     use_redis_config_manager: bool = True
     use_stub_integrations: bool = True
