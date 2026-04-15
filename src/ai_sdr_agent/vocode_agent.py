@@ -83,15 +83,16 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         human_input: str,
         is_interrupt: bool,
     ) -> bool:
-        if not is_interrupt:
-            return False
         normalized = self._normalize_interrupt_text(human_input)
         if not normalized or not self._is_short_interrupt_text(normalized):
             return False
         now = time.monotonic()
         previous = self._recent_short_interrupts.get(conversation_id)
+        # Remember short utterances even when the first transcript was not marked as
+        # an interrupt so a duplicated replay can still be suppressed if the repeat
+        # arrives moments later as an interrupt.
         self._recent_short_interrupts[conversation_id] = (normalized, now)
-        if previous is None:
+        if not is_interrupt or previous is None:
             return False
         last_text, last_ts = previous
         return last_text == normalized and (now - last_ts) <= _DUPLICATE_SHORT_INTERRUPT_WINDOW_S

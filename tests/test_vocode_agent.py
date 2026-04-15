@@ -248,6 +248,17 @@ async def test_duplicate_short_interrupt_is_skipped():
     assert svc.handle_turn.await_count == 1
 
 
+@pytest.mark.asyncio
+async def test_duplicate_short_interrupt_is_skipped_after_normal_transcript():
+    agent, svc = _make_agent(prefill_ack_enabled=False)
+    first_result = await agent.respond(" yep ", "conv-dupe-cross", is_interrupt=False)
+    second_result = await agent.respond("yep", "conv-dupe-cross", is_interrupt=True)
+
+    assert first_result == ("Main reply.", False)
+    assert second_result == (None, False)
+    assert svc.handle_turn.await_count == 1
+
+
 def test_parse_agent_prefill_ack_phrases_pipe_separated():
     assert parse_agent_prefill_ack_phrases("A.|B.") == ("A.", "B.")
 
