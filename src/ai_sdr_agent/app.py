@@ -16,7 +16,7 @@ from vocode.streaming.telephony.config_manager.redis_config_manager import Redis
 from vocode.streaming.telephony.server.base import TelephonyServer, TwilioInboundCallConfig
 
 from ai_sdr_agent.agent_factory import SDRAgentFactory
-from ai_sdr_agent.config import SDRSettings, get_settings
+from ai_sdr_agent.config import SDRSettings, get_settings, parse_agent_prefill_ack_phrases
 from ai_sdr_agent.db.engine import init_db
 from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDependencies
 from ai_sdr_agent.routers import test_sessions_router
@@ -246,6 +246,10 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
                         calendar_id=settings.default_calendar_id,
                         sales_rep_name=settings.default_sales_rep_name,
                         initial_message_text=settings.initial_greeting,
+                        prefill_ack_enabled=settings.agent_prefill_ack_enabled,
+                        prefill_ack_phrases=parse_agent_prefill_ack_phrases(
+                            settings.agent_prefill_ack_phrases
+                        ),
                     ),
                     transcriber_config=_build_transcriber_config(settings),
                     synthesizer_config=_build_synthesizer_config(settings),

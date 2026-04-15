@@ -15,7 +15,7 @@ from vocode.streaming.transcriber.deepgram_transcriber import (
     TimeSilentConfig,
 )
 
-from ai_sdr_agent.config import SDRSettings
+from ai_sdr_agent.config import SDRSettings, parse_agent_prefill_ack_phrases
 from ai_sdr_agent.models import LeadRecord
 from ai_sdr_agent.transcriber_factory import (
     build_telephony_deepgram_transcriber_config,
@@ -90,6 +90,10 @@ class CallScheduler:
             initial_message_text=self._cfg(
                 "initial_greeting",
                 "Hi, this is your AI assistant. Do you have a moment?",
+            ),
+            prefill_ack_enabled=self._cfg("agent_prefill_ack_enabled", False),
+            prefill_ack_phrases=parse_agent_prefill_ack_phrases(
+                self._cfg("agent_prefill_ack_phrases", "Okay.|Got it.|I hear you.")
             ),
         )
         if self.settings is not None and not self._bot_config:
