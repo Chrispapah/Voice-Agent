@@ -1,7 +1,12 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
+from vocode.streaming.models.actions import EndOfTurn
+from vocode.streaming.models.message import BaseMessage, LLMToken
+from vocode.streaming.models.transcriber import Transcription
 
+from ai_sdr_agent.graph.service import StreamedTurnHandle
 from ai_sdr_agent.vocode_agent import SDRVocodeAgent, build_agent_config
 
 
@@ -59,6 +64,41 @@ class CancelSurvivalConversationService(RecordingConversationService):
             "turn_count": self._turn_count,
             "route_decision": "qualify_lead",
         }
+
+
+class _StreamingBrainFlag:
+    def supports_response_token_stream(self) -> bool:
+        return True
+
+
+class StreamingConversationService(RecordingConversationService):
+    def __init__(self, *, chunks: list[str], final_response: str):
+        super().__init__()
+        self.dependencies = SimpleNamespace(brain=_StreamingBrainFlag())
+        self._chunks = chunks
+        self._final_response = final_response
+
+    async def start_streamed_turn(self, conversation_id: str, human_input: str) -> StreamedTurnHandle:
+        self.handle_turn_calls.append(human_input)
+        self._turn_count += 1
+
+        async def _chunk_gen():
+            for chunk in self._chunks:
+                await asyncio.sleep(0)
+                yield chunk
+
+        async def _final_state():
+            await asyncio.sleep(0)
+            return {
+                "last_agent_response": self._final_response,
+                "turn_count": self._turn_count,
+                "route_decision": "qualify_lead",
+            }
+
+        return StreamedTurnHandle(
+            chunks=_chunk_gen(),
+            final_state_task=asyncio.create_task(_final_state()),
+        )
 
 
 @pytest.mark.asyncio
@@ -233,3 +273,68 @@ async def test_agent_only_promotes_latest_pending_interrupt_after_cancellation()
     assert stale_result == (None, False)
     assert latest_result == ("reply:tuesday afternoon", False)
     assert service.handle_turn_calls == ["yes", "tuesday afternoon"]
+
+
+@pytest.mark.asyncio
+async def test_handle_respond_streams_chunked_messages():
+    service = StreamingConversationService(
+        chunks=["Hello,", " this is streamed.", " Great!"],
+        final_response="Hello, this is streamed. Great!",
+    )
+    agent = SDRVocodeAgent(
+        agent_config=build_agent_config(
+            lead_id="lead-001",
+            calendar_id="sales-team",
+            sales_rep_name="Taylor Morgan",
+            initial_message_text="Hi there",
+        ),
+        conversation_service=service,
+    )
+    emitted = []
+    agent.produce_interruptible_agent_response_event_nonblocking = lambda item, **kwargs: emitted.append(item)
+
+    should_stop = await agent.handle_respond(
+        Transcription(message="yes", confidence=1.0, is_final=True),
+        "conv-stream",
+    )
+
+    assert should_stop is False
+    assert [item.message.text.strip() for item in emitted if isinstance(item.message, BaseMessage)] == [
+        "Hello,",
+        "this is streamed.",
+        "Great!",
+    ]
+    assert isinstance(emitted[-1].message, EndOfTurn)
+    assert service.handle_turn_calls == ["yes"]
+
+
+@pytest.mark.asyncio
+async def test_handle_respond_uses_llm_tokens_for_input_streaming_synthesizer():
+    service = StreamingConversationService(
+        chunks=["Hello", ", world!"],
+        final_response="Hello, world!",
+    )
+    agent = SDRVocodeAgent(
+        agent_config=build_agent_config(
+            lead_id="lead-001",
+            calendar_id="sales-team",
+            sales_rep_name="Taylor Morgan",
+            initial_message_text="Hi there",
+        ),
+        conversation_service=service,
+    )
+    agent.conversation_state_manager = SimpleNamespace(
+        using_input_streaming_synthesizer=lambda: True
+    )
+    emitted = []
+    agent.produce_interruptible_agent_response_event_nonblocking = lambda item, **kwargs: emitted.append(item)
+
+    should_stop = await agent.handle_respond(
+        Transcription(message="yes", confidence=1.0, is_final=True),
+        "conv-stream-ws",
+    )
+
+    assert should_stop is False
+    streamed_messages = [item.message for item in emitted if isinstance(item.message, LLMToken)]
+    assert [message.text.strip() for message in streamed_messages] == ["Hello,", "world!"]
+    assert isinstance(emitted[-1].message, EndOfTurn)

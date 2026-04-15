@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from loguru import logger
 from vocode.streaming.agent.base_agent import AgentResponseMessage, RespondAgent
 from vocode.streaming.models.actions import EndOfTurn
 from vocode.streaming.models.agent import AgentConfig
-from vocode.streaming.models.message import BaseMessage
+from vocode.streaming.models.message import BaseMessage, LLMToken
+from vocode.streaming.models.transcriber import Transcription
 
 from ai_sdr_agent.graph.service import SDRConversationService
 from ai_sdr_agent.services.latency_analytics import (
@@ -19,6 +21,8 @@ from ai_sdr_agent.services.latency_analytics import (
 
 _DUPLICATE_FINAL_WINDOW_S = 0.75
 _DUPLICATE_AFTER_INTERRUPT_WINDOW_S = 2.5
+_STREAM_PUNCTUATION = ".?,!;:"
+_STREAM_HARD_FLUSH_CHARS = 24
 
 
 def _format_details(**details: object) -> str:
@@ -90,6 +94,15 @@ class _TurnOutcome:
 
 
 @dataclass
+class _LiveResponseContext:
+    emit_chunk: Callable[[str], Awaitable[None]]
+    active: bool = True
+    used: bool = False
+    emitted_any: bool = False
+    buffer: str = ""
+
+
+@dataclass
 class _TurnRequest:
     text: str
     normalized: str
@@ -97,6 +110,7 @@ class _TurnRequest:
     sequence: int | None
     generation: int
     future: asyncio.Future[_TurnOutcome]
+    live_response: _LiveResponseContext | None = None
     started_at: float = field(default_factory=time.perf_counter)
 
 
@@ -222,6 +236,52 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         runtime_state.last_committed_source = "interrupt" if is_interrupt else "final"
         runtime_state.last_committed_at = time.perf_counter()
 
+    @staticmethod
+    async def _emit_live_chunk(request: _TurnRequest, chunk: str) -> None:
+        live_response = request.live_response
+        if live_response is None or not live_response.active or not chunk:
+            return
+        live_response.buffer += chunk
+        while live_response.buffer:
+            boundary_index = next(
+                (idx for idx, char in enumerate(live_response.buffer) if char in _STREAM_PUNCTUATION),
+                -1,
+            )
+            if boundary_index >= 2:
+                output = live_response.buffer[: boundary_index + 1].strip()
+                live_response.buffer = live_response.buffer[boundary_index + 1 :].lstrip()
+                if output:
+                    live_response.used = True
+                    live_response.emitted_any = True
+                    await live_response.emit_chunk(output if output.endswith(" ") else output + " ")
+                continue
+            if len(live_response.buffer) >= _STREAM_HARD_FLUSH_CHARS:
+                space_index = live_response.buffer.rfind(" ")
+                if space_index > 0:
+                    output = live_response.buffer[:space_index].strip()
+                    live_response.buffer = live_response.buffer[space_index + 1 :].lstrip()
+                    if output:
+                        live_response.used = True
+                        live_response.emitted_any = True
+                        await live_response.emit_chunk(
+                            output if output.endswith(" ") else output + " "
+                        )
+                    continue
+            break
+
+    @staticmethod
+    async def _flush_live_response(request: _TurnRequest) -> None:
+        live_response = request.live_response
+        if live_response is None or not live_response.active:
+            return
+        if not live_response.buffer:
+            return
+        buffered = live_response.buffer
+        live_response.buffer = ""
+        live_response.used = True
+        live_response.emitted_any = True
+        await live_response.emit_chunk(buffered if buffered.endswith(" ") else buffered + " ")
+
     async def _ensure_session_initialized(self, conversation_id: str) -> None:
         if conversation_id in self._initialized_conversations:
             return
@@ -252,6 +312,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         normalized_input: str,
         is_interrupt: bool,
         sequence: int | None,
+        live_response: _LiveResponseContext | None = None,
     ) -> _TurnRequest:
         loop = asyncio.get_running_loop()
         runtime_state.next_generation += 1
@@ -262,6 +323,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             sequence=sequence,
             generation=runtime_state.next_generation,
             future=loop.create_future(),
+            live_response=live_response,
         )
 
     async def _start_turn_request(
@@ -292,7 +354,17 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         runtime_state = self._get_runtime_state(conversation_id)
         handle_turn_t0 = time.perf_counter()
         try:
-            state = await self.conversation_service.handle_turn(conversation_id, request.text)
+            if request.live_response is not None:
+                streamed_turn = await self.conversation_service.start_streamed_turn(
+                    conversation_id,
+                    request.text,
+                )
+                async for chunk in streamed_turn.chunks:
+                    await self._emit_live_chunk(request, chunk)
+                await self._flush_live_response(request)
+                state = await streamed_turn.final_state_task
+            else:
+                state = await self.conversation_service.handle_turn(conversation_id, request.text)
             handle_turn_ms = (time.perf_counter() - handle_turn_t0) * 1000
         except Exception:
             _log_agent_step_latency(
@@ -328,6 +400,8 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         mark_phone_turn_graph_done(conversation_id)
         async with runtime_state.turn_lock:
             if runtime_state.current_turn is not request:
+                if request.live_response is not None:
+                    request.live_response.active = False
                 self._resolve_turn_future(
                     request,
                     response=None,
@@ -352,10 +426,16 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             queued_request = runtime_state.pending_turn
             next_request = queued_request if response else None
             abandoned_request = queued_request if not response else None
-            suppress_reply = next_request is not None
+            suppress_for_pending = next_request is not None
+            suppress_for_stream = (
+                request.live_response is not None
+                and request.live_response.used
+            )
             runtime_state.current_turn = None
             runtime_state.pending_turn = None
             runtime_state.in_flight_turn_task = None
+            if request.live_response is not None:
+                request.live_response.active = False
             if next_request is not None:
                 await self._start_turn_request(
                     conversation_id,
@@ -378,12 +458,20 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 should_stop=True,
             )
             return
-        if suppress_reply:
+        if suppress_for_pending:
             self._resolve_turn_future(
                 request,
                 response=None,
                 should_stop=False,
                 skip_reason="stale_completed_reply",
+            )
+            return
+        if suppress_for_stream:
+            self._resolve_turn_future(
+                request,
+                response=None,
+                should_stop=False,
+                skip_reason="streamed_reply_delivered",
             )
             return
         logger.info(
@@ -466,31 +554,14 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 text=request.text,
             )
 
-    def start(self) -> None:
-        super().start()
-        logger.info(
-            "SDRVocodeAgent started lead_id={} generate_responses={}",
-            self.agent_config.lead_id,
-            self.agent_config.generate_responses,
-        )
-        self.produce_interruptible_agent_response_event_nonblocking(
-            AgentResponseMessage(
-                message=BaseMessage(text=self.agent_config.initial_message_text),
-                is_first=True,
-            ),
-            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
-        )
-        self.produce_interruptible_agent_response_event_nonblocking(
-            AgentResponseMessage(message=EndOfTurn()),
-            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
-        )
-
-    async def respond(
+    async def _enqueue_turn(
         self,
+        *,
         human_input: str,
         conversation_id: str,
-        is_interrupt: bool = False,
-    ) -> tuple[str | None, bool]:
+        is_interrupt: bool,
+        live_response: _LiveResponseContext | None = None,
+    ) -> tuple[_TurnRequest | None, float]:
         respond_start = time.perf_counter()
         runtime_state = self._get_runtime_state(conversation_id)
         interrupt_sequence: int | None = None
@@ -515,7 +586,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     total_ms,
                     reason=skip_reason,
                 )
-                return None, False
+                return None, respond_start
         async with runtime_state.turn_lock:
             if is_interrupt and interrupt_sequence != runtime_state.latest_interrupt_sequence:
                 _log_interrupt_buffer_event(
@@ -534,7 +605,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     sequence=interrupt_sequence,
                     latest_sequence=runtime_state.latest_interrupt_sequence,
                 )
-                return None, False
+                return None, respond_start
             queue_wait_ms = (time.perf_counter() - respond_start) * 1000
             _log_agent_step_latency(
                 conversation_id,
@@ -557,13 +628,14 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     total_ms,
                     reason=duplicate_reason,
                 )
-                return None, False
+                return None, respond_start
             request = self._build_turn_request(
                 runtime_state,
                 human_input=human_input,
                 normalized_input=normalized_input,
                 is_interrupt=is_interrupt,
                 sequence=interrupt_sequence,
+                live_response=live_response,
             )
             await self._queue_turn_request(
                 conversation_id,
@@ -571,6 +643,124 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 request=request,
             )
         mark_phone_turn_respond_enter(conversation_id)
+        return request, respond_start
+
+    def start(self) -> None:
+        super().start()
+        logger.info(
+            "SDRVocodeAgent started lead_id={} generate_responses={}",
+            self.agent_config.lead_id,
+            self.agent_config.generate_responses,
+        )
+        self.produce_interruptible_agent_response_event_nonblocking(
+            AgentResponseMessage(
+                message=BaseMessage(text=self.agent_config.initial_message_text),
+                is_first=True,
+            ),
+            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+        )
+        self.produce_interruptible_agent_response_event_nonblocking(
+            AgentResponseMessage(message=EndOfTurn()),
+            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+        )
+
+    async def handle_respond(self, transcription: Transcription, conversation_id: str) -> bool:
+        if not self.conversation_service.dependencies.brain.supports_response_token_stream():
+            return await super().handle_respond(transcription, conversation_id)
+
+        is_first_chunk = True
+
+        async def _emit_chunk(text: str) -> None:
+            nonlocal is_first_chunk
+            if not text:
+                return
+            using_input_streaming = bool(
+                hasattr(self, "conversation_state_manager")
+                and self.conversation_state_manager.using_input_streaming_synthesizer()
+            )
+            message_cls = LLMToken if using_input_streaming else BaseMessage
+            self.produce_interruptible_agent_response_event_nonblocking(
+                AgentResponseMessage(
+                    message=message_cls(text=text),
+                    is_first=is_first_chunk,
+                ),
+                is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+            )
+            is_first_chunk = False
+
+        live_response = _LiveResponseContext(emit_chunk=_emit_chunk)
+        request, respond_start = await self._enqueue_turn(
+            human_input=transcription.message,
+            conversation_id=conversation_id,
+            is_interrupt=transcription.is_interrupt,
+            live_response=live_response,
+        )
+        if request is None:
+            logger.debug("No streamed response generated")
+            return False
+        try:
+            outcome = await asyncio.shield(request.future)
+        except asyncio.CancelledError:
+            live_response.active = False
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_wait_cancelled",
+                total_ms,
+                is_interrupt=transcription.is_interrupt,
+                generation=request.generation,
+            )
+            raise
+        if outcome.skip_reason is not None and outcome.skip_reason != "streamed_reply_delivered":
+            total_ms = (time.perf_counter() - respond_start) * 1000
+            _log_agent_step_latency(
+                conversation_id,
+                "respond_coalesced_skip",
+                total_ms,
+                reason=outcome.skip_reason,
+                generation=request.generation,
+            )
+            return False
+        if not live_response.emitted_any:
+            if outcome.response:
+                await _emit_chunk(outcome.response)
+            else:
+                total_ms = (time.perf_counter() - respond_start) * 1000
+                _log_agent_step_latency(
+                    conversation_id,
+                    "respond_total",
+                    total_ms,
+                    generation=request.generation,
+                    streamed=True,
+                )
+                return outcome.should_stop
+        self.produce_interruptible_agent_response_event_nonblocking(
+            AgentResponseMessage(message=EndOfTurn()),
+            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+        )
+        total_ms = (time.perf_counter() - respond_start) * 1000
+        _log_agent_step_latency(
+            conversation_id,
+            "respond_total",
+            total_ms,
+            generation=request.generation,
+            streamed=True,
+        )
+        return outcome.should_stop
+
+    async def respond(
+        self,
+        human_input: str,
+        conversation_id: str,
+        is_interrupt: bool = False,
+    ) -> tuple[str | None, bool]:
+        request, respond_start = await self._enqueue_turn(
+            human_input=human_input,
+            conversation_id=conversation_id,
+            is_interrupt=is_interrupt,
+        )
+        if request is None:
+            return None, False
         try:
             outcome = await asyncio.shield(request.future)
         except asyncio.CancelledError:

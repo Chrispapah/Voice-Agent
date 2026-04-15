@@ -4,8 +4,9 @@ import asyncio
 import json
 import time
 import uuid
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from typing import Any, Protocol, Sequence
+from typing import Any, AsyncGenerator, Awaitable, Callable, Protocol, Sequence
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -21,7 +22,30 @@ try:
 except ImportError:  # pragma: no cover
     ChatGroq = None
 
+try:
+    from groq import AsyncGroq
+except ImportError:  # pragma: no cover
+    AsyncGroq = None
+
 from ai_sdr_agent.config import SDRSettings
+
+ResponseChunkSink = Callable[[str], Awaitable[None]]
+_RESPONSE_CHUNK_SINK: ContextVar[ResponseChunkSink | None] = ContextVar(
+    "ai_sdr_response_chunk_sink",
+    default=None,
+)
+
+
+def set_response_chunk_sink(sink: ResponseChunkSink) -> Token[ResponseChunkSink | None]:
+    return _RESPONSE_CHUNK_SINK.set(sink)
+
+
+def reset_response_chunk_sink(token: Token[ResponseChunkSink | None]) -> None:
+    _RESPONSE_CHUNK_SINK.reset(token)
+
+
+def get_response_chunk_sink() -> ResponseChunkSink | None:
+    return _RESPONSE_CHUNK_SINK.get()
 
 
 def _trace_value(trace: dict[str, Any] | None, key: str, default: str = "-") -> str:
@@ -73,7 +97,29 @@ def _messages_from_transcript(
     return messages
 
 
+def _groq_messages_from_transcript(
+    *,
+    system_prompt: str,
+    transcript: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    for item in transcript:
+        if item["role"] == "human":
+            messages.append({"role": "user", "content": item["content"]})
+        else:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"Agent previously said: {item['content']}",
+                }
+            )
+    return messages
+
+
 class ConversationBrain(Protocol):
+    def supports_response_token_stream(self) -> bool:
+        ...
+
     async def respond(
         self,
         *,
@@ -82,6 +128,16 @@ class ConversationBrain(Protocol):
         max_tokens: int | None = None,
         trace: dict[str, Any] | None = None,
     ) -> str:
+        ...
+
+    async def stream_respond_tokens(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[str, None]:
         ...
 
     async def classify(
@@ -106,6 +162,9 @@ class ConversationBrain(Protocol):
 
 @dataclass
 class StubConversationBrain:
+    def supports_response_token_stream(self) -> bool:
+        return False
+
     def _last_human_text(self, transcript: list[dict[str, str]]) -> str:
         return _last_human_text(transcript)
 
@@ -149,6 +208,23 @@ class StubConversationBrain:
             "We help teams automate outbound follow-up so prospects get contacted quickly and "
             "reps spend more time in qualified conversations. Would you be open to a short walkthrough?"
         )
+
+    async def stream_respond_tokens(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        response = await self.respond(
+            system_prompt=system_prompt,
+            transcript=transcript,
+            max_tokens=max_tokens,
+            trace=trace,
+        )
+        if response:
+            yield response
 
     _EXIT_PHRASES = (
         "not interested", "stop calling", "remove me", "do not call",
@@ -299,6 +375,15 @@ class LangChainConversationBrain:
         self._provider = provider
         self._model_name = model_name
         self._max_tokens = max_tokens
+        self._temperature = temperature
+        self._groq_async_client = (
+            AsyncGroq(api_key=groq_key)
+            if provider == "groq" and AsyncGroq is not None and groq_key
+            else None
+        )
+
+    def supports_response_token_stream(self) -> bool:
+        return self._provider == "groq" and self._groq_async_client is not None
 
     async def _ainvoke_with_logging(
         self,
@@ -408,6 +493,21 @@ class LangChainConversationBrain:
         max_tokens: int | None = None,
         trace: dict[str, Any] | None = None,
     ) -> str:
+        sink = get_response_chunk_sink()
+        if sink is not None and self.supports_response_token_stream():
+            parts: list[str] = []
+            async for chunk in self.stream_respond_tokens(
+                system_prompt=system_prompt,
+                transcript=transcript,
+                max_tokens=max_tokens,
+                trace=trace,
+            ):
+                if not chunk:
+                    continue
+                parts.append(chunk)
+                await sink(chunk)
+            return "".join(parts)
+
         trimmed_transcript = _slice_transcript(
             transcript,
             max_messages=self._RESPOND_TRANSCRIPT_LIMIT,
@@ -425,6 +525,144 @@ class LangChainConversationBrain:
             transcript=trimmed_transcript,
         )
         return str(response.content)
+
+    async def stream_respond_tokens(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
+    ) -> AsyncGenerator[str, None]:
+        if not self.supports_response_token_stream():
+            response = await self.respond(
+                system_prompt=system_prompt,
+                transcript=transcript,
+                max_tokens=max_tokens,
+                trace=trace,
+            )
+            if response:
+                yield response
+            return
+
+        trimmed_transcript = _slice_transcript(
+            transcript,
+            max_messages=self._RESPOND_TRANSCRIPT_LIMIT,
+        )
+        limit = self._max_tokens if max_tokens is None else min(max_tokens, self._max_tokens)
+        messages = _groq_messages_from_transcript(
+            system_prompt=system_prompt,
+            transcript=trimmed_transcript,
+        )
+        call_id = uuid.uuid4().hex[:8]
+        logger.info(
+            "LLM stream start call_id={} conversation_id={} turn_id={} turn_count={} "
+            "node={} step={} operation={} provider={} model={} max_tokens={} "
+            "message_count={} prompt_chars={} transcript_messages={} "
+            "transcript_human_messages={} transcript_agent_messages={} "
+            "input_preview={!r}",
+            call_id,
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            _trace_value(trace, "step"),
+            "respond_stream",
+            self._provider,
+            self._model_name,
+            limit,
+            len(messages),
+            len(system_prompt),
+            len(trimmed_transcript),
+            _count_role_messages(trimmed_transcript, "human"),
+            _count_role_messages(trimmed_transcript, "agent"),
+            _preview_text(_last_human_text(trimmed_transcript)),
+        )
+        started_at = time.perf_counter()
+        output_parts: list[str] = []
+        emitted_first_token = False
+        stream = None
+        try:
+            assert self._groq_async_client is not None
+            stream = await self._groq_async_client.chat.completions.create(
+                messages=messages,
+                model=self._model_name,
+                temperature=self._temperature,
+                max_tokens=limit,
+                stream=True,
+            )
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content
+                if not delta:
+                    continue
+                if not emitted_first_token:
+                    emitted_first_token = True
+                    logger.info(
+                        "LLM stream first_token call_id={} conversation_id={} turn_id={} turn_count={} "
+                        "node={} step={} operation={} latency_ms={:.0f}",
+                        call_id,
+                        _trace_value(trace, "conversation_id"),
+                        _trace_value(trace, "turn_id"),
+                        _trace_value(trace, "turn_count"),
+                        _trace_value(trace, "node"),
+                        _trace_value(trace, "step"),
+                        "respond_stream",
+                        (time.perf_counter() - started_at) * 1000,
+                    )
+                output_parts.append(delta)
+                yield delta
+        except asyncio.CancelledError:
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            logger.warning(
+                "LLM stream cancelled call_id={} conversation_id={} turn_id={} turn_count={} "
+                "node={} step={} operation={} latency_ms={:.0f}",
+                call_id,
+                _trace_value(trace, "conversation_id"),
+                _trace_value(trace, "turn_id"),
+                _trace_value(trace, "turn_count"),
+                _trace_value(trace, "node"),
+                _trace_value(trace, "step"),
+                "respond_stream",
+                latency_ms,
+            )
+            raise
+        except Exception:
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            logger.exception(
+                "LLM stream failed call_id={} conversation_id={} turn_id={} turn_count={} "
+                "node={} step={} operation={} latency_ms={:.0f}",
+                call_id,
+                _trace_value(trace, "conversation_id"),
+                _trace_value(trace, "turn_id"),
+                _trace_value(trace, "turn_count"),
+                _trace_value(trace, "node"),
+                _trace_value(trace, "step"),
+                "respond_stream",
+                latency_ms,
+            )
+            raise
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
+        output_text = "".join(output_parts)
+        logger.info(
+            "LLM stream end call_id={} conversation_id={} turn_id={} turn_count={} "
+            "node={} step={} operation={} latency_ms={:.0f} output_chars={} "
+            "output_preview={!r}",
+            call_id,
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            _trace_value(trace, "step"),
+            "respond_stream",
+            (time.perf_counter() - started_at) * 1000,
+            len(output_text),
+            _preview_text(output_text),
+        )
 
     async def classify(
         self,
