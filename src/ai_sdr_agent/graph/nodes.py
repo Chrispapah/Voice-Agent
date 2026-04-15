@@ -225,14 +225,8 @@ async def greeting_node(
 ) -> dict:
     _log_node_start(state, "greeting")
     t0 = time.perf_counter()
-    response = _finalize_spoken_reply(
-        await brain.respond(
-            system_prompt=greeting_prompt(state),
-            transcript=state["transcript"],
-            max_tokens=_MAX_OUT_GREETING,
-            trace=_llm_trace(state, "greeting", "respond"),
-        )
-    )
+    # Temporary latency experiment: bypass the first LLM reply entirely.
+    response = _finalize_spoken_reply("yES IAM MICHAEL WHO IS THIS")
     respond_ms = (time.perf_counter() - t0) * 1000
     _log_step_latency(state, "greeting", "respond", respond_ms)
     logger.info("greeting_node latency respond_ms={:.0f}", respond_ms)
