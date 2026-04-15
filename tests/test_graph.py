@@ -60,24 +60,6 @@ async def test_graph_advances_one_stage_per_turn(conversation_service):
 
 
 @pytest.mark.asyncio
-async def test_phone_session_starts_after_seeded_greeting(conversation_service):
-    service, _, _, _ = conversation_service
-    opening = "Hi, this is John. Do you have 30 seconds?"
-    conversation_id = await service.start_session(
-        "lead-001",
-        initial_agent_message=opening,
-        initial_current_node="greeting",
-        initial_next_node="qualify_lead",
-    )
-
-    state = await service.get_state(conversation_id)
-    assert state["current_node"] == "greeting"
-    assert state["next_node"] == "qualify_lead"
-    assert state["last_agent_response"] == opening
-    assert state["transcript"] == [{"role": "agent", "content": opening}]
-
-
-@pytest.mark.asyncio
 async def test_booking_path_updates_state_and_side_effects(conversation_service):
     service, calendar_gateway, email_gateway, crm_gateway = conversation_service
     conversation_id = await service.start_session("lead-001")

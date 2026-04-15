@@ -91,12 +91,10 @@ class CallScheduler:
                 "initial_greeting",
                 "Hi, this is your AI assistant. Do you have a moment?",
             ),
-            interrupt_sensitivity=self._cfg("telephony_interrupt_sensitivity", "low"),
             prefill_ack_enabled=self._cfg("agent_prefill_ack_enabled", False),
             prefill_ack_phrases=parse_agent_prefill_ack_phrases(
                 self._cfg("agent_prefill_ack_phrases", "Okay.|Got it.|I hear you.")
             ),
-            prefill_ack_on_safe_interrupts=self._cfg("agent_prefill_ack_on_safe_interrupts", True),
         )
         if self.settings is not None and not self._bot_config:
             if self.settings.stt_provider == "google":

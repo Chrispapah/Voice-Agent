@@ -76,29 +76,16 @@ class SDRConversationService:
         *,
         conversation_id: str | None = None,
         bot_config: dict | None = None,
-        initial_agent_message: str | None = None,
-        initial_current_node: str | None = None,
-        initial_next_node: str | None = None,
     ) -> str:
         session_id = conversation_id or f"conv-{uuid.uuid4().hex[:12]}"
         cfg = bot_config or self._bot_config
         state = await self.dependencies.pre_call_loader.build_initial_state(lead_id, bot_config=cfg)
-        if initial_agent_message:
-            seeded_next_node = initial_next_node or state["next_node"]
-            state = {
-                **state,
-                "transcript": state["transcript"] + [{"role": "agent", "content": initial_agent_message}],
-                "current_node": initial_current_node or state["current_node"],
-                "last_agent_response": initial_agent_message,
-                "next_node": seeded_next_node,
-                "route_decision": seeded_next_node,
-            }
         await self.dependencies.session_store.save(session_id, state)
         await self.dependencies.call_log_repository.save_call_log(
             CallLogRecord(
                 conversation_id=session_id,
                 lead_id=lead_id,
-                transcript=state["transcript"],
+                transcript=[],
             )
         )
         logger.info("Started SDR session conversation_id={} lead_id={}", session_id, lead_id)

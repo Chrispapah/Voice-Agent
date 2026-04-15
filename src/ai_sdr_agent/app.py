@@ -246,12 +246,10 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
                         calendar_id=settings.default_calendar_id,
                         sales_rep_name=settings.default_sales_rep_name,
                         initial_message_text=settings.initial_greeting,
-                        interrupt_sensitivity=settings.telephony_interrupt_sensitivity,
                         prefill_ack_enabled=settings.agent_prefill_ack_enabled,
                         prefill_ack_phrases=parse_agent_prefill_ack_phrases(
                             settings.agent_prefill_ack_phrases
                         ),
-                        prefill_ack_on_safe_interrupts=settings.agent_prefill_ack_on_safe_interrupts,
                     ),
                     transcriber_config=_build_transcriber_config(settings),
                     synthesizer_config=_build_synthesizer_config(settings),

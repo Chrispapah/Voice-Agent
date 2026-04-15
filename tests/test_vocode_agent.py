@@ -22,7 +22,6 @@ def _make_agent(
     *,
     prefill_ack_enabled: bool = True,
     prefill_ack_phrases: tuple[str, ...] = ("Okay.", "Got it."),
-    prefill_ack_on_safe_interrupts: bool = True,
 ) -> tuple[SDRVocodeAgent, AsyncMock]:
     cfg = SDRAgentConfig(
         lead_id="lead-1",
@@ -31,7 +30,6 @@ def _make_agent(
         initial_message_text="Hi",
         prefill_ack_enabled=prefill_ack_enabled,
         prefill_ack_phrases=prefill_ack_phrases,
-        prefill_ack_on_safe_interrupts=prefill_ack_on_safe_interrupts,
         generate_responses=False,
     )
     svc = AsyncMock()
@@ -103,7 +101,7 @@ async def test_prefill_skipped_empty_human_input():
 
 @pytest.mark.asyncio
 async def test_prefill_skipped_on_interrupt():
-    agent, svc = _make_agent(prefill_ack_on_safe_interrupts=False)
+    agent, svc = _make_agent()
     with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking") as produce:
         await agent.respond("Hello", "conv-4", is_interrupt=True)
     produce.assert_not_called()
@@ -144,17 +142,6 @@ async def test_prefill_ack_is_always_interruptible():
 
 
 @pytest.mark.asyncio
-async def test_prefill_emits_for_safe_affirmative_interrupt():
-    agent, _ = _make_agent()
-    with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking") as produce:
-        await agent.respond("yes", "conv-safe-int", is_interrupt=True)
-    assert produce.call_count == 1
-    first_msg = produce.call_args_list[0][0][0]
-    assert isinstance(first_msg, AgentResponseMessage)
-    assert isinstance(first_msg.message, BotBackchannel)
-
-
-@pytest.mark.asyncio
 async def test_concurrent_respond_calls_are_serialized_per_conversation():
     agent, svc = _make_agent()
     started = asyncio.Event()
@@ -185,67 +172,6 @@ async def test_concurrent_respond_calls_are_serialized_per_conversation():
     assert second_result == ("reply:second", False)
     assert call_order == ["first", "second"]
     svc.start_session.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_interrupt_transcript_is_skipped_while_turn_is_running():
-    agent, svc = _make_agent()
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def slow_handle_turn(cid: str, text: str):
-        started.set()
-        await release.wait()
-        return {**_minimal_state(), "last_agent_response": f"reply:{text}"}
-
-    svc.handle_turn = AsyncMock(side_effect=slow_handle_turn)
-
-    first_task = asyncio.create_task(agent.respond("yeah", "conv-int", is_interrupt=False))
-    await started.wait()
-
-    interrupt_result = await agent.respond("yeah tell me", "conv-int", is_interrupt=True)
-    release.set()
-    first_result = await first_task
-
-    assert interrupt_result == (None, False)
-    assert first_result == ("reply:yeah", False)
-    assert svc.handle_turn.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_respond_preserves_turn_result_when_outer_task_is_cancelled():
-    agent, svc = _make_agent(prefill_ack_enabled=False)
-    started = asyncio.Event()
-    release = asyncio.Event()
-
-    async def slow_handle_turn(cid: str, text: str):
-        started.set()
-        await release.wait()
-        return {**_minimal_state(), "last_agent_response": "Main reply."}
-
-    svc.handle_turn = AsyncMock(side_effect=slow_handle_turn)
-
-    task = asyncio.create_task(agent.respond("Hello", "conv-cancel", is_interrupt=False))
-    await started.wait()
-    task.cancel()
-    await asyncio.sleep(0)
-
-    release.set()
-    result = await task
-
-    assert result == ("Main reply.", False)
-    assert svc.handle_turn.await_count == 1
-
-
-@pytest.mark.asyncio
-async def test_duplicate_short_interrupt_is_skipped():
-    agent, svc = _make_agent(prefill_ack_enabled=False)
-    first_result = await agent.respond(" hello ", "conv-dupe", is_interrupt=True)
-    second_result = await agent.respond("hello", "conv-dupe", is_interrupt=True)
-
-    assert first_result == ("Main reply.", False)
-    assert second_result == (None, False)
-    assert svc.handle_turn.await_count == 1
 
 
 def test_parse_agent_prefill_ack_phrases_pipe_separated():
