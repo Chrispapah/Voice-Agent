@@ -5,14 +5,6 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-DEFAULT_AGENT_PREFILL_ACK_PHRASES: tuple[str, ...] = ("Okay.", "Got it.", "I hear you.")
-
-
-def parse_agent_prefill_ack_phrases(raw: str) -> tuple[str, ...]:
-    """Parse pipe-separated phrases from env (e.g. ``Okay.|Got it.``)."""
-    parts = [p.strip() for p in raw.split("|") if p.strip()]
-    return tuple(parts) if parts else DEFAULT_AGENT_PREFILL_ACK_PHRASES
-
 
 class SDRSettings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -100,10 +92,6 @@ class SDRSettings(BaseSettings):
     )
     max_objection_attempts: int = 2
     max_call_turns: int = 12
-
-    # Verbal backchannel before graph turn (parallel with LangGraph); pipe-separated phrases.
-    agent_prefill_ack_enabled: bool = False
-    agent_prefill_ack_phrases: str = "Okay.|Got it.|I hear you."
 
     use_redis_config_manager: bool = True
     use_stub_integrations: bool = True

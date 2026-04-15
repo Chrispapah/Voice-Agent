@@ -8,7 +8,6 @@ from vocode.streaming.agent.base_agent import BaseAgent
 from vocode.streaming.models.agent import AgentConfig
 from vocode.streaming.models.message import BaseMessage
 
-from ai_sdr_agent.config import DEFAULT_AGENT_PREFILL_ACK_PHRASES
 from ai_sdr_agent.graph.service import SDRConversationService
 from ai_sdr_agent.vocode_agent import SDRAgentConfig, SDRVocodeAgent
 
@@ -35,10 +34,6 @@ class SDRAgentFactory(AbstractAgentFactory):
                 sales_rep_name=getattr(agent_config, "sales_rep_name", "Sales Team"),
                 initial_message_text=getattr(
                     agent_config, "initial_message_text", initial_message_text
-                ),
-                prefill_ack_enabled=getattr(agent_config, "prefill_ack_enabled", False),
-                prefill_ack_phrases=getattr(
-                    agent_config, "prefill_ack_phrases", DEFAULT_AGENT_PREFILL_ACK_PHRASES
                 ),
                 generate_responses=False,
                 allow_agent_to_be_cut_off=getattr(
