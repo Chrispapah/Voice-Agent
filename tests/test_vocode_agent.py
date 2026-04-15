@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -42,7 +43,7 @@ def _make_agent(
 
 
 @pytest.mark.asyncio
-async def test_prefill_emits_backchannel_and_eot_before_handle_turn():
+async def test_prefill_emits_backchannel_before_handle_turn():
     agent, svc = _make_agent()
     sequence: list[str] = []
 
@@ -70,16 +71,13 @@ async def test_prefill_emits_backchannel_and_eot_before_handle_turn():
     ) as produce:
         await agent.respond("Hello there", "conv-1", is_interrupt=False)
 
-    assert sequence == ["get_state", "produce", "produce", "handle_turn"]
+    assert sequence == ["get_state", "produce", "handle_turn"]
     produce_calls = produce.call_args_list
-    assert len(produce_calls) >= 2
+    assert len(produce_calls) >= 1
     first_msg = produce_calls[0][0][0]
-    second_msg = produce_calls[1][0][0]
     assert isinstance(first_msg, AgentResponseMessage)
     assert isinstance(first_msg.message, BotBackchannel)
     assert first_msg.message.text in ("Okay.", "Got it.")
-    assert isinstance(second_msg, AgentResponseMessage)
-    assert isinstance(second_msg.message, EndOfTurn)
     svc.start_session.assert_awaited_once()
     assert produce.called
 
@@ -116,6 +114,64 @@ async def test_prefill_skipped_when_already_complete():
     with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking") as produce:
         await agent.respond("Hello", "conv-5", is_interrupt=False)
     produce.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_prefill_emitted_with_empty_response_returns_fallback_text():
+    agent, svc = _make_agent()
+    svc.get_state = AsyncMock(return_value=_minimal_state("qualify"))
+    svc.handle_turn = AsyncMock(
+        return_value={
+            **_minimal_state("complete"),
+            "last_agent_response": "",
+        }
+    )
+    with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking"):
+        response, should_stop = await agent.respond("Hello", "conv-6", is_interrupt=False)
+    assert response == "Thanks for your time. Goodbye."
+    assert should_stop is True
+
+
+@pytest.mark.asyncio
+async def test_prefill_ack_is_always_interruptible():
+    agent, _ = _make_agent()
+    with patch.object(agent, "produce_interruptible_agent_response_event_nonblocking") as produce:
+        await agent.respond("Hello", "conv-7", is_interrupt=False)
+    assert produce.call_count == 1
+    assert produce.call_args.kwargs["is_interruptible"] is True
+
+
+@pytest.mark.asyncio
+async def test_concurrent_respond_calls_are_serialized_per_conversation():
+    agent, svc = _make_agent()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    call_order: list[str] = []
+
+    async def slow_handle_turn(cid: str, text: str):
+        call_order.append(text)
+        if text == "first":
+            started.set()
+            await release.wait()
+        return {**_minimal_state(), "last_agent_response": f"reply:{text}"}
+
+    svc.handle_turn = AsyncMock(side_effect=slow_handle_turn)
+
+    first_task = asyncio.create_task(agent.respond("first", "conv-serial", is_interrupt=False))
+    await started.wait()
+    second_task = asyncio.create_task(agent.respond("second", "conv-serial", is_interrupt=False))
+    await asyncio.sleep(0)
+
+    assert svc.handle_turn.await_count == 1
+
+    release.set()
+    first_result = await first_task
+    second_result = await second_task
+
+    assert first_result == ("reply:first", False)
+    assert second_result == ("reply:second", False)
+    assert call_order == ["first", "second"]
+    svc.start_session.assert_awaited_once()
 
 
 def test_parse_agent_prefill_ack_phrases_pipe_separated():

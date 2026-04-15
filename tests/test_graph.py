@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 
 import pytest
 
@@ -95,3 +96,45 @@ async def test_objection_loops_back_to_pitch(conversation_service):
     state = await service.handle_turn(conversation_id, "Maybe later, send info.")
     assert state["current_node"] == "handle_objection"
     assert state["next_node"] in {"pitch", "wrap_up"}
+
+
+@pytest.mark.asyncio
+async def test_handle_turn_serializes_concurrent_updates(conversation_service):
+    service, _, _, _ = conversation_service
+    conversation_id = await service.start_session("lead-001")
+
+    initial_state = await service.get_state(conversation_id)
+    initial_state["current_node"] = "qualify_lead"
+    initial_state["next_node"] = "qualify_lead"
+    initial_state["route_decision"] = "qualify_lead"
+    await service.dependencies.session_store.save(conversation_id, initial_state)
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    original_ainvoke = service.graph.ainvoke
+
+    async def gated_ainvoke(state):
+        if state["last_human_message"] == "first":
+            entered.set()
+            await release.wait()
+        return await original_ainvoke(state)
+
+    service.graph.ainvoke = gated_ainvoke
+
+    first_task = asyncio.create_task(service.handle_turn(conversation_id, "first"))
+    await entered.wait()
+    second_task = asyncio.create_task(service.handle_turn(conversation_id, "second"))
+    await asyncio.sleep(0)
+
+    mid_state = await service.get_state(conversation_id)
+    assert mid_state["turn_count"] == 0
+    assert mid_state["transcript"] == []
+
+    release.set()
+    await first_task
+    await second_task
+
+    final_state = await service.get_state(conversation_id)
+    human_messages = [msg["content"] for msg in final_state["transcript"] if msg["role"] == "human"]
+    assert human_messages == ["first", "second"]
+    assert final_state["turn_count"] == 2

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from loguru import logger
 from vocode.streaming.agent.base_agent import AgentResponseMessage, RespondAgent
 from vocode.streaming.models.actions import EndOfTurn
@@ -36,12 +38,20 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         super().__init__(agent_config=agent_config, **kwargs)
         self.conversation_service = conversation_service
         self._initialized_conversations: set[str] = set()
+        self._respond_locks: dict[str, asyncio.Lock] = {}
         phrases = list(agent_config.prefill_ack_phrases) or list(DEFAULT_AGENT_PREFILL_ACK_PHRASES)
         if len(phrases) >= 2:
             self._prefill_ack_pick = unrepeating_randomizer(phrases)
         else:
             only = phrases[0]
             self._prefill_ack_pick = lambda: only
+
+    def _get_respond_lock(self, conversation_id: str) -> asyncio.Lock:
+        lock = self._respond_locks.get(conversation_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._respond_locks[conversation_id] = lock
+        return lock
 
     def start(self) -> None:
         super().start()
@@ -68,54 +78,63 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         is_interrupt: bool = False,
     ) -> tuple[str | None, bool]:
-        logger.info(
-            "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
-            conversation_id,
-            is_interrupt,
-            human_input,
-        )
-        mark_phone_turn_respond_enter(conversation_id)
-        try:
-            if conversation_id not in self._initialized_conversations:
-                await self.conversation_service.start_session(
-                    self.agent_config.lead_id,
-                    conversation_id=conversation_id,
-                )
-                self._initialized_conversations.add(conversation_id)
-                logger.info(
-                    "Initialized SDR session from phone call conversation_id={} lead_id={}",
-                    conversation_id,
-                    self.agent_config.lead_id,
-                )
-            await self._maybe_emit_prefill_ack(
-                conversation_id=conversation_id,
-                human_input=human_input,
-                is_interrupt=is_interrupt,
-            )
-            # If this turn transitions to complete with an empty last_agent_response, we may have
-            # already played a prefill with no main TTS (handle_respond skips empty strings). The
-            # next_node == "complete" check avoids the common already-complete case.
-            state = await self.conversation_service.handle_turn(conversation_id, human_input)
-            response = state["last_agent_response"]
-            if not response:
-                logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
-                clear_phone_turn_on_error(conversation_id)
-                return None, True
-            mark_phone_turn_graph_done(conversation_id)
+        async with self._get_respond_lock(conversation_id):
             logger.info(
-                "SDR agent generated reply conversation_id={} text={!r}",
+                "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
                 conversation_id,
-                response,
-            )
-            return response, False
-        except Exception:
-            logger.exception(
-                "SDR agent respond() failed conversation_id={} text={!r}",
-                conversation_id,
+                is_interrupt,
                 human_input,
             )
-            mark_phone_turn_graph_done(conversation_id)
-            return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
+            mark_phone_turn_respond_enter(conversation_id)
+            try:
+                if conversation_id not in self._initialized_conversations:
+                    await self.conversation_service.start_session(
+                        self.agent_config.lead_id,
+                        conversation_id=conversation_id,
+                    )
+                    self._initialized_conversations.add(conversation_id)
+                    logger.info(
+                        "Initialized SDR session from phone call conversation_id={} lead_id={}",
+                        conversation_id,
+                        self.agent_config.lead_id,
+                    )
+                prefill_emitted = await self._maybe_emit_prefill_ack(
+                    conversation_id=conversation_id,
+                    human_input=human_input,
+                    is_interrupt=is_interrupt,
+                )
+                state = await self.conversation_service.handle_turn(conversation_id, human_input)
+                response = state["last_agent_response"]
+                if not response:
+                    # Prefill should not leave users in dead air when a turn resolves with no main
+                    # text response (for example, conversation transitioning to complete).
+                    if prefill_emitted:
+                        fallback_text = "Thanks for your time. Goodbye."
+                        logger.warning(
+                            "Prefill emitted without main reply conversation_id={} next_node={} - using fallback",
+                            conversation_id,
+                            state.get("next_node"),
+                        )
+                        clear_phone_turn_on_error(conversation_id)
+                        return fallback_text, state.get("next_node") == "complete"
+                    logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
+                    clear_phone_turn_on_error(conversation_id)
+                    return None, True
+                mark_phone_turn_graph_done(conversation_id)
+                logger.info(
+                    "SDR agent generated reply conversation_id={} text={!r}",
+                    conversation_id,
+                    response,
+                )
+                return response, False
+            except Exception:
+                logger.exception(
+                    "SDR agent respond() failed conversation_id={} text={!r}",
+                    conversation_id,
+                    human_input,
+                )
+                mark_phone_turn_graph_done(conversation_id)
+                return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
 
     async def _maybe_emit_prefill_ack(
         self,
@@ -123,35 +142,33 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         human_input: str,
         is_interrupt: bool,
-    ) -> None:
+    ) -> bool:
         if not self.agent_config.prefill_ack_enabled:
             logger.debug("Prefill ack skipped (disabled) conversation_id={}", conversation_id)
-            return
+            return False
         if not human_input.strip():
             logger.debug("Prefill ack skipped (empty input) conversation_id={}", conversation_id)
-            return
+            return False
         if is_interrupt:
             logger.debug("Prefill ack skipped (interrupt) conversation_id={}", conversation_id)
-            return
+            return False
         pre_state = await self.conversation_service.get_state(conversation_id)
         if pre_state["next_node"] == "complete":
             logger.debug("Prefill ack skipped (already complete) conversation_id={}", conversation_id)
-            return
+            return False
         phrase = self._prefill_ack_pick()
         logger.debug(
             "Prefill ack emitting conversation_id={} phrase={!r}",
             conversation_id,
             phrase,
         )
-        interruptible = self.agent_config.allow_agent_to_be_cut_off
+        # Always keep the latency-hiding backchannel easy to barge into so it never
+        # blocks the caller or delays the main graph reply.
         self.produce_interruptible_agent_response_event_nonblocking(
             AgentResponseMessage(message=BotBackchannel(text=phrase)),
-            is_interruptible=interruptible,
+            is_interruptible=True,
         )
-        self.produce_interruptible_agent_response_event_nonblocking(
-            AgentResponseMessage(message=EndOfTurn()),
-            is_interruptible=interruptible,
-        )
+        return True
 
 
 def build_agent_config(
