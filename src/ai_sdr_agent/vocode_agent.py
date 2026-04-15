@@ -38,6 +38,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         super().__init__(agent_config=agent_config, **kwargs)
         self.conversation_service = conversation_service
         self._initialized_conversations: set[str] = set()
+        self._inflight_turns: dict[str, asyncio.Task[tuple[str | None, bool]]] = {}
         self._respond_locks: dict[str, asyncio.Lock] = {}
         phrases = list(agent_config.prefill_ack_phrases) or list(DEFAULT_AGENT_PREFILL_ACK_PHRASES)
         if len(phrases) >= 2:
@@ -52,6 +53,17 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             lock = asyncio.Lock()
             self._respond_locks[conversation_id] = lock
         return lock
+
+    @staticmethod
+    def _clear_current_task_cancellation_state() -> int:
+        current_task = asyncio.current_task()
+        if current_task is None:
+            return 0
+        cleared = 0
+        while current_task.cancelling():
+            current_task.uncancel()
+            cleared += 1
+        return cleared
 
     def start(self) -> None:
         super().start()
@@ -78,63 +90,132 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         is_interrupt: bool = False,
     ) -> tuple[str | None, bool]:
-        async with self._get_respond_lock(conversation_id):
+        inflight_turn = self._inflight_turns.get(conversation_id)
+        if is_interrupt and inflight_turn is not None and not inflight_turn.done():
             logger.info(
-                "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
+                "Skipping interrupt transcript while SDR turn is already running "
+                "conversation_id={} text={!r}",
                 conversation_id,
-                is_interrupt,
                 human_input,
             )
-            mark_phone_turn_respond_enter(conversation_id)
-            try:
-                if conversation_id not in self._initialized_conversations:
-                    await self.conversation_service.start_session(
-                        self.agent_config.lead_id,
-                        conversation_id=conversation_id,
-                    )
-                    self._initialized_conversations.add(conversation_id)
+            return None, False
+        async with self._get_respond_lock(conversation_id):
+            if is_interrupt:
+                inflight_turn = self._inflight_turns.get(conversation_id)
+                if inflight_turn is not None and not inflight_turn.done():
                     logger.info(
-                        "Initialized SDR session from phone call conversation_id={} lead_id={}",
+                        "Skipping interrupt transcript after acquiring respond lock "
+                        "conversation_id={} text={!r}",
                         conversation_id,
-                        self.agent_config.lead_id,
+                        human_input,
                     )
-                prefill_emitted = await self._maybe_emit_prefill_ack(
-                    conversation_id=conversation_id,
+                    return None, False
+
+            turn_task = asyncio.create_task(
+                self._run_turn(
                     human_input=human_input,
+                    conversation_id=conversation_id,
                     is_interrupt=is_interrupt,
                 )
-                state = await self.conversation_service.handle_turn(conversation_id, human_input)
-                response = state["last_agent_response"]
-                if not response:
-                    # Prefill should not leave users in dead air when a turn resolves with no main
-                    # text response (for example, conversation transitioning to complete).
-                    if prefill_emitted:
-                        fallback_text = "Thanks for your time. Goodbye."
+            )
+            self._inflight_turns[conversation_id] = turn_task
+            try:
+                while True:
+                    try:
+                        return await asyncio.shield(turn_task)
+                    except asyncio.CancelledError:
+                        if turn_task.done():
+                            cleared = self._clear_current_task_cancellation_state()
+                            logger.warning(
+                                "SDR agent respond() caught cancellation after turn completed "
+                                "conversation_id={} cleared_cancellations={}",
+                                conversation_id,
+                                cleared,
+                            )
+                            return await turn_task
+                        cleared = self._clear_current_task_cancellation_state()
                         logger.warning(
-                            "Prefill emitted without main reply conversation_id={} next_node={} - using fallback",
+                            "SDR agent respond() cancellation ignored while preserving in-flight turn "
+                            "conversation_id={} text={!r} cleared_cancellations={}",
                             conversation_id,
-                            state.get("next_node"),
+                            human_input,
+                            cleared,
                         )
-                        clear_phone_turn_on_error(conversation_id)
-                        return fallback_text, state.get("next_node") == "complete"
-                    logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
-                    clear_phone_turn_on_error(conversation_id)
-                    return None, True
-                mark_phone_turn_graph_done(conversation_id)
+            finally:
+                if self._inflight_turns.get(conversation_id) is turn_task and turn_task.done():
+                    self._inflight_turns.pop(conversation_id, None)
+
+    async def _run_turn(
+        self,
+        *,
+        human_input: str,
+        conversation_id: str,
+        is_interrupt: bool,
+    ) -> tuple[str | None, bool]:
+        logger.info(
+            "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
+            conversation_id,
+            is_interrupt,
+            human_input,
+        )
+        mark_phone_turn_respond_enter(conversation_id)
+        try:
+            if conversation_id not in self._initialized_conversations:
+                await self.conversation_service.start_session(
+                    self.agent_config.lead_id,
+                    conversation_id=conversation_id,
+                )
+                self._initialized_conversations.add(conversation_id)
                 logger.info(
-                    "SDR agent generated reply conversation_id={} text={!r}",
+                    "Initialized SDR session from phone call conversation_id={} lead_id={}",
                     conversation_id,
-                    response,
+                    self.agent_config.lead_id,
                 )
-                return response, False
-            except Exception:
-                logger.exception(
-                    "SDR agent respond() failed conversation_id={} text={!r}",
-                    conversation_id,
-                    human_input,
-                )
-                mark_phone_turn_graph_done(conversation_id)
-                return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
+            prefill_emitted = await self._maybe_emit_prefill_ack(
+                conversation_id=conversation_id,
+                human_input=human_input,
+                is_interrupt=is_interrupt,
+            )
+            state = await self.conversation_service.handle_turn(conversation_id, human_input)
+            response = state["last_agent_response"]
+            if not response:
+                # Prefill should not leave users in dead air when a turn resolves with no main
+                # text response (for example, conversation transitioning to complete).
+                if prefill_emitted:
+                    fallback_text = "Thanks for your time. Goodbye."
+                    logger.warning(
+                        "Prefill emitted without main reply conversation_id={} next_node={} - using fallback",
+                        conversation_id,
+                        state.get("next_node"),
+                    )
+                    clear_phone_turn_on_error(conversation_id)
+                    return fallback_text, state.get("next_node") == "complete"
+                logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
+                clear_phone_turn_on_error(conversation_id)
+                return None, True
+            mark_phone_turn_graph_done(conversation_id)
+            logger.info(
+                "SDR agent generated reply conversation_id={} text={!r}",
+                conversation_id,
+                response,
+            )
+            return response, False
+        except asyncio.CancelledError:
+            logger.warning(
+                "SDR agent _run_turn() cancelled conversation_id={} text={!r}",
+                conversation_id,
+                human_input,
+            )
+            clear_phone_turn_on_error(conversation_id)
+            raise
+        except Exception:
+            logger.exception(
+                "SDR agent respond() failed conversation_id={} text={!r}",
+                conversation_id,
+                human_input,
+            )
+            mark_phone_turn_graph_done(conversation_id)
+            return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
 
     async def _maybe_emit_prefill_ack(
         self,

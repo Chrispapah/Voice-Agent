@@ -174,6 +174,56 @@ async def test_concurrent_respond_calls_are_serialized_per_conversation():
     svc.start_session.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_interrupt_transcript_is_skipped_while_turn_is_running():
+    agent, svc = _make_agent()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_handle_turn(cid: str, text: str):
+        started.set()
+        await release.wait()
+        return {**_minimal_state(), "last_agent_response": f"reply:{text}"}
+
+    svc.handle_turn = AsyncMock(side_effect=slow_handle_turn)
+
+    first_task = asyncio.create_task(agent.respond("yeah", "conv-int", is_interrupt=False))
+    await started.wait()
+
+    interrupt_result = await agent.respond("yeah tell me", "conv-int", is_interrupt=True)
+    release.set()
+    first_result = await first_task
+
+    assert interrupt_result == (None, False)
+    assert first_result == ("reply:yeah", False)
+    assert svc.handle_turn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_respond_preserves_turn_result_when_outer_task_is_cancelled():
+    agent, svc = _make_agent(prefill_ack_enabled=False)
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def slow_handle_turn(cid: str, text: str):
+        started.set()
+        await release.wait()
+        return {**_minimal_state(), "last_agent_response": "Main reply."}
+
+    svc.handle_turn = AsyncMock(side_effect=slow_handle_turn)
+
+    task = asyncio.create_task(agent.respond("Hello", "conv-cancel", is_interrupt=False))
+    await started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+
+    release.set()
+    result = await task
+
+    assert result == ("Main reply.", False)
+    assert svc.handle_turn.await_count == 1
+
+
 def test_parse_agent_prefill_ack_phrases_pipe_separated():
     assert parse_agent_prefill_ack_phrases("A.|B.") == ("A.", "B.")
 
