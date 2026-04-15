@@ -600,14 +600,29 @@ async def wrap_up_node(
         )
         render_email_ms = (time.perf_counter() - render_email_t0) * 1000
         _log_step_latency(state, "wrap_up", "render_follow_up_email", render_email_ms)
-        send_email_t0 = time.perf_counter()
-        await email_gateway.send_email(
-            to_email=state["lead_email"],
-            subject=f"Follow-up from {sales_rep_name}",
-            body=html,
-            from_name=from_name,
+        async def _send_email() -> float:
+            send_email_t0 = time.perf_counter()
+            await email_gateway.send_email(
+                to_email=state["lead_email"],
+                subject=f"Follow-up from {sales_rep_name}",
+                body=html,
+                from_name=from_name,
+            )
+            return (time.perf_counter() - send_email_t0) * 1000
+
+        async def _update_crm() -> float:
+            update_crm_t0 = time.perf_counter()
+            await crm_gateway.update_call_outcome(
+                lead_id=state["lead_id"],
+                call_outcome=state["call_outcome"],
+                notes=summary,
+            )
+            return (time.perf_counter() - update_crm_t0) * 1000
+
+        send_email_ms, update_crm_ms = await asyncio.gather(
+            _send_email(),
+            _update_crm(),
         )
-        send_email_ms = (time.perf_counter() - send_email_t0) * 1000
         _log_step_latency(
             state,
             "wrap_up",
@@ -615,13 +630,14 @@ async def wrap_up_node(
             send_email_ms,
             follow_up_action=state["follow_up_action"],
         )
-    update_crm_t0 = time.perf_counter()
-    await crm_gateway.update_call_outcome(
-        lead_id=state["lead_id"],
-        call_outcome=state["call_outcome"],
-        notes=summary,
-    )
-    update_crm_ms = (time.perf_counter() - update_crm_t0) * 1000
+    else:
+        update_crm_t0 = time.perf_counter()
+        await crm_gateway.update_call_outcome(
+            lead_id=state["lead_id"],
+            call_outcome=state["call_outcome"],
+            notes=summary,
+        )
+        update_crm_ms = (time.perf_counter() - update_crm_t0) * 1000
     _log_step_latency(
         state,
         "wrap_up",

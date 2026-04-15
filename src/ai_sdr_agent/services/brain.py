@@ -51,6 +51,28 @@ def _count_role_messages(transcript: list[dict[str, str]], role: str) -> int:
     return sum(1 for message in transcript if message["role"] == role)
 
 
+def _slice_transcript(
+    transcript: list[dict[str, str]],
+    *,
+    max_messages: int,
+) -> list[dict[str, str]]:
+    if max_messages <= 0 or len(transcript) <= max_messages:
+        return list(transcript)
+    return list(transcript[-max_messages:])
+
+
+def _messages_from_transcript(
+    transcript: list[dict[str, str]],
+) -> list[HumanMessage | SystemMessage]:
+    messages: list[HumanMessage | SystemMessage] = []
+    for item in transcript:
+        if item["role"] == "human":
+            messages.append(HumanMessage(content=item["content"]))
+        else:
+            messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
+    return messages
+
+
 class ConversationBrain(Protocol):
     async def respond(
         self,
@@ -227,6 +249,9 @@ class StubConversationBrain:
 class LangChainConversationBrain:
     """LLM-backed brain. Accepts either SDRSettings (legacy) or a bot_config dict."""
 
+    _RESPOND_TRANSCRIPT_LIMIT = 8
+    _EXTRACTION_TRANSCRIPT_LIMIT = 6
+
     def __init__(self, settings: SDRSettings | None = None, *, bot_config: dict | None = None):
         if bot_config:
             provider = bot_config.get("llm_provider", "openai")
@@ -383,12 +408,11 @@ class LangChainConversationBrain:
         max_tokens: int | None = None,
         trace: dict[str, Any] | None = None,
     ) -> str:
-        messages = [SystemMessage(content=system_prompt)]
-        for item in transcript:
-            if item["role"] == "human":
-                messages.append(HumanMessage(content=item["content"]))
-            else:
-                messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
+        trimmed_transcript = _slice_transcript(
+            transcript,
+            max_messages=self._RESPOND_TRANSCRIPT_LIMIT,
+        )
+        messages = [SystemMessage(content=system_prompt), *_messages_from_transcript(trimmed_transcript)]
         limit = self._max_tokens if max_tokens is None else min(max_tokens, self._max_tokens)
         model = self._model.bind(max_tokens=limit)
         response = await self._ainvoke_with_logging(
@@ -398,7 +422,7 @@ class LangChainConversationBrain:
             trace=trace,
             max_tokens=limit,
             prompt_chars=len(system_prompt),
-            transcript=transcript,
+            transcript=trimmed_transcript,
         )
         return str(response.content)
 
@@ -448,12 +472,11 @@ class LangChainConversationBrain:
         from ai_sdr_agent.graph.prompts import qualification_extraction_prompt
 
         system = qualification_extraction_prompt(existing_pain_points)
-        messages = [SystemMessage(content=system)]
-        for item in transcript:
-            if item["role"] == "human":
-                messages.append(HumanMessage(content=item["content"]))
-            else:
-                messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
+        trimmed_transcript = _slice_transcript(
+            transcript,
+            max_messages=self._EXTRACTION_TRANSCRIPT_LIMIT,
+        )
+        messages = [SystemMessage(content=system), *_messages_from_transcript(trimmed_transcript)]
 
         response = await self._ainvoke_with_logging(
             self._model,
@@ -461,7 +484,7 @@ class LangChainConversationBrain:
             operation="extract_qualification",
             trace=trace,
             prompt_chars=len(system),
-            transcript=transcript,
+            transcript=trimmed_transcript,
         )
         raw = str(response.content).strip()
 

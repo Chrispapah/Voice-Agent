@@ -36,6 +36,30 @@ _SOFT_ENGAGEMENT = re.compile(
     re.IGNORECASE,
 )
 
+_BOOKING_SIGNAL = re.compile(
+    r"\b("
+    r"yes|yeah|yep|sure|ok(ay)?|works|that works|book it|let'?s do it|"
+    r"schedule it|set it up|tomorrow|monday|tuesday|wednesday|thursday|friday|"
+    r"am|pm|afternoon|morning|first|second|third|option"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_PITCH_BOOKING_SIGNAL = re.compile(
+    r"\b("
+    r"yes|yeah|yep|sure|ok(ay)?|sounds good|let'?s do it|book|schedule|"
+    r"demo|walkthrough|show me|tell me more"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_OBJECTION_SIGNAL = re.compile(
+    r"\b("
+    r"already have|already using|busy|send info|maybe later|not right now|"
+    r"just send|email me|we have a process|we use"
+    r")\b",
+    re.IGNORECASE,
+)
 
 def _trace_value(trace: dict[str, object] | None, key: str, default: str = "-") -> str:
     if not trace:
@@ -70,6 +94,50 @@ def get_last_human_message(state: ConversationState) -> str:
     return state.get("last_human_message", "")
 
 
+def _qualify_fast_path(state: ConversationState, human: str) -> str | None:
+    text = (human or "").strip()
+    if not text:
+        return None
+    if _STRONG_DISINTEREST.search(text):
+        return "not_interested"
+    return None
+
+
+def _pitch_fast_path(human: str) -> str | None:
+    text = (human or "").strip()
+    if not text:
+        return None
+    if _STRONG_DISINTEREST.search(text):
+        return "wrap_up"
+    if _PITCH_BOOKING_SIGNAL.search(text):
+        return "book_meeting"
+    if _OBJECTION_SIGNAL.search(text):
+        return "handle_objection"
+    return None
+
+
+def _objection_fast_path(human: str) -> str | None:
+    text = (human or "").strip()
+    if not text:
+        return None
+    if _STRONG_DISINTEREST.search(text):
+        return "wrap_up"
+    if _SOFT_ENGAGEMENT.search(text):
+        return "pitch"
+    return None
+
+
+def _booking_fast_path(human: str) -> str | None:
+    text = (human or "").strip()
+    if not text:
+        return None
+    if _STRONG_DISINTEREST.search(text):
+        return "wrap_up"
+    if _BOOKING_SIGNAL.search(text):
+        return "continue_booking"
+    return None
+
+
 async def route_after_qualify(
     state: ConversationState,
     brain: ConversationBrain,
@@ -77,6 +145,18 @@ async def route_after_qualify(
     trace: dict[str, object] | None = None,
 ) -> str:
     human = get_last_human_message(state)
+    fast_path = _qualify_fast_path(state, human)
+    if fast_path is not None:
+        logger.info(
+            "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+            "router=qualify decision={} source=fast_path",
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            fast_path,
+        )
+        return fast_path
     decision = await brain.classify(
         instruction=QUALIFY_ROUTER_PROMPT,
         human_input=human,
@@ -103,9 +183,22 @@ async def route_after_pitch(
     *,
     trace: dict[str, object] | None = None,
 ) -> str:
+    human = get_last_human_message(state)
+    fast_path = _pitch_fast_path(human)
+    if fast_path is not None:
+        logger.info(
+            "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+            "router=pitch decision={} source=fast_path",
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            fast_path,
+        )
+        return fast_path
     decision = await brain.classify(
         instruction=PITCH_ROUTER_PROMPT,
-        human_input=get_last_human_message(state),
+        human_input=human,
         labels=("book_meeting", "handle_objection", "wrap_up"),
         trace=trace,
     )
@@ -127,9 +220,22 @@ async def route_after_objection(
     *,
     trace: dict[str, object] | None = None,
 ) -> str:
+    human = get_last_human_message(state)
+    fast_path = _objection_fast_path(human)
+    if fast_path is not None:
+        logger.info(
+            "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+            "router=objection decision={} source=fast_path",
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            fast_path,
+        )
+        return fast_path
     decision = await brain.classify(
         instruction=OBJECTION_ROUTER_PROMPT,
-        human_input=get_last_human_message(state),
+        human_input=human,
         labels=("pitch", "wrap_up"),
         trace=trace,
     )
@@ -151,9 +257,23 @@ async def route_during_booking(
     *,
     trace: dict[str, object] | None = None,
 ) -> str:
+    human = get_last_human_message(state)
+    fast_path = _booking_fast_path(human)
+    if fast_path is not None:
+        decision = "wrap_up" if fast_path == "wrap_up" else "continue_booking"
+        logger.info(
+            "Router decision conversation_id={} turn_id={} turn_count={} node={} "
+            "router=booking final_decision={} source=fast_path",
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            decision,
+        )
+        return decision
     result = await brain.classify(
         instruction=BOOKING_ROUTER_PROMPT,
-        human_input=get_last_human_message(state),
+        human_input=human,
         labels=("continue_booking", "wrap_up"),
         trace=trace,
     )

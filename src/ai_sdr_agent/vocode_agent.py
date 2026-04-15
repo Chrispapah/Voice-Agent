@@ -17,6 +17,9 @@ from ai_sdr_agent.services.latency_analytics import (
     mark_phone_turn_respond_enter,
 )
 
+_DUPLICATE_FINAL_WINDOW_S = 0.75
+_DUPLICATE_AFTER_INTERRUPT_WINDOW_S = 2.5
+
 
 def _format_details(**details: object) -> str:
     parts: list[str] = []
@@ -85,6 +88,11 @@ class _ConversationRuntimeState:
     latest_interrupt_sequence: int = 0
     latest_interrupt_text: str | None = None
     latest_interrupt_normalized: str | None = None
+    active_normalized_text: str | None = None
+    last_committed_text: str | None = None
+    last_committed_normalized: str | None = None
+    last_committed_source: str | None = None
+    last_committed_at: float = 0.0
 
 
 class SDRAgentConfig(AgentConfig, type="agent_sdr"):  # type: ignore[misc]
@@ -115,21 +123,29 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         conversation_id: str,
         human_input: str,
         runtime_state: _ConversationRuntimeState,
-    ) -> tuple[int | None, str, bool]:
+    ) -> tuple[int | None, str, str | None]:
         normalized_input = _normalize_interrupt_text(human_input)
         if not normalized_input:
             _log_interrupt_buffer_event(
                 conversation_id,
                 "drop_empty_interrupt",
             )
-            return None, normalized_input, True
+            return None, normalized_input, "empty_interrupt"
+        if runtime_state.active_normalized_text == normalized_input:
+            _log_interrupt_buffer_event(
+                conversation_id,
+                "drop_active_repeat_interrupt",
+                active_text=runtime_state.last_committed_text or runtime_state.active_normalized_text,
+                text=human_input,
+            )
+            return None, normalized_input, "duplicate_active_input"
         if runtime_state.latest_interrupt_normalized == normalized_input:
             _log_interrupt_buffer_event(
                 conversation_id,
                 "drop_repeated_interrupt",
                 text=human_input,
             )
-            return None, normalized_input, True
+            return None, normalized_input, "duplicate_interrupt"
         previous_text = runtime_state.latest_interrupt_text
         runtime_state.latest_interrupt_sequence += 1
         interrupt_sequence = runtime_state.latest_interrupt_sequence
@@ -150,7 +166,59 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 previous_text=previous_text,
                 text=human_input,
             )
-        return interrupt_sequence, normalized_input, False
+        return interrupt_sequence, normalized_input, None
+
+    def _recent_duplicate_reason(
+        self,
+        conversation_id: str,
+        human_input: str,
+        normalized_input: str,
+        runtime_state: _ConversationRuntimeState,
+        *,
+        is_interrupt: bool,
+    ) -> str | None:
+        if is_interrupt or not normalized_input:
+            return None
+        if runtime_state.last_committed_normalized != normalized_input:
+            return None
+        age_s = time.perf_counter() - runtime_state.last_committed_at
+        previous_text = runtime_state.last_committed_text or runtime_state.last_committed_normalized
+        if runtime_state.last_committed_source == "interrupt":
+            if age_s <= _DUPLICATE_AFTER_INTERRUPT_WINDOW_S:
+                _log_interrupt_buffer_event(
+                    conversation_id,
+                    "drop_duplicate_final_after_interrupt",
+                    previous_text=previous_text,
+                    text=human_input,
+                    age_ms=f"{age_s * 1000:.0f}",
+                )
+                return "duplicate_final_after_interrupt"
+            return None
+        if runtime_state.last_committed_source == "final" and age_s <= _DUPLICATE_FINAL_WINDOW_S:
+            _log_interrupt_buffer_event(
+                conversation_id,
+                "drop_duplicate_final",
+                previous_text=previous_text,
+                text=human_input,
+                age_ms=f"{age_s * 1000:.0f}",
+            )
+            return "duplicate_final"
+        return None
+
+    @staticmethod
+    def _record_committed_input(
+        runtime_state: _ConversationRuntimeState,
+        *,
+        human_input: str,
+        normalized_input: str,
+        is_interrupt: bool,
+    ) -> None:
+        if not normalized_input:
+            return
+        runtime_state.last_committed_text = human_input
+        runtime_state.last_committed_normalized = normalized_input
+        runtime_state.last_committed_source = "interrupt" if is_interrupt else "final"
+        runtime_state.last_committed_at = time.perf_counter()
 
     def start(self) -> None:
         super().start()
@@ -180,7 +248,7 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
         respond_start = time.perf_counter()
         runtime_state = self._get_runtime_state(conversation_id)
         interrupt_sequence: int | None = None
-        normalized_interrupt = ""
+        normalized_input = _normalize_interrupt_text(human_input)
         logger.info(
             "SDR agent received speech conversation_id={} is_interrupt={} text={!r}",
             conversation_id,
@@ -188,18 +256,18 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             human_input,
         )
         if is_interrupt:
-            interrupt_sequence, normalized_interrupt, should_skip_interrupt = self._register_interrupt(
+            interrupt_sequence, normalized_input, skip_reason = self._register_interrupt(
                 conversation_id,
                 human_input,
                 runtime_state,
             )
-            if should_skip_interrupt:
+            if skip_reason is not None:
                 total_ms = (time.perf_counter() - respond_start) * 1000
                 _log_agent_step_latency(
                     conversation_id,
                     "respond_coalesced_skip",
                     total_ms,
-                    reason="duplicate_interrupt",
+                    reason=skip_reason,
                 )
                 return None, False
         async with runtime_state.turn_lock:
@@ -232,8 +300,8 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     return None, False
                 if runtime_state.latest_interrupt_text is not None:
                     human_input = runtime_state.latest_interrupt_text
-                    normalized_interrupt = (
-                        runtime_state.latest_interrupt_normalized or normalized_interrupt
+                    normalized_input = (
+                        runtime_state.latest_interrupt_normalized or normalized_input
                     )
                 _log_interrupt_buffer_event(
                     conversation_id,
@@ -241,6 +309,23 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     sequence=interrupt_sequence,
                     text=human_input,
                 )
+            duplicate_reason = self._recent_duplicate_reason(
+                conversation_id,
+                human_input,
+                normalized_input,
+                runtime_state,
+                is_interrupt=is_interrupt,
+            )
+            if duplicate_reason is not None:
+                total_ms = (time.perf_counter() - respond_start) * 1000
+                _log_agent_step_latency(
+                    conversation_id,
+                    "respond_coalesced_skip",
+                    total_ms,
+                    reason=duplicate_reason,
+                )
+                return None, False
+            runtime_state.active_normalized_text = normalized_input or None
             mark_phone_turn_respond_enter(conversation_id)
             try:
                 if conversation_id not in self._initialized_conversations:
@@ -279,6 +364,12 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                     logger.info("Conversation complete, no reply conversation_id={}", conversation_id)
                     clear_phone_turn_on_error(conversation_id)
                     return None, True
+                self._record_committed_input(
+                    runtime_state,
+                    human_input=human_input,
+                    normalized_input=normalized_input,
+                    is_interrupt=is_interrupt,
+                )
                 mark_phone_turn_graph_done(conversation_id)
                 total_ms = (time.perf_counter() - respond_start) * 1000
                 _log_agent_step_latency(
@@ -304,11 +395,12 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
                 mark_phone_turn_graph_done(conversation_id)
                 return "I'm sorry, I'm having a technical issue. Could you hold on a moment?", False
             finally:
+                runtime_state.active_normalized_text = None
                 if (
                     is_interrupt
                     and interrupt_sequence is not None
                     and interrupt_sequence == runtime_state.latest_interrupt_sequence
-                    and runtime_state.latest_interrupt_normalized == normalized_interrupt
+                    and runtime_state.latest_interrupt_normalized == normalized_input
                 ):
                     runtime_state.latest_interrupt_text = None
                     runtime_state.latest_interrupt_normalized = None

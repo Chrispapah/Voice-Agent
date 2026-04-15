@@ -134,6 +134,13 @@ class SDRConversationService:
             from_name=dependencies.from_name,
         )
 
+    def _can_parallelize_persistence(self) -> bool:
+        session_store_session = getattr(self.dependencies.session_store, "session", None)
+        call_log_session = getattr(self.dependencies.call_log_repository, "session", None)
+        if session_store_session is not None and session_store_session is call_log_session:
+            return False
+        return True
+
     async def start_session(
         self,
         lead_id: str,
@@ -148,19 +155,41 @@ class SDRConversationService:
         state = await self.dependencies.pre_call_loader.build_initial_state(lead_id, bot_config=cfg)
         build_state_ms = (time.perf_counter() - build_state_t0) * 1000
         _log_session_step_latency(session_id, lead_id, "build_initial_state", build_state_ms)
-        save_state_t0 = time.perf_counter()
-        await self.dependencies.session_store.save(session_id, state)
-        save_state_ms = (time.perf_counter() - save_state_t0) * 1000
-        _log_session_step_latency(session_id, lead_id, "session_store.save", save_state_ms)
-        save_call_log_t0 = time.perf_counter()
-        await self.dependencies.call_log_repository.save_call_log(
-            CallLogRecord(
-                conversation_id=session_id,
-                lead_id=lead_id,
-                transcript=[],
+        if self._can_parallelize_persistence():
+            async def _save_state() -> float:
+                save_state_t0 = time.perf_counter()
+                await self.dependencies.session_store.save(session_id, state)
+                return (time.perf_counter() - save_state_t0) * 1000
+
+            async def _save_call_log() -> float:
+                save_call_log_t0 = time.perf_counter()
+                await self.dependencies.call_log_repository.save_call_log(
+                    CallLogRecord(
+                        conversation_id=session_id,
+                        lead_id=lead_id,
+                        transcript=[],
+                    )
+                )
+                return (time.perf_counter() - save_call_log_t0) * 1000
+
+            save_state_ms, save_call_log_ms = await asyncio.gather(
+                _save_state(),
+                _save_call_log(),
             )
-        )
-        save_call_log_ms = (time.perf_counter() - save_call_log_t0) * 1000
+        else:
+            save_state_t0 = time.perf_counter()
+            await self.dependencies.session_store.save(session_id, state)
+            save_state_ms = (time.perf_counter() - save_state_t0) * 1000
+            save_call_log_t0 = time.perf_counter()
+            await self.dependencies.call_log_repository.save_call_log(
+                CallLogRecord(
+                    conversation_id=session_id,
+                    lead_id=lead_id,
+                    transcript=[],
+                )
+            )
+            save_call_log_ms = (time.perf_counter() - save_call_log_t0) * 1000
+        _log_session_step_latency(session_id, lead_id, "session_store.save", save_state_ms)
         _log_session_step_latency(
             session_id,
             lead_id,
@@ -274,9 +303,50 @@ class SDRConversationService:
             updated_state["metadata"] = updated_metadata
 
             persist_start = time.perf_counter()
-            save_state_t0 = time.perf_counter()
-            await self.dependencies.session_store.save(conversation_id, updated_state)
-            save_state_ms = (time.perf_counter() - save_state_t0) * 1000
+            if self._can_parallelize_persistence():
+                async def _save_state() -> float:
+                    save_state_t0 = time.perf_counter()
+                    await self.dependencies.session_store.save(conversation_id, updated_state)
+                    return (time.perf_counter() - save_state_t0) * 1000
+
+                async def _save_call_log() -> float:
+                    save_call_log_t0 = time.perf_counter()
+                    await self.dependencies.call_log_repository.save_call_log(
+                        CallLogRecord(
+                            conversation_id=conversation_id,
+                            lead_id=updated_state["lead_id"],
+                            call_outcome=updated_state["call_outcome"],
+                            transcript=updated_state["transcript"],
+                            qualification_notes=updated_state["qualification_notes"],
+                            meeting_booked=updated_state["meeting_booked"],
+                            proposed_slot=updated_state["proposed_slot"],
+                            follow_up_action=updated_state["follow_up_action"],
+                        )
+                    )
+                    return (time.perf_counter() - save_call_log_t0) * 1000
+
+                save_state_ms, save_call_log_ms = await asyncio.gather(
+                    _save_state(),
+                    _save_call_log(),
+                )
+            else:
+                save_state_t0 = time.perf_counter()
+                await self.dependencies.session_store.save(conversation_id, updated_state)
+                save_state_ms = (time.perf_counter() - save_state_t0) * 1000
+                save_call_log_t0 = time.perf_counter()
+                await self.dependencies.call_log_repository.save_call_log(
+                    CallLogRecord(
+                        conversation_id=conversation_id,
+                        lead_id=updated_state["lead_id"],
+                        call_outcome=updated_state["call_outcome"],
+                        transcript=updated_state["transcript"],
+                        qualification_notes=updated_state["qualification_notes"],
+                        meeting_booked=updated_state["meeting_booked"],
+                        proposed_slot=updated_state["proposed_slot"],
+                        follow_up_action=updated_state["follow_up_action"],
+                    )
+                )
+                save_call_log_ms = (time.perf_counter() - save_call_log_t0) * 1000
             _log_turn_step_latency(
                 conversation_id,
                 turn_id,
@@ -284,20 +354,6 @@ class SDRConversationService:
                 "session_store.save",
                 save_state_ms,
             )
-            save_call_log_t0 = time.perf_counter()
-            await self.dependencies.call_log_repository.save_call_log(
-                CallLogRecord(
-                    conversation_id=conversation_id,
-                    lead_id=updated_state["lead_id"],
-                    call_outcome=updated_state["call_outcome"],
-                    transcript=updated_state["transcript"],
-                    qualification_notes=updated_state["qualification_notes"],
-                    meeting_booked=updated_state["meeting_booked"],
-                    proposed_slot=updated_state["proposed_slot"],
-                    follow_up_action=updated_state["follow_up_action"],
-                )
-            )
-            save_call_log_ms = (time.perf_counter() - save_call_log_t0) * 1000
             _log_turn_step_latency(
                 conversation_id,
                 turn_id,

@@ -6,12 +6,15 @@ from ai_sdr_agent.vocode_agent import SDRVocodeAgent, build_agent_config
 
 
 class RecordingConversationService:
-    def __init__(self):
+    def __init__(self, *, block_first_turn: bool = False):
         self.start_session_calls: list[tuple[str, str | None]] = []
         self.handle_turn_calls: list[str] = []
         self._first_turn_started = asyncio.Event()
         self._release_first_turn = asyncio.Event()
         self._turn_count = 0
+        self._block_first_turn = block_first_turn
+        if not block_first_turn:
+            self._release_first_turn.set()
 
     async def start_session(
         self,
@@ -26,7 +29,7 @@ class RecordingConversationService:
     async def handle_turn(self, conversation_id: str, human_input: str) -> dict:
         self.handle_turn_calls.append(human_input)
         self._turn_count += 1
-        if self._turn_count == 1:
+        if self._block_first_turn and self._turn_count == 1:
             self._first_turn_started.set()
             await self._release_first_turn.wait()
         return {
@@ -38,7 +41,7 @@ class RecordingConversationService:
 
 @pytest.mark.asyncio
 async def test_agent_coalesces_interrupt_refinements():
-    service = RecordingConversationService()
+    service = RecordingConversationService(block_first_turn=True)
     agent = SDRVocodeAgent(
         agent_config=build_agent_config(
             lead_id="lead-001",
@@ -76,3 +79,51 @@ async def test_agent_coalesces_interrupt_refinements():
     assert latest_result == ("reply:um we have", False)
     assert service.handle_turn_calls == ["yes", "um we have"]
     assert len(service.start_session_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_skips_duplicate_final_after_interrupt_flush():
+    service = RecordingConversationService()
+    agent = SDRVocodeAgent(
+        agent_config=build_agent_config(
+            lead_id="lead-001",
+            calendar_id="sales-team",
+            sales_rep_name="Taylor Morgan",
+            initial_message_text="Hi there",
+        ),
+        conversation_service=service,
+    )
+    conversation_id = "conv-test"
+
+    interrupt_result = await agent.respond("yes", conversation_id, is_interrupt=True)
+    final_result = await agent.respond(" yes ", conversation_id, is_interrupt=False)
+
+    assert interrupt_result == ("reply:yes", False)
+    assert final_result == (None, False)
+    assert service.handle_turn_calls == ["yes"]
+    assert len(service.start_session_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_agent_allows_repeated_short_final_after_time_window():
+    service = RecordingConversationService()
+    agent = SDRVocodeAgent(
+        agent_config=build_agent_config(
+            lead_id="lead-001",
+            calendar_id="sales-team",
+            sales_rep_name="Taylor Morgan",
+            initial_message_text="Hi there",
+        ),
+        conversation_service=service,
+    )
+    conversation_id = "conv-test"
+
+    first_result = await agent.respond("yes", conversation_id, is_interrupt=False)
+    runtime_state = agent._get_runtime_state(conversation_id)
+    runtime_state.last_committed_at -= 3.0
+
+    second_result = await agent.respond("yes", conversation_id, is_interrupt=False)
+
+    assert first_result == ("reply:yes", False)
+    assert second_result == ("reply:yes", False)
+    assert service.handle_turn_calls == ["yes", "yes"]

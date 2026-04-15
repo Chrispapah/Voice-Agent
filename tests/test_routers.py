@@ -7,6 +7,7 @@ from ai_sdr_agent.graph.routers import (
     route_after_objection,
     route_after_pitch,
     route_after_qualify,
+    route_during_booking,
 )
 from ai_sdr_agent.graph.state import build_initial_state
 from ai_sdr_agent.services.brain import StubConversationBrain
@@ -54,6 +55,33 @@ async def test_route_after_pitch_to_objection():
 async def test_route_after_objection_to_wrap_up():
     decision = await route_after_objection(make_state("Not interested, please remove me."), StubConversationBrain())
     assert decision == "wrap_up"
+
+
+@pytest.mark.asyncio
+async def test_route_after_pitch_fast_paths_booking_without_llm():
+    brain = AsyncMock()
+    brain.classify = AsyncMock(return_value="handle_objection")
+    decision = await route_after_pitch(make_state("Yes, let's book a demo."), brain)
+    assert decision == "book_meeting"
+    brain.classify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_route_after_objection_fast_paths_pitch_without_llm():
+    brain = AsyncMock()
+    brain.classify = AsyncMock(return_value="wrap_up")
+    decision = await route_after_objection(make_state("Okay, go ahead."), brain)
+    assert decision == "pitch"
+    brain.classify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_route_during_booking_fast_paths_continue_without_llm():
+    brain = AsyncMock()
+    brain.classify = AsyncMock(return_value="wrap_up")
+    decision = await route_during_booking(make_state("Tomorrow at 3 PM works."), brain)
+    assert decision == "continue_booking"
+    brain.classify.assert_not_awaited()
 
 
 def test_apply_qualify_router_safety_overrides_garbled_yeah():
