@@ -68,6 +68,16 @@ import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentG
 
 type BuilderMode = "single" | "graph";
 type ChatMessage = { role: "human" | "agent"; content: string };
+
+/** WebSocket sends cumulative `agent.text` while streaming; update one bubble per assistant turn. */
+function upsertStreamingAgentBubble(prev: ChatMessage[], text: string): ChatMessage[] {
+  const last = prev[prev.length - 1];
+  if (last?.role === "agent") {
+    return [...prev.slice(0, -1), { role: "agent", content: text }];
+  }
+  return [...prev, { role: "agent", content: text }];
+}
+
 type SpeechRecognitionEventLike = Event & {
   resultIndex: number;
   results: {
@@ -791,7 +801,7 @@ export default function FlowBuilderPage() {
       const vs = new VoiceSession({
         onReady: (cid) => setSessionId(cid),
         onTranscriptFinal: (t) => setMessages((m) => [...m, { role: "human", content: t }]),
-        onAgentText: (t) => setMessages((m) => [...m, { role: "agent", content: t }]),
+        onAgentText: (t) => setMessages((m) => upsertStreamingAgentBubble(m, t)),
         onError: (msg) => setError(msg),
         onClose: () => {
           voiceRef.current = null;
