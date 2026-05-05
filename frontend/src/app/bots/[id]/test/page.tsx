@@ -22,6 +22,8 @@ export default function TestConsolePage({ params }: { params: Promise<{ id: stri
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [stage, setStage] = useState("");
+  const [activeNode, setActiveNode] = useState("");
+  const [nextNode, setNextNode] = useState("");
   const [outcome, setOutcome] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -53,6 +55,8 @@ export default function TestConsolePage({ params }: { params: Promise<{ id: stri
       const res = await startTestSession(botId, selectedLead);
       setSessionId(res.conversation_id);
       setStage(res.stage);
+      setActiveNode(res.active_node);
+      setNextNode(res.next_node);
       setMessages([{ role: "agent", content: res.agent_response }]);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to start test session");
@@ -73,6 +77,8 @@ export default function TestConsolePage({ params }: { params: Promise<{ id: stri
       const res = await sendTestTurn(botId, sessionId, text);
       setMessages((prev) => [...prev, { role: "agent", content: res.agent_response }]);
       setStage(res.stage);
+      setActiveNode(res.active_node);
+      setNextNode(res.next_node);
       setOutcome(res.call_outcome);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to get agent response");
@@ -95,8 +101,10 @@ export default function TestConsolePage({ params }: { params: Promise<{ id: stri
           </Link>
           <div>
             <h1 className="text-lg font-bold">Test: {botName}</h1>
-            <div className="flex gap-3 text-xs text-[var(--muted-foreground)]">
-              {stage && <span>Stage: {stage}</span>}
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--muted-foreground)]">
+              {activeNode && <span>Active node: {activeNode}</span>}
+              {nextNode && <span>Next: {nextNode}</span>}
+              {stage && activeNode !== stage && <span>Stage: {stage}</span>}
               {outcome && <span>Outcome: {outcome}</span>}
             </div>
           </div>

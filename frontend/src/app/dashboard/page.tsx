@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
 import { BotConfig, createBot, deleteBot, listBots } from "@/lib/api";
-import { Plus, Settings, Trash2, Bot } from "lucide-react";
+import { botExecutionLabel } from "@/lib/conversationSpec";
+import { Plus, Settings, Trash2, Bot, Phone } from "lucide-react";
 
 export default function DashboardPage() {
   const { user, loading: authLoading, logout } = useAuth();
@@ -25,7 +26,7 @@ export default function DashboardPage() {
   }, [user, authLoading]);
 
   async function handleCreate() {
-    const name = prompt("Bot name:", "My Bot");
+    const name = prompt("Conversation name:", "My conversation");
     if (!name) return;
     setError("");
     try {
@@ -59,7 +60,7 @@ export default function DashboardPage() {
     <div className="mx-auto max-w-5xl px-4 py-8">
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Your Voicebots</h1>
+          <h1 className="text-2xl font-bold">Your conversations</h1>
           <p className="text-sm text-[var(--muted-foreground)]">
             Welcome back, {user?.display_name || user?.email}
           </p>
@@ -70,7 +71,7 @@ export default function DashboardPage() {
             className="flex items-center gap-2 rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90"
           >
             <Plus size={16} />
-            New Bot
+            New conversation
           </button>
           <button
             onClick={logout}
@@ -90,15 +91,15 @@ export default function DashboardPage() {
       {bots.length === 0 ? (
         <div className="rounded-lg border border-dashed border-[var(--border)] p-12 text-center">
           <Bot size={48} className="mx-auto mb-4 text-[var(--muted-foreground)]" />
-          <h2 className="text-lg font-semibold">No bots yet</h2>
+          <h2 className="text-lg font-semibold">No conversations yet</h2>
           <p className="mb-4 text-sm text-[var(--muted-foreground)]">
-            Create your first AI voice agent to get started.
+            Create a voice conversation and configure it in the agent builder.
           </p>
           <button
             onClick={handleCreate}
             className="rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90"
           >
-            Create Bot
+            Create conversation
           </button>
         </div>
       ) : (
@@ -129,23 +130,31 @@ export default function DashboardPage() {
                 </button>
               </div>
               <div className="mb-4 space-y-1 text-xs text-[var(--muted-foreground)]">
+                <p>{botExecutionLabel(bot.conversation_spec)}</p>
                 <p>LLM: {bot.llm_provider} / {bot.llm_model_name}</p>
                 <p>Voice: {bot.elevenlabs_voice_id || "Not set"}</p>
                 <p>Turns: {bot.max_call_turns} max</p>
               </div>
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <Link
                   href={`/bots/${bot.id}/settings`}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--secondary)]"
+                  className="flex items-center justify-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--secondary)]"
                 >
                   <Settings size={14} />
                   Configure
                 </Link>
                 <Link
                   href={`/bots/${bot.id}/test`}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] hover:opacity-90"
+                  className="flex items-center justify-center gap-1.5 rounded-md bg-[var(--primary)] px-3 py-1.5 text-xs font-medium text-[var(--primary-foreground)] hover:opacity-90"
                 >
                   Test
+                </Link>
+                <Link
+                  href={`/bots/${bot.id}/calls`}
+                  className="col-span-2 flex items-center justify-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs font-medium hover:bg-[var(--secondary)]"
+                >
+                  <Phone size={14} />
+                  Call logs
                 </Link>
               </div>
             </div>

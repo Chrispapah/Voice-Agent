@@ -84,6 +84,8 @@ class BotConfigRow(Base):
     prompt_booking: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_wrapup: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    conversation_spec: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
@@ -122,6 +124,7 @@ class BotConfigRow(Base):
             "prompt_objection": self.prompt_objection,
             "prompt_booking": self.prompt_booking,
             "prompt_wrapup": self.prompt_wrapup,
+            "conversation_spec": self.conversation_spec,
         }
 
 

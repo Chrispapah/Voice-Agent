@@ -91,6 +91,8 @@ async def start_test_session(
         "conversation_id": conversation_id,
         "agent_response": state["last_agent_response"],
         "stage": state["current_node"],
+        "active_node": state["current_node"],
+        "next_node": state["next_node"],
     }
 
 
@@ -120,5 +122,7 @@ async def run_test_turn(
         "conversation_id": session_id,
         "agent_response": state["last_agent_response"],
         "stage": state["current_node"],
+        "active_node": state["current_node"],
+        "next_node": state["next_node"],
         "call_outcome": state["call_outcome"],
     }

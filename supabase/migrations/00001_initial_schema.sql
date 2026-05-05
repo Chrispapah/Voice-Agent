@@ -1,248 +1,178 @@
--- ==========================================================================
--- Supabase migration: initial schema for AI SDR
--- Tables: profiles, bot_configs, leads, call_logs, sessions
--- Plus: updated_at trigger, RLS policies, bot_configs_safe view
--- ==========================================================================
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
 
--- --------------------------------------------------------------------------
--- Helper: auto-update updated_at on row modification
--- --------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.update_updated_at()
-RETURNS TRIGGER AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- --------------------------------------------------------------------------
--- profiles  (extends auth.users with app-specific fields)
--- --------------------------------------------------------------------------
-CREATE TABLE public.profiles (
-  id          uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  display_name text NOT NULL DEFAULT '',
-  created_at  timestamptz NOT NULL DEFAULT now(),
-  updated_at  timestamptz NOT NULL DEFAULT now()
+CREATE TABLE public.agent_folders (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name character varying NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT agent_folders_pkey PRIMARY KEY (id),
+  CONSTRAINT agent_folders_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
-
-CREATE TRIGGER profiles_updated_at
-  BEFORE UPDATE ON public.profiles
-  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
-
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "users read own profile"
-  ON public.profiles FOR SELECT
-  USING (auth.uid() = id);
-
-CREATE POLICY "users update own profile"
-  ON public.profiles FOR UPDATE
-  USING (auth.uid() = id);
-
-CREATE POLICY "users insert own profile"
-  ON public.profiles FOR INSERT
-  WITH CHECK (auth.uid() = id);
-
--- Auto-create a profile row when a new user signs up
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, display_name)
-  VALUES (NEW.id, COALESCE(NEW.raw_user_meta_data ->> 'display_name', ''));
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
-
--- --------------------------------------------------------------------------
--- bot_configs
--- --------------------------------------------------------------------------
+CREATE TABLE public.agent_node_knowledge_bases (
+  bot_id uuid NOT NULL,
+  node_id character varying NOT NULL,
+  knowledge_base_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT agent_node_knowledge_bases_pkey PRIMARY KEY (bot_id, node_id, knowledge_base_id),
+  CONSTRAINT agent_node_knowledge_bases_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id),
+  CONSTRAINT agent_node_knowledge_bases_knowledge_base_id_fkey FOREIGN KEY (knowledge_base_id) REFERENCES public.knowledge_bases(id),
+  CONSTRAINT agent_node_knowledge_bases_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.agent_tools (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name character varying NOT NULL,
+  description text NOT NULL DEFAULT ''::text,
+  kind character varying NOT NULL DEFAULT 'http'::character varying,
+  config_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  is_active boolean NOT NULL DEFAULT true,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT agent_tools_pkey PRIMARY KEY (id),
+  CONSTRAINT agent_tools_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
 CREATE TABLE public.bot_configs (
-  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id               uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  name                  varchar(200) NOT NULL DEFAULT 'My Bot',
-  is_active             boolean NOT NULL DEFAULT true,
-
-  -- LLM
-  llm_provider          varchar(20)  NOT NULL DEFAULT 'openai',
-  llm_model_name        varchar(100) NOT NULL DEFAULT 'gpt-4o-mini',
-  llm_temperature       double precision NOT NULL DEFAULT 0.4,
-  llm_max_tokens        integer NOT NULL DEFAULT 300,
-  openai_api_key        text,
-  anthropic_api_key     text,
-  groq_api_key          text,
-
-  -- TTS - ElevenLabs
-  elevenlabs_api_key    text,
-  elevenlabs_voice_id   varchar(100),
-  elevenlabs_model_id   varchar(100) NOT NULL DEFAULT 'eleven_turbo_v2',
-
-  -- STT - Deepgram
-  deepgram_api_key      text,
-  deepgram_model        varchar(50)  NOT NULL DEFAULT 'nova-2',
-  deepgram_language     varchar(10)  NOT NULL DEFAULT 'en-US',
-
-  -- Telephony - Twilio
-  twilio_account_sid    text,
-  twilio_auth_token     text,
-  twilio_phone_number   varchar(30),
-
-  -- Conversation behaviour
-  initial_greeting      text NOT NULL DEFAULT 'Hi, this is John — I know I''m calling out of the blue. Do you have 30 seconds so I can tell you why I''m reaching out?',
-  max_call_turns        integer NOT NULL DEFAULT 12,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name character varying NOT NULL DEFAULT 'My Bot'::character varying,
+  is_active boolean NOT NULL DEFAULT true,
+  llm_provider character varying NOT NULL DEFAULT 'openai'::character varying,
+  llm_model_name character varying NOT NULL DEFAULT 'gpt-4o-mini'::character varying,
+  llm_temperature double precision NOT NULL DEFAULT 0.4,
+  llm_max_tokens integer NOT NULL DEFAULT 300,
+  openai_api_key text,
+  anthropic_api_key text,
+  groq_api_key text,
+  elevenlabs_api_key text,
+  elevenlabs_voice_id character varying,
+  elevenlabs_model_id character varying NOT NULL DEFAULT 'eleven_turbo_v2'::character varying,
+  deepgram_api_key text,
+  deepgram_model character varying NOT NULL DEFAULT 'nova-2'::character varying,
+  deepgram_language character varying NOT NULL DEFAULT 'en-US'::character varying,
+  twilio_account_sid text,
+  twilio_auth_token text,
+  twilio_phone_number character varying,
+  initial_greeting text NOT NULL DEFAULT 'Hi, this is John — I know I''m calling out of the blue. Do you have 30 seconds so I can tell you why I''m reaching out?'::text,
+  max_call_turns integer NOT NULL DEFAULT 12,
   max_objection_attempts integer NOT NULL DEFAULT 2,
-  max_qualify_attempts  integer NOT NULL DEFAULT 3,
-  max_booking_attempts  integer NOT NULL DEFAULT 3,
-  sales_rep_name        varchar(200) NOT NULL DEFAULT 'Sales Team',
-
-  -- Custom prompts (nullable = use defaults)
-  prompt_greeting       text,
-  prompt_qualify        text,
-  prompt_pitch          text,
-  prompt_objection      text,
-  prompt_booking        text,
-  prompt_wrapup         text,
-
-  created_at            timestamptz NOT NULL DEFAULT now(),
-  updated_at            timestamptz NOT NULL DEFAULT now()
+  max_qualify_attempts integer NOT NULL DEFAULT 3,
+  max_booking_attempts integer NOT NULL DEFAULT 3,
+  sales_rep_name character varying NOT NULL DEFAULT 'Sales Team'::character varying,
+  prompt_greeting text,
+  prompt_qualify text,
+  prompt_pitch text,
+  prompt_objection text,
+  prompt_booking text,
+  prompt_wrapup text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  conversation_spec jsonb,
+  folder_id uuid,
+  CONSTRAINT bot_configs_pkey PRIMARY KEY (id),
+  CONSTRAINT bot_configs_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT bot_configs_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES public.agent_folders(id)
 );
-
-CREATE INDEX idx_bot_configs_user_id ON public.bot_configs(user_id);
-
-CREATE TRIGGER bot_configs_updated_at
-  BEFORE UPDATE ON public.bot_configs
-  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
-
-ALTER TABLE public.bot_configs ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "users crud own bots"
-  ON public.bot_configs FOR ALL
-  USING (user_id = auth.uid())
-  WITH CHECK (user_id = auth.uid());
-
--- Service role (Railway backend) bypasses RLS automatically.
-
--- --------------------------------------------------------------------------
--- bot_configs_safe  (view that masks secret columns for frontend queries)
--- --------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.bot_configs_safe AS
-SELECT
-  id, user_id, name, is_active,
-  llm_provider, llm_model_name, llm_temperature, llm_max_tokens,
-  CASE WHEN openai_api_key IS NOT NULL
-       THEN left(openai_api_key, 4) || '****' || right(openai_api_key, 4)
-  END AS openai_api_key,
-  CASE WHEN anthropic_api_key IS NOT NULL
-       THEN left(anthropic_api_key, 4) || '****' || right(anthropic_api_key, 4)
-  END AS anthropic_api_key,
-  CASE WHEN groq_api_key IS NOT NULL
-       THEN left(groq_api_key, 4) || '****' || right(groq_api_key, 4)
-  END AS groq_api_key,
-  CASE WHEN elevenlabs_api_key IS NOT NULL
-       THEN left(elevenlabs_api_key, 4) || '****' || right(elevenlabs_api_key, 4)
-  END AS elevenlabs_api_key,
-  elevenlabs_voice_id, elevenlabs_model_id,
-  CASE WHEN deepgram_api_key IS NOT NULL
-       THEN left(deepgram_api_key, 4) || '****' || right(deepgram_api_key, 4)
-  END AS deepgram_api_key,
-  deepgram_model, deepgram_language,
-  CASE WHEN twilio_account_sid IS NOT NULL
-       THEN left(twilio_account_sid, 4) || '****' || right(twilio_account_sid, 4)
-  END AS twilio_account_sid,
-  CASE WHEN twilio_auth_token IS NOT NULL
-       THEN left(twilio_auth_token, 4) || '****' || right(twilio_auth_token, 4)
-  END AS twilio_auth_token,
-  twilio_phone_number,
-  initial_greeting, max_call_turns, max_objection_attempts,
-  max_qualify_attempts, max_booking_attempts, sales_rep_name,
-  prompt_greeting, prompt_qualify, prompt_pitch,
-  prompt_objection, prompt_booking, prompt_wrapup,
-  created_at, updated_at
-FROM public.bot_configs;
-
--- --------------------------------------------------------------------------
--- leads
--- --------------------------------------------------------------------------
-CREATE TABLE public.leads (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  bot_id          uuid NOT NULL REFERENCES public.bot_configs(id) ON DELETE CASCADE,
-  lead_name       varchar(200) NOT NULL,
-  company         varchar(200) NOT NULL DEFAULT '',
-  phone_number    varchar(30)  NOT NULL,
-  lead_email      varchar(320) NOT NULL DEFAULT '',
-  lead_context    text NOT NULL DEFAULT '',
-  lifecycle_stage varchar(50)  NOT NULL DEFAULT 'follow_up',
-  timezone        varchar(50)  NOT NULL DEFAULT 'UTC',
-  owner_name      varchar(200) NOT NULL DEFAULT 'Sales Team',
-  calendar_id     varchar(100) NOT NULL DEFAULT 'sales-team',
-  metadata_json   jsonb NOT NULL DEFAULT '{}'::jsonb,
-  created_at      timestamptz NOT NULL DEFAULT now(),
-
-  UNIQUE (bot_id, phone_number)
+CREATE TABLE public.bot_knowledge_bases (
+  bot_id uuid NOT NULL,
+  knowledge_base_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT bot_knowledge_bases_pkey PRIMARY KEY (bot_id, knowledge_base_id),
+  CONSTRAINT bot_knowledge_bases_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id),
+  CONSTRAINT bot_knowledge_bases_knowledge_base_id_fkey FOREIGN KEY (knowledge_base_id) REFERENCES public.knowledge_bases(id),
+  CONSTRAINT bot_knowledge_bases_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
-
-CREATE INDEX idx_leads_bot_id ON public.leads(bot_id);
-
-ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "users crud own leads"
-  ON public.leads FOR ALL
-  USING  (bot_id IN (SELECT id FROM public.bot_configs WHERE user_id = auth.uid()))
-  WITH CHECK (bot_id IN (SELECT id FROM public.bot_configs WHERE user_id = auth.uid()));
-
--- --------------------------------------------------------------------------
--- call_logs
--- --------------------------------------------------------------------------
 CREATE TABLE public.call_logs (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  bot_id              uuid NOT NULL REFERENCES public.bot_configs(id) ON DELETE CASCADE,
-  conversation_id     varchar(100) NOT NULL UNIQUE,
-  lead_id             varchar(100) NOT NULL,
-  started_at          timestamptz NOT NULL DEFAULT now(),
-  completed_at        timestamptz,
-  call_outcome        varchar(30) NOT NULL DEFAULT 'follow_up_needed',
-  transcript          jsonb NOT NULL DEFAULT '[]'::jsonb,
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  bot_id uuid NOT NULL,
+  conversation_id character varying NOT NULL UNIQUE,
+  lead_id character varying NOT NULL,
+  started_at timestamp with time zone NOT NULL DEFAULT now(),
+  completed_at timestamp with time zone,
+  call_outcome character varying NOT NULL DEFAULT 'follow_up_needed'::character varying,
+  transcript jsonb NOT NULL DEFAULT '[]'::jsonb,
   qualification_notes jsonb NOT NULL DEFAULT '{}'::jsonb,
-  meeting_booked      boolean NOT NULL DEFAULT false,
-  proposed_slot       varchar(100),
-  follow_up_action    varchar(100)
+  meeting_booked boolean NOT NULL DEFAULT false,
+  proposed_slot character varying,
+  follow_up_action character varying,
+  CONSTRAINT call_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT call_logs_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id)
 );
-
-CREATE INDEX idx_call_logs_bot_id ON public.call_logs(bot_id);
-CREATE INDEX idx_call_logs_conversation_id ON public.call_logs(conversation_id);
-
-ALTER TABLE public.call_logs ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "users read own call logs"
-  ON public.call_logs FOR SELECT
-  USING (bot_id IN (SELECT id FROM public.bot_configs WHERE user_id = auth.uid()));
-
--- Railway (service role) writes call logs; frontend is read-only.
-
--- --------------------------------------------------------------------------
--- sessions  (conversation state, managed by Railway AI engine)
--- --------------------------------------------------------------------------
+CREATE TABLE public.knowledge_bases (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name character varying NOT NULL,
+  description text NOT NULL DEFAULT ''::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT knowledge_bases_pkey PRIMARY KEY (id),
+  CONSTRAINT knowledge_bases_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.knowledge_chunks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  knowledge_base_id uuid NOT NULL,
+  document_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  chunk_index integer NOT NULL DEFAULT 0,
+  content text NOT NULL,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  embedding USER-DEFINED,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT knowledge_chunks_pkey PRIMARY KEY (id),
+  CONSTRAINT knowledge_chunks_knowledge_base_id_fkey FOREIGN KEY (knowledge_base_id) REFERENCES public.knowledge_bases(id),
+  CONSTRAINT knowledge_chunks_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.knowledge_documents(id),
+  CONSTRAINT knowledge_chunks_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.knowledge_documents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  knowledge_base_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  title character varying NOT NULL,
+  source_url text,
+  storage_path text,
+  mime_type character varying,
+  status character varying NOT NULL DEFAULT 'ready'::character varying,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT knowledge_documents_pkey PRIMARY KEY (id),
+  CONSTRAINT knowledge_documents_knowledge_base_id_fkey FOREIGN KEY (knowledge_base_id) REFERENCES public.knowledge_bases(id),
+  CONSTRAINT knowledge_documents_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.leads (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  bot_id uuid NOT NULL,
+  lead_name character varying NOT NULL,
+  company character varying NOT NULL DEFAULT ''::character varying,
+  phone_number character varying NOT NULL,
+  lead_email character varying NOT NULL DEFAULT ''::character varying,
+  lead_context text NOT NULL DEFAULT ''::text,
+  lifecycle_stage character varying NOT NULL DEFAULT 'follow_up'::character varying,
+  timezone character varying NOT NULL DEFAULT 'UTC'::character varying,
+  owner_name character varying NOT NULL DEFAULT 'Sales Team'::character varying,
+  calendar_id character varying NOT NULL DEFAULT 'sales-team'::character varying,
+  metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT leads_pkey PRIMARY KEY (id),
+  CONSTRAINT leads_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id)
+);
+CREATE TABLE public.profiles (
+  id uuid NOT NULL,
+  display_name text NOT NULL DEFAULT ''::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id)
+);
 CREATE TABLE public.sessions (
-  conversation_id varchar(100) PRIMARY KEY,
-  bot_id          uuid NOT NULL REFERENCES public.bot_configs(id) ON DELETE CASCADE,
-  state_json      jsonb NOT NULL,
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  updated_at      timestamptz NOT NULL DEFAULT now()
+  conversation_id character varying NOT NULL,
+  bot_id uuid NOT NULL,
+  state_json jsonb NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT sessions_pkey PRIMARY KEY (conversation_id),
+  CONSTRAINT sessions_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id)
 );
-
-CREATE INDEX idx_sessions_bot_id ON public.sessions(bot_id);
-
-CREATE TRIGGER sessions_updated_at
-  BEFORE UPDATE ON public.sessions
-  FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
-
-ALTER TABLE public.sessions ENABLE ROW LEVEL SECURITY;
-
--- Sessions are managed exclusively by the Railway backend (service role).
--- Frontend can read its own sessions for display purposes.
-CREATE POLICY "users read own sessions"
-  ON public.sessions FOR SELECT
-  USING (bot_id IN (SELECT id FROM public.bot_configs WHERE user_id = auth.uid()));

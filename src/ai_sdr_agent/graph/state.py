@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
+
+from ai_sdr_agent.graph.spec import SINGLE_AGENT_NODE_ID, graph_execution_kind
 
 
 CallOutcome = Literal[
@@ -54,6 +56,7 @@ class BotConfigDict(TypedDict, total=False):
     prompt_objection: str | None
     prompt_booking: str | None
     prompt_wrapup: str | None
+    conversation_spec: dict[str, Any] | None
 
 
 class ConversationState(TypedDict):
@@ -122,7 +125,22 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "prompt_objection": None,
     "prompt_booking": None,
     "prompt_wrapup": None,
+    "conversation_spec": None,
 }
+
+
+def _initial_route_target(bot_config: BotConfigDict | None) -> str:
+    cfg: BotConfigDict = bot_config or dict(_DEFAULT_BOT_CONFIG)
+    kind = graph_execution_kind(dict(cfg))
+    if kind == "sdr":
+        return "greeting"
+    if kind == "single":
+        return SINGLE_AGENT_NODE_ID
+    spec = cfg.get("conversation_spec") or {}
+    entry = spec.get("entry_node_id")
+    if isinstance(entry, str) and entry:
+        return entry
+    return "greeting"
 
 
 def build_initial_state(
@@ -137,6 +155,10 @@ def build_initial_state(
     available_slots: list[SlotPayload],
     bot_config: BotConfigDict | None = None,
 ) -> ConversationState:
+    merged = dict(_DEFAULT_BOT_CONFIG)
+    if bot_config:
+        merged.update(bot_config)
+    route = _initial_route_target(merged)
     return {
         "lead_id": lead_id,
         "lead_name": lead_name,
@@ -145,11 +167,11 @@ def build_initial_state(
         "company": company,
         "calendar_id": calendar_id,
         "lead_context": lead_context,
-        "bot_config": bot_config or dict(_DEFAULT_BOT_CONFIG),
+        "bot_config": merged,
         "transcript": [],
         "current_node": "start",
-        "next_node": "greeting",
-        "route_decision": "greeting",
+        "next_node": route,
+        "route_decision": route,
         "turn_count": 0,
         "last_human_message": "",
         "last_agent_response": "",

@@ -1,4 +1,5 @@
 import type { User as SupabaseUser } from "@supabase/supabase-js";
+import type { ConversationSpecV1 } from "./conversationSpec";
 import { assertSupabaseConfigured, supabase } from "./supabase";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
@@ -125,6 +126,7 @@ export interface BotConfig {
   prompt_objection: string | null;
   prompt_booking: string | null;
   prompt_wrapup: string | null;
+  conversation_spec?: ConversationSpecV1 | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -284,13 +286,23 @@ export async function getCall(callId: string): Promise<CallLog> {
 
 // Test sessions
 export const startTestSession = (botId: string, leadId: string) =>
-  railwayRequest<{ conversation_id: string; agent_response: string; stage: string }>(
-    `/api/bots/${botId}/test-session`,
-    { method: "POST", body: JSON.stringify({ lead_id: leadId }) },
-  );
+  railwayRequest<{
+    conversation_id: string;
+    agent_response: string;
+    stage: string;
+    active_node: string;
+    next_node: string;
+  }>(`/api/bots/${botId}/test-session`, { method: "POST", body: JSON.stringify({ lead_id: leadId }) });
 
 export const sendTestTurn = (botId: string, sessionId: string, humanInput: string) =>
-  railwayRequest<{ conversation_id: string; agent_response: string; stage: string; call_outcome: string }>(
-    `/api/bots/${botId}/test-session/${sessionId}/turns`,
-    { method: "POST", body: JSON.stringify({ human_input: humanInput }) },
-  );
+  railwayRequest<{
+    conversation_id: string;
+    agent_response: string;
+    stage: string;
+    active_node: string;
+    next_node: string;
+    call_outcome: string;
+  }>(`/api/bots/${botId}/test-session/${sessionId}/turns`, {
+    method: "POST",
+    body: JSON.stringify({ human_input: humanInput }),
+  });

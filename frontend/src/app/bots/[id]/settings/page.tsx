@@ -1,17 +1,20 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useMemo, useState, use } from "react";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth";
+import { AgentBuilder } from "@/components/AgentBuilder";
 import { BotConfig, getBot, updateBot } from "@/lib/api";
+import { isClassicSdrBuiltInGraph } from "@/lib/conversationSpec";
 import { ArrowLeft, Save, MessageSquare, FileText, Phone } from "lucide-react";
 
 const TABS = [
   { id: "general", label: "General" },
+  { id: "agent_builder", label: "Agent builder" },
   { id: "ai", label: "AI Model" },
   { id: "voice", label: "Voice & STT" },
-  { id: "conversation", label: "Conversation" },
-  { id: "prompts", label: "Prompts" },
+  { id: "conversation", label: "SDR funnel" },
+  { id: "prompts", label: "SDR stage prompts" },
   { id: "keys", label: "API Keys" },
   { id: "telephony", label: "Telephony" },
 ] as const;
@@ -46,6 +49,28 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
     if (key in dirty) return dirty[key] as BotConfig[K];
     return bot?.[key] as BotConfig[K];
   }
+
+  const conversationSpec = useMemo(
+    () =>
+      ("conversation_spec" in dirty ? dirty.conversation_spec : bot?.conversation_spec) as
+        | BotConfig["conversation_spec"]
+        | undefined,
+    [dirty, bot?.conversation_spec],
+  );
+  const showClassicSdrTabs = isClassicSdrBuiltInGraph(conversationSpec ?? null);
+  const visibleTabs = useMemo(
+    () =>
+      showClassicSdrTabs
+        ? [...TABS]
+        : TABS.filter((t) => t.id !== "conversation" && t.id !== "prompts"),
+    [showClassicSdrTabs],
+  );
+
+  useEffect(() => {
+    if (!showClassicSdrTabs && (tab === "conversation" || tab === "prompts")) {
+      setTab("agent_builder");
+    }
+  }, [showClassicSdrTabs, tab]);
 
   async function handleSave() {
     if (!bot || Object.keys(dirty).length === 0) return;
@@ -128,7 +153,7 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
 
       {/* Tabs */}
       <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1">
-        {TABS.map((t) => (
+        {visibleTabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
@@ -145,6 +170,18 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
 
       {/* Tab content */}
       <div className="space-y-5 rounded-lg border border-[var(--border)] bg-[var(--card)] p-6">
+        {tab === "agent_builder" && (
+          <AgentBuilder
+            botId={bot.id}
+            value={
+              ("conversation_spec" in dirty
+                ? dirty.conversation_spec
+                : bot.conversation_spec) as BotConfig["conversation_spec"]
+            }
+            onChange={(next) => update("conversation_spec", next)}
+          />
+        )}
+
         {tab === "general" && (
           <>
             <Field label="Bot Name">
