@@ -125,10 +125,15 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
 
     app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
 
-    # CORS for Next.js frontend
+    # CORS for deployed frontend and local development.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3001", "http://localhost:3000", "*"],
+        allow_origins=[
+            "http://localhost:3001",
+            "http://localhost:3000",
+            "https://voice-agent-zeta-tawny.vercel.app",
+        ],
+        allow_origin_regex=r"https://.*\.vercel\.app",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
