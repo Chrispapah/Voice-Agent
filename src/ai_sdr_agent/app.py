@@ -187,7 +187,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     async def latency_analytics(
         recent_limit: int = Query(default=50, ge=1, le=200),
     ):
-        """Aggregated turn latencies (graph + persist) and perceived phone latency (graph → first TTS chunk)."""
+        """Aggregated turn latencies (graph + persist), perceived phone latency, and browser web_voice timings."""
         return await shared_latency_analytics.snapshot(recent_limit=recent_limit)
 
     @app.get("/debug/telephony")

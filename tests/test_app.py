@@ -63,4 +63,5 @@ def test_latency_analytics_endpoint():
     assert data["sample_count"] >= 1
     assert "latency_graph_ms" in data
     assert "by_route_decision" in data
+    assert "web_voice" in data
     assert data["latency_total_ms"]["count"] == data["sample_count"]

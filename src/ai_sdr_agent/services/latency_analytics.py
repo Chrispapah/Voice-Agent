@@ -25,6 +25,24 @@ class TurnLatencySample:
 
 
 @dataclass(frozen=True)
+class WebVoiceTurnSample:
+    """Browser /api/bots/.../voice-session turn (perf_counter deltas as ms)."""
+
+    conversation_id: str
+    bot_id: str
+    streamed_llm: bool
+    stt_final_to_pipeline_ms: float
+    pipeline_to_first_llm_token_ms: float | None
+    pipeline_to_first_phrase_ms: float | None
+    pipeline_to_first_tts_byte_ms: float | None
+    first_phrase_to_first_tts_byte_ms: float | None
+    pipeline_to_graph_done_ms: float | None
+    pipeline_to_turn_end_ms: float
+    stt_final_to_first_tts_byte_ms: float | None
+    recorded_at: float
+
+
+@dataclass(frozen=True)
 class PerceivedTurnSample:
     """Phone turn timings in one worker (perf_counter-based).
 
@@ -216,11 +234,16 @@ class LatencyAnalyticsBuffer:
         self._maxlen = maxlen
         self._samples: deque[TurnLatencySample] = deque(maxlen=maxlen)
         self._perceived: deque[PerceivedTurnSample] = deque(maxlen=maxlen)
+        self._web_voice: deque[WebVoiceTurnSample] = deque(maxlen=maxlen)
         self._lock = asyncio.Lock()
 
     async def record_perceived_turn(self, sample: PerceivedTurnSample) -> None:
         async with self._lock:
             self._perceived.append(sample)
+
+    async def record_web_voice_turn(self, sample: WebVoiceTurnSample) -> None:
+        async with self._lock:
+            self._web_voice.append(sample)
 
     async def record_turn(
         self,
@@ -248,6 +271,7 @@ class LatencyAnalyticsBuffer:
         async with self._lock:
             items = list(self._samples)
             perceived_items = list(self._perceived)
+            web_voice_items = list(self._web_voice)
         total = [x.latency_total_ms for x in items]
         graph = [x.latency_graph_ms for x in items]
         persist = [x.latency_persist_ms for x in items]
@@ -271,6 +295,19 @@ class LatencyAnalyticsBuffer:
             if x.last_inbound_audio_to_final_stt_ms is not None
         ]
         recent_perceived = [asdict(x) for x in perceived_items[-recent_limit:]]
+        wv_stt_pipe = [x.stt_final_to_pipeline_ms for x in web_voice_items]
+        wv_pipe_llm = [x.pipeline_to_first_llm_token_ms for x in web_voice_items if x.pipeline_to_first_llm_token_ms is not None]
+        wv_pipe_phrase = [x.pipeline_to_first_phrase_ms for x in web_voice_items if x.pipeline_to_first_phrase_ms is not None]
+        wv_pipe_audio = [x.pipeline_to_first_tts_byte_ms for x in web_voice_items if x.pipeline_to_first_tts_byte_ms is not None]
+        wv_phrase_audio = [
+            x.first_phrase_to_first_tts_byte_ms
+            for x in web_voice_items
+            if x.first_phrase_to_first_tts_byte_ms is not None
+        ]
+        wv_pipe_graph = [x.pipeline_to_graph_done_ms for x in web_voice_items if x.pipeline_to_graph_done_ms is not None]
+        wv_pipe_end = [x.pipeline_to_turn_end_ms for x in web_voice_items]
+        wv_stt_audio = [x.stt_final_to_first_tts_byte_ms for x in web_voice_items if x.stt_final_to_first_tts_byte_ms is not None]
+        recent_web_voice = [asdict(x) for x in web_voice_items[-recent_limit:]]
         return {
             "buffer_maxlen": self._maxlen,
             "sample_count": len(items),
@@ -290,6 +327,23 @@ class LatencyAnalyticsBuffer:
                 "stt_final_to_first_audio_ms": _stats(stt_audio),
                 "last_inbound_audio_to_final_stt_ms": _stats(last_audio_to_final),
                 "recent": recent_perceived,
+            },
+            "web_voice": {
+                "sample_count": len(web_voice_items),
+                "streamed_turn_fraction": (
+                    sum(1 for x in web_voice_items if x.streamed_llm) / len(web_voice_items)
+                    if web_voice_items
+                    else None
+                ),
+                "stt_final_to_pipeline_ms": _stats(wv_stt_pipe),
+                "pipeline_to_first_llm_token_ms": _stats(wv_pipe_llm),
+                "pipeline_to_first_phrase_ms": _stats(wv_pipe_phrase),
+                "pipeline_to_first_tts_byte_ms": _stats(wv_pipe_audio),
+                "first_phrase_to_first_tts_byte_ms": _stats(wv_phrase_audio),
+                "pipeline_to_graph_done_ms": _stats(wv_pipe_graph),
+                "pipeline_to_turn_end_ms": _stats(wv_pipe_end),
+                "stt_final_to_first_tts_byte_ms": _stats(wv_stt_audio),
+                "recent": recent_web_voice,
             },
         }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import time
 import uuid
 from typing import Any
 from urllib.parse import urlencode
@@ -25,6 +26,7 @@ from ai_sdr_agent.db.repositories import (
     PgSessionStore,
 )
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
+from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
 
 router = APIRouter(prefix="/api/bots", tags=["voice"])
 
@@ -192,11 +194,18 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         dg_tasks.clear()
         stop_event.clear()
 
-    async def pipeline(user_text: str, my_gen: int) -> None:
+    async def pipeline(user_text: str, my_gen: int, *, stt_final_pc: float) -> None:
         nonlocal conversation_id, bot_cfg_merged, bid
         assert conversation_id and bot_cfg_merged and bid
         if not user_text.strip():
             return
+        pipeline_enter_pc = time.perf_counter()
+        first_llm_pc: list[float | None] = [None]
+        first_phrase_pc: list[float | None] = [None]
+        first_audio_pc: list[float | None] = [None]
+        graph_done_pc: list[float | None] = [None]
+        streamed_llm = False
+
         eleven_key = bot_cfg_merged.get("elevenlabs_api_key") or ""
         voice_id = bot_cfg_merged.get("elevenlabs_voice_id") or ""
         model_id = str(bot_cfg_merged.get("elevenlabs_model_id") or "eleven_turbo_v2")
@@ -206,6 +215,62 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             "Accept": "audio/mpeg",
             "Content-Type": "application/json",
         }
+
+        def _pc_delta_ms(start: float, end: float | None) -> float | None:
+            if end is None:
+                return None
+            return (end - start) * 1000.0
+
+        async def _record_web_voice_metrics() -> None:
+            if my_gen != generation:
+                return
+            turn_end_pc = time.perf_counter()
+            fp, fa = first_phrase_pc[0], first_audio_pc[0]
+            phrase_to_audio_ms = (fa - fp) * 1000.0 if fp is not None and fa is not None else None
+            sample = WebVoiceTurnSample(
+                conversation_id=conversation_id,
+                bot_id=str(bot_id),
+                streamed_llm=streamed_llm,
+                stt_final_to_pipeline_ms=(pipeline_enter_pc - stt_final_pc) * 1000.0,
+                pipeline_to_first_llm_token_ms=_pc_delta_ms(pipeline_enter_pc, first_llm_pc[0]),
+                pipeline_to_first_phrase_ms=_pc_delta_ms(pipeline_enter_pc, first_phrase_pc[0]),
+                pipeline_to_first_tts_byte_ms=_pc_delta_ms(pipeline_enter_pc, first_audio_pc[0]),
+                first_phrase_to_first_tts_byte_ms=phrase_to_audio_ms,
+                pipeline_to_graph_done_ms=_pc_delta_ms(pipeline_enter_pc, graph_done_pc[0]),
+                pipeline_to_turn_end_ms=(turn_end_pc - pipeline_enter_pc) * 1000.0,
+                stt_final_to_first_tts_byte_ms=_pc_delta_ms(stt_final_pc, first_audio_pc[0]),
+                recorded_at=time.time(),
+            )
+            logger.info(
+                "web_voice_latency conversation_id={} bot_id={} streamed_llm={} "
+                "stt_final_to_pipeline_ms={:.0f} pipeline_to_first_llm_token_ms={} pipeline_to_first_phrase_ms={} "
+                "pipeline_to_first_tts_byte_ms={} first_phrase_to_first_tts_byte_ms={} "
+                "pipeline_to_graph_done_ms={} stt_final_to_first_tts_byte_ms={} pipeline_to_turn_end_ms={:.0f}",
+                sample.conversation_id,
+                sample.bot_id,
+                sample.streamed_llm,
+                sample.stt_final_to_pipeline_ms,
+                f"{sample.pipeline_to_first_llm_token_ms:.0f}"
+                if sample.pipeline_to_first_llm_token_ms is not None
+                else "n/a",
+                f"{sample.pipeline_to_first_phrase_ms:.0f}"
+                if sample.pipeline_to_first_phrase_ms is not None
+                else "n/a",
+                f"{sample.pipeline_to_first_tts_byte_ms:.0f}"
+                if sample.pipeline_to_first_tts_byte_ms is not None
+                else "n/a",
+                f"{sample.first_phrase_to_first_tts_byte_ms:.0f}"
+                if sample.first_phrase_to_first_tts_byte_ms is not None
+                else "n/a",
+                f"{sample.pipeline_to_graph_done_ms:.0f}"
+                if sample.pipeline_to_graph_done_ms is not None
+                else "n/a",
+                f"{sample.stt_final_to_first_tts_byte_ms:.0f}"
+                if sample.stt_final_to_first_tts_byte_ms is not None
+                else "n/a",
+                sample.pipeline_to_turn_end_ms,
+            )
+            await shared_latency_analytics.record_web_voice_turn(sample)
 
         async def _stream_elevenlabs_text(spoken_text: str) -> bool:
             if not spoken_text.strip() or my_gen != generation:
@@ -225,6 +290,8 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                         if my_gen != generation:
                             return False
                         if chunk:
+                            if first_audio_pc[0] is None:
+                                first_audio_pc[0] = time.perf_counter()
                             await _send_json(
                                 websocket,
                                 {
@@ -249,6 +316,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                 brain = svc.dependencies.brain
 
                 if brain.supports_response_token_stream():
+                    streamed_llm = True
                     phrase_parts: list[str] = []
                     tts_streams_started = False
 
@@ -257,6 +325,8 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                         raw = phrase.strip()
                         if not raw or my_gen != generation:
                             return
+                        if first_phrase_pc[0] is None:
+                            first_phrase_pc[0] = time.perf_counter()
                         phrase_parts.append(raw)
                         cumulative = " ".join(phrase_parts).strip()
                         await _send_json(websocket, {"type": "agent.text", "text": cumulative})
@@ -270,12 +340,15 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                     streamed = await svc.start_streamed_turn(conversation_id, user_text)
                     buf = _TelephonyStylePhraseBuffer()
                     async for token in streamed.chunks:
+                        if first_llm_pc[0] is None and token:
+                            first_llm_pc[0] = time.perf_counter()
                         if my_gen != generation:
                             break
                         await buf.feed(_on_phrase, token)
                     await buf.flush(_on_phrase)
                     state = await streamed.final_state_task
                     await db.commit()
+                    graph_done_pc[0] = time.perf_counter()
                     if my_gen != generation:
                         return
                     reply = (state.get("last_agent_response") or "").strip()
@@ -299,6 +372,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                 else:
                     state = await svc.handle_turn(conversation_id, user_text)
                     await db.commit()
+                    graph_done_pc[0] = time.perf_counter()
                     if my_gen != generation:
                         return
                     reply = (state.get("last_agent_response") or "").strip()
@@ -313,6 +387,8 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                     )
                     if not reply or my_gen != generation:
                         await _send_json(websocket, {"type": "agent.done"})
+                        if my_gen == generation:
+                            await _record_web_voice_metrics()
                         return
                     if not eleven_key or not voice_id:
                         await _send_json(
@@ -320,16 +396,20 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                             {"type": "error", "message": "ElevenLabs API key or voice id not configured."},
                         )
                         await _send_json(websocket, {"type": "agent.done"})
+                        if my_gen == generation:
+                            await _record_web_voice_metrics()
                         return
                     await _stream_elevenlabs_text(reply)
 
+            if my_gen == generation:
+                await _record_web_voice_metrics()
             if my_gen == generation:
                 await _send_json(websocket, {"type": "agent.done"})
         except asyncio.CancelledError:
             await _send_json(websocket, {"type": "agent.interrupted"})
             raise
 
-    async def schedule_pipeline(user_text: str) -> None:
+    async def schedule_pipeline(user_text: str, *, stt_final_pc: float) -> None:
         nonlocal active_pipeline, generation
         if active_pipeline and not active_pipeline.done():
             active_pipeline.cancel()
@@ -338,7 +418,9 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             except asyncio.CancelledError:
                 pass
         my_gen = invalidate_turns()
-        active_pipeline = asyncio.create_task(pipeline(user_text, my_gen))
+        active_pipeline = asyncio.create_task(
+            pipeline(user_text, my_gen, stt_final_pc=stt_final_pc),
+        )
 
     async def run_deepgram() -> None:
         assert bot_cfg_merged is not None
@@ -405,8 +487,9 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                                     continue
                                 is_final = bool(payload.get("is_final") or payload.get("speech_final"))
                                 if is_final:
+                                    stt_pc = time.perf_counter()
                                     await _send_json(websocket, {"type": "transcript.final", "text": transcript})
-                                    asyncio.create_task(schedule_pipeline(transcript))
+                                    asyncio.create_task(schedule_pipeline(transcript, stt_final_pc=stt_pc))
                                 else:
                                     await _send_json(websocket, {"type": "transcript.partial", "text": transcript})
                             elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING):
