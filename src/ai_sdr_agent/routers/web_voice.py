@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 
 import httpx
 import websockets
+from websockets.exceptions import InvalidStatus
 from fastapi import APIRouter, HTTPException, WebSocket
 from jose import JWTError
 from loguru import logger
@@ -249,9 +250,28 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                         pass
         except asyncio.CancelledError:
             raise
+        except InvalidStatus as exc:
+            code = getattr(getattr(exc, "response", None), "status_code", None)
+            logger.warning("Deepgram WebSocket handshake failed HTTP {}", code)
+            if code == 401:
+                msg = (
+                    "Deepgram rejected the API key (401). Add DEEPGRAM_API_KEY on the server (Railway) "
+                    "or a real deepgram_api_key on the bot in Supabase (not a masked placeholder)."
+                )
+            elif code in (402, 403):
+                msg = f"Deepgram returned HTTP {code}; check billing, project, or key permissions."
+            else:
+                msg = f"Deepgram WebSocket rejected the connection (HTTP {code}). See server logs."
+            await _send_json(websocket, {"type": "error", "message": msg})
         except Exception:
             logger.exception("Deepgram connection failed")
-            await _send_json(websocket, {"type": "error", "message": "Could not connect to Deepgram"})
+            await _send_json(
+                websocket,
+                {
+                    "type": "error",
+                    "message": "Could not open Deepgram (network, DNS, or TLS). Check Railway logs and outbound access to wss://api.deepgram.com.",
+                },
+            )
 
     try:
         raw = await websocket.receive_text()
