@@ -204,18 +204,12 @@ def make_graph_agent_node(
         if not has_human:
             raw = state.get("bot_config", {}).get("initial_greeting") or "Hello."
             response = format_reply_for_tts(str(raw))
+            # Stay on this node until the user speaks: multi-edge routing uses classify
+            # on the last user message; the opener has none, so avoid a blind LLM pick.
             if len(outgoing) == 1:
                 next_node = outgoing[0]
-            elif not outgoing:
-                next_node = node_id
             else:
-                next_node = await _pick_next_node(
-                    brain=brain,
-                    state=state,
-                    current_id=node_id,
-                    outgoing=outgoing,
-                    trace=trace,
-                )
+                next_node = node_id
             logger.info(
                 "graph_agent_node opener node={} next={} latency_ms={:.0f}",
                 node_id,
