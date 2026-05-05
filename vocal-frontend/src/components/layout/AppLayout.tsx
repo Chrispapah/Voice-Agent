@@ -1,9 +1,11 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   Bot, BookOpen, Phone, PhoneCall, MessageSquare, BarChart3, ShieldCheck, Bell,
   CreditCard, Settings, ChevronsUpDown, HelpCircle, Sparkles, Wrench,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 const nav = [
   {
@@ -105,7 +107,41 @@ const Sidebar = () => (
 
 export default function AppLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const isFlow = /^\/agents\/[^/]+/.test(location.pathname);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkAuth() {
+      if (!isSupabaseConfigured()) {
+        if (mounted) setCheckingAuth(false);
+        return;
+      }
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!mounted) return;
+      if (!session) {
+        navigate("/auth", { replace: true, state: { from: location.pathname } });
+        return;
+      }
+      setCheckingAuth(false);
+    }
+
+    setCheckingAuth(true);
+    void checkAuth();
+
+    return () => {
+      mounted = false;
+    };
+  }, [location.pathname, navigate]);
+
+  if (checkingAuth) {
+    return <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">Checking session...</div>;
+  }
+
   return (
     <div className="min-h-screen flex bg-background text-foreground">
       {!isFlow && <Sidebar />}
