@@ -45,7 +45,7 @@ def _build_service_for_bot(bot_config: dict, lead_repo, session_store, call_log_
     brain = build_conversation_brain(bot_config=bot_config)
     calendar_gateway = StubCalendarGateway()
     email_gateway = StubEmailGateway()
-    crm_gateway = StubCRMGateway()
+    crm_gateway = StubCRMGateway(seed_leads=[])
     pre_call_loader = PreCallLoader(
         lead_repository=lead_repo,
         calendar_gateway=calendar_gateway,

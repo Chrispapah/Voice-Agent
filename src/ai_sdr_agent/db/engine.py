@@ -13,10 +13,23 @@ _engine: AsyncEngine | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def _normalize_database_url(database_url: str) -> str:
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if database_url.startswith("postgres://"):
+        return database_url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return database_url
+
+
 def _get_engine(database_url: str) -> AsyncEngine:
     global _engine
     if _engine is None:
-        _engine = create_async_engine(database_url, echo=False, pool_size=5, max_overflow=10)
+        _engine = create_async_engine(
+            _normalize_database_url(database_url),
+            echo=False,
+            pool_size=5,
+            max_overflow=10,
+        )
     return _engine
 
 
