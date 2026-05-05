@@ -8,8 +8,8 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-import websockets
 from websockets.exceptions import InvalidStatus
+from websockets.legacy.client import connect as legacy_ws_connect
 from fastapi import APIRouter, HTTPException, WebSocket
 from jose import JWTError
 from loguru import logger
@@ -49,6 +49,42 @@ def _deepgram_listen_url(*, model: str, language: str) -> str:
         "vad_events": "true",
     }
     return "wss://api.deepgram.com/v1/listen?" + urlencode(params)
+
+
+def _client_message_for_deepgram_connect_failure(exc: Exception) -> str:
+    """Map connect-time failures to hints; full detail stays in server logs."""
+    msg_l = str(exc).lower()
+    if isinstance(exc, TimeoutError):
+        return (
+            "Connection to Deepgram timed out. Allow outbound HTTPS/WSS (TCP 443) from this host, or try another network."
+        )
+    if isinstance(exc, OSError):
+        winerr = getattr(exc, "winerror", None)
+        if winerr in (11001, 11002):
+            return (
+                "DNS could not resolve api.deepgram.com (Windows). Check DNS, VPN, or try "
+                "nslookup api.deepgram.com from the machine running the API."
+            )
+    if "getaddrinfo" in msg_l or "name or service not known" in msg_l or "nodename nor servname" in msg_l:
+        return (
+            "DNS could not resolve api.deepgram.com. Verify internet/VPN and DNS; from the server run: "
+            "nslookup api.deepgram.com (or ping api.deepgram.com)."
+        )
+    if any(x in msg_l for x in ("certificate", "ssl", "tls", "cert verify")):
+        return (
+            "TLS error connecting to Deepgram. Check system clock, antivirus HTTPS scanning, and corporate SSL inspection."
+        )
+    if "connection refused" in msg_l or "network is unreachable" in msg_l:
+        return (
+            "Could not reach Deepgram on the network. Confirm firewall allows outbound WSS to api.deepgram.com:443."
+        )
+    if isinstance(exc, TypeError) and "additional_headers" in msg_l and "create_connection" in msg_l:
+        return (
+            "WebSocket client bug: upgrade/redeploy the API (Deepgram uses legacy websockets.connect with extra_headers)."
+        )
+    return (
+        "Could not open Deepgram. See API logs for the exception; confirm outbound access to wss://api.deepgram.com."
+    )
 
 
 async def _send_json(ws: WebSocket, payload: dict[str, Any]) -> None:
@@ -189,9 +225,11 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         language = str(bot_cfg_merged.get("deepgram_language") or "en-US")
         uri = _deepgram_listen_url(model=model, language=language)
         try:
-            async with websockets.connect(
+            # Legacy client + extra_headers: avoids websockets 14+ asyncio client passing
+            # additional_headers into loop.create_connection() (TypeError on Railway).
+            async with legacy_ws_connect(
                 uri,
-                additional_headers=[("Authorization", f"Token {key}")],
+                extra_headers=[("Authorization", f"Token {key}")],
                 ping_interval=20,
                 ping_timeout=20,
             ) as dg:
@@ -263,14 +301,11 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             else:
                 msg = f"Deepgram WebSocket rejected the connection (HTTP {code}). See server logs."
             await _send_json(websocket, {"type": "error", "message": msg})
-        except Exception:
+        except Exception as exc:
             logger.exception("Deepgram connection failed")
             await _send_json(
                 websocket,
-                {
-                    "type": "error",
-                    "message": "Could not open Deepgram (network, DNS, or TLS). Check Railway logs and outbound access to wss://api.deepgram.com.",
-                },
+                {"type": "error", "message": _client_message_for_deepgram_connect_failure(exc)},
             )
 
     try:
