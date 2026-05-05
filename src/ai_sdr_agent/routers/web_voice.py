@@ -30,16 +30,19 @@ from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_l
 
 router = APIRouter(prefix="/api/bots", tags=["voice"])
 
-# Same phrase-boundary heuristics as SDRVocodeAgent._emit_live_chunk (telephony).
+# Phrase boundaries for streaming LLM → TTS in the browser.
+# Larger flush threshold than telephony: fewer, longer ElevenLabs streams avoid
+# stitching many short MP3 blobs (which sounds choppy when merged for playback).
 _STREAM_PUNCTUATION = ".?,!;:"
-_STREAM_HARD_FLUSH_CHARS = 24
+_STREAM_HARD_FLUSH_CHARS = 96
 
 
 class _TelephonyStylePhraseBuffer:
     """Accumulates LLM token chunks and emits phrase-sized strings for TTS."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, hard_flush_chars: int = _STREAM_HARD_FLUSH_CHARS) -> None:
         self.buffer = ""
+        self._hard_flush = hard_flush_chars
 
     async def feed(self, on_phrase, chunk: str) -> None:
         if not chunk:
@@ -57,7 +60,7 @@ class _TelephonyStylePhraseBuffer:
                     text = output if output.endswith(" ") else output + " "
                     await on_phrase(text)
                 continue
-            if len(self.buffer) >= _STREAM_HARD_FLUSH_CHARS:
+            if len(self.buffer) >= self._hard_flush:
                 space_index = self.buffer.rfind(" ")
                 if space_index > 0:
                     output = self.buffer[:space_index].strip()
@@ -286,7 +289,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                     timeout=120.0,
                 ) as response:
                     response.raise_for_status()
-                    async for chunk in response.aiter_bytes(4096):
+                    async for chunk in response.aiter_bytes(16384):
                         if my_gen != generation:
                             return False
                         if chunk:
@@ -707,7 +710,7 @@ async def _send_initial_greeting_tts(
             timeout=120.0,
         ) as response:
             response.raise_for_status()
-            async for chunk in response.aiter_bytes(4096):
+            async for chunk in response.aiter_bytes(16384):
                 if my_gen != current_generation():
                     break
                 if chunk:
