@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
@@ -23,53 +22,6 @@ if TYPE_CHECKING:
 # One warning per (conversation_id, graph node) — avoids log spam while a session is stuck.
 _sticky_routing_warned: set[tuple[str, str]] = set()
 _STICKY_WARN_CAP = 4096
-
-# How many consecutive caller lines to stitch for edge routing (STT fragments).
-_ROUTING_RECENT_CALLER_MESSAGES = 6
-_ROUTING_HUMAN_CHARS_MAX = 900
-
-# Entry node: do not fan out on bare starter phrases (common partial STT finals).
-_INCOMPLETE_CALLER_STEM = re.compile(
-    r"^(i would like|i'd like|i want to|can i|could i|i need to)\s*\.?\s*$",
-    re.I,
-)
-
-
-def _likely_voice_routing_fragment(text: str) -> bool:
-    """True if the last caller line looks like an unfinished clause, not a routable intent."""
-    t = (text or "").strip()
-    if not t:
-        return True
-    return bool(_INCOMPLETE_CALLER_STEM.match(t))
-
-
-def _routing_human_snapshot(state: ConversationState) -> str:
-    """Build classifier user text from recent human transcript lines.
-
-    Voice STT often finalizes incomplete phrases separately; routing on only the
-    last line mis-classifies fragments like "I would like" vs full booking intent.
-    """
-    seq: list[str] = []
-    for m in state.get("transcript", []):
-        if m.get("role") != "human":
-            continue
-        raw = str(m.get("content", "") or "").strip()
-        if raw:
-            seq.append(raw)
-    tail = seq[-_ROUTING_RECENT_CALLER_MESSAGES:] if len(seq) > _ROUTING_RECENT_CALLER_MESSAGES else seq
-    if not tail:
-        return str(state.get("last_human_message", "") or "").strip()
-    if len(tail) == 1:
-        blob = tail[0]
-    else:
-        blob = (
-            "Recent caller phrases (voice; fragments of one utterance appear as separate lines, "
-            "latest last).\n"
-            + "\n".join(tail)
-        )
-    if len(blob) > _ROUTING_HUMAN_CHARS_MAX:
-        blob = blob[-_ROUTING_HUMAN_CHARS_MAX:]
-    return blob.strip()
 
 
 def _maybe_warn_sticky_routing(state: ConversationState, node_id: str, outgoing: list[str]) -> None:
@@ -152,11 +104,10 @@ async def _pick_next_node(
         return current_id
     if len(outgoing) == 1:
         return outgoing[0]
-    human = _routing_human_snapshot(state)
+    human = state.get("last_human_message", "") or ""
     instruction = (
         "You route a voice conversation between specialized agents. "
-        f"The active agent was {current_id!r}. Based on the caller's intent "
-        "(the snippet below may combine several short transcripts from voice), "
+        f"The active agent was {current_id!r}. Based on the user's latest message, "
         "choose which agent should speak next. Only pick from the allowed labels."
     )
     instruction += _classify_routing_context(spec, current_id=current_id, outgoing=outgoing)
@@ -305,19 +256,14 @@ def make_graph_agent_node(
                 trace=trace,
             )
         )
-        entry_id = (spec.entry_node_id or "").strip()
-        last_h = (state.get("last_human_message") or "").strip()
-        if len(outgoing) > 1 and node_id == entry_id and _likely_voice_routing_fragment(last_h):
-            raw_next = node_id
-        else:
-            raw_next = await _pick_next_node(
-                brain=brain,
-                state=state,
-                spec=spec,
-                current_id=node_id,
-                outgoing=outgoing,
-                trace=trace,
-            )
+        raw_next = await _pick_next_node(
+            brain=brain,
+            state=state,
+            spec=spec,
+            current_id=node_id,
+            outgoing=outgoing,
+            trace=trace,
+        )
         streaks = dict(state.get("graph_node_streaks") or {})
         prior = int(streaks.get(node_id, 0))
         next_node = raw_next

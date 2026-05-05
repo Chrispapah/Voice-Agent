@@ -216,40 +216,6 @@ def test_parse_graph_spec_and_execution_kind():
     assert graph_execution_kind({"conversation_spec": raw}) == "graph"
 
 
-def test_routing_human_snapshot_stitches_callers():
-    from ai_sdr_agent.graph.dynamic_nodes import _routing_human_snapshot
-
-    state = {
-        "transcript": [
-            {"role": "human", "content": "I would like"},
-            {"role": "agent", "content": "Which service?"},
-            {"role": "human", "content": "to book an appointment."},
-        ],
-        "last_human_message": "to book an appointment.",
-    }
-    out = _routing_human_snapshot(state)
-    assert "Recent caller phrases" in out
-    assert "I would like" in out
-    assert "to book an appointment." in out
-
-
-def test_routing_human_snapshot_single_phrase_unchanged():
-    from ai_sdr_agent.graph.dynamic_nodes import _routing_human_snapshot
-
-    state = {"transcript": [{"role": "human", "content": " Hello "}], "last_human_message": "Hello"}
-    assert _routing_human_snapshot(state) == "Hello"
-
-
-def test_voice_routing_fragment_heuristic():
-    from ai_sdr_agent.graph.dynamic_nodes import _likely_voice_routing_fragment
-
-    assert _likely_voice_routing_fragment("")
-    assert _likely_voice_routing_fragment("I would like")
-    assert _likely_voice_routing_fragment("  i'd like.  ")
-    assert not _likely_voice_routing_fragment("I would like to book an appointment.")
-    assert not _likely_voice_routing_fragment("one")
-
-
 def test_parse_graph_spec_node_classify_hint():
     raw = {
         "conversation_spec_version": 1,
