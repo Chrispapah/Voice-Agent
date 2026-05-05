@@ -3,10 +3,11 @@
 Router rules (graph mode):
 - After an agent node speaks, the runtime picks the next node from **outgoing edges**
   of the current node.
-- **0 outgoing edges** → conversation moves to the terminal ``complete`` node.
+- **0 outgoing edges** → the current node keeps handling the conversation.
 - **1 outgoing edge** → that target is chosen without an extra LLM call.
 - **2+ outgoing edges** → ``ConversationBrain.classify`` picks one label from the
   allowed target node ids (instruction summarizes the last user turn and options).
+- To end a graph conversation, add an explicit edge to the terminal ``complete`` node.
 
 Single mode:
 - One internal node id (``__single__``) runs every turn with ``system_prompt`` until

@@ -47,7 +47,7 @@ async def _pick_next_node(
     trace: dict[str, Any],
 ) -> str:
     if not outgoing:
-        return "complete"
+        return current_id
     if len(outgoing) == 1:
         return outgoing[0]
     human = state.get("last_human_message", "") or ""

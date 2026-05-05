@@ -262,7 +262,7 @@ async def test_custom_graph_two_nodes_linear():
 
     state = await service.handle_turn(conversation_id, "Hello from human.")
     assert state["current_node"] == "beta"
-    assert state["next_node"] == "complete"
+    assert state["next_node"] == "beta"
     assert state["last_agent_response"] == "beta reply"
 
 
