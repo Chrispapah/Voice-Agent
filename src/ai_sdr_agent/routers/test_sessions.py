@@ -126,3 +126,16 @@ async def run_test_turn(
         "next_node": state["next_node"],
         "call_outcome": state["call_outcome"],
     }
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def stop_test_session(
+    bot_id: str,
+    session_id: str,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    session: AsyncSession = Depends(get_async_session),
+):
+    bot = await _verify_bot(bot_id, user_id, session)
+    session_store = PgSessionStore(session, bot.id)
+    await session_store.delete(session_id)
+    await session.commit()

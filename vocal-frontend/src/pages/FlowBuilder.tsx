@@ -39,6 +39,7 @@ import {
   listLeads,
   sendTestTurn,
   startTestSession,
+  stopTestSession,
   updateBot,
   type BotConfig,
   type Lead,
@@ -275,10 +276,25 @@ export default function FlowBuilderPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [testing, setTesting] = useState(false);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const sessionIdRef = useRef(sessionId);
+  const botIdRef = useRef(botId);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+  sessionIdRef.current = sessionId;
+  botIdRef.current = botId;
+
+  useEffect(() => {
+    return () => {
+      const activeSessionId = sessionIdRef.current;
+      const activeBotId = botIdRef.current;
+      if (activeBotId && activeSessionId) {
+        void stopTestSession(activeBotId, activeSessionId, true).catch(() => undefined);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!botId) return;
@@ -338,7 +354,10 @@ export default function FlowBuilderPage() {
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const selected = changes.find((change) => change.type === "select" && "selected" in change && change.selected);
-      if (selected && "id" in selected) setSelectedNodeId(String(selected.id));
+      if (selected && "id" in selected) {
+        setSelectedNodeId(String(selected.id));
+        setSelectedEdgeId(null);
+      }
       setNodes((current) => {
         const next = applyNodeChanges(changes, current);
         const skipPush = changes.every((change) => {
@@ -355,8 +374,16 @@ export default function FlowBuilderPage() {
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
+      const selected = changes.find((change) => change.type === "select" && "selected" in change && change.selected);
+      if (selected && "id" in selected) {
+        setSelectedEdgeId(String(selected.id));
+        setSelectedNodeId(null);
+      }
       setEdges((current) => {
         const next = applyEdgeChanges(changes, current);
+        setSelectedEdgeId((currentSelectedEdgeId) =>
+          currentSelectedEdgeId && next.some((edge) => edge.id === currentSelectedEdgeId) ? currentSelectedEdgeId : null,
+        );
         pushGraphSpec(nodesRef.current, next, entryNodeId);
         return next;
       });
@@ -429,6 +456,22 @@ export default function FlowBuilderPage() {
       return next;
     });
     pushGraphSpec(nextNodes, nextEdges, nextEntry);
+  }
+
+  function deleteSelectedEdge() {
+    if (!selectedEdgeId) return;
+    const nextEdges = edges.filter((edge) => edge.id !== selectedEdgeId);
+    setEdges(nextEdges);
+    setSelectedEdgeId(null);
+    pushGraphSpec(nodes, nextEdges, entryNodeId);
+  }
+
+  function deleteSelectedGraphItem() {
+    if (selectedEdgeId) {
+      deleteSelectedEdge();
+      return;
+    }
+    deleteSelectedNode();
   }
 
   function updateSelectedNode(field: "label" | "system_prompt", value: string) {
@@ -531,6 +574,9 @@ export default function FlowBuilderPage() {
     setTesting(true);
     setError("");
     try {
+      if (sessionId) {
+        await stopTestSession(botId, sessionId).catch(() => undefined);
+      }
       await handleSave();
       const leadId = await ensureLead();
       const response = await startTestSession(botId, leadId);
@@ -542,6 +588,29 @@ export default function FlowBuilderPage() {
         return;
       }
       setError(err instanceof Error ? err.message : "Failed to start test session");
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function handleStopTest() {
+    if (!sessionId) return;
+    const activeSessionId = sessionId;
+    setTesting(true);
+    setError("");
+    try {
+      await stopTestSession(botId, activeSessionId);
+      setSessionId(null);
+      setMessages([]);
+      setInput("");
+      setStatus("Test stopped");
+      setTimeout(() => setStatus(""), 2000);
+    } catch (err: unknown) {
+      if (err instanceof AuthRequiredError) {
+        navigate("/auth");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to stop test session");
     } finally {
       setTesting(false);
     }
@@ -700,8 +769,8 @@ export default function FlowBuilderPage() {
               <Button variant="outline" size="sm" className="w-full gap-1.5" onClick={addNode}>
                 <Plus className="h-4 w-4" /> Add Agent Node
               </Button>
-              <Button variant="outline" size="sm" className="w-full gap-1.5" onClick={deleteSelectedNode} disabled={!selectedNodeId}>
-                <Trash2 className="h-4 w-4" /> Delete Selected
+              <Button variant="outline" size="sm" className="w-full gap-1.5" onClick={deleteSelectedGraphItem} disabled={!selectedNodeId && !selectedEdgeId}>
+                <Trash2 className="h-4 w-4" /> {selectedEdgeId ? "Delete Selected Connection" : "Delete Selected"}
               </Button>
               <div>
                 <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">ENTRY NODE</label>
@@ -756,6 +825,18 @@ export default function FlowBuilderPage() {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                onNodeClick={(_, node) => {
+                  setSelectedNodeId(node.id);
+                  setSelectedEdgeId(null);
+                }}
+                onEdgeClick={(_, edge) => {
+                  setSelectedEdgeId(edge.id);
+                  setSelectedNodeId(null);
+                }}
+                onPaneClick={() => {
+                  setSelectedNodeId(null);
+                  setSelectedEdgeId(null);
+                }}
                 onNodeDragStop={(_, node) => {
                   setNodes((current) => {
                     const next = current.map((n) => (n.id === node.id ? { ...n, position: node.position } : n));
@@ -830,9 +911,16 @@ export default function FlowBuilderPage() {
             <div className="border-t border-border pt-4">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="flex items-center gap-2 text-sm font-semibold"><MessageSquare className="h-4 w-4" /> Test Console</h2>
-                <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing}>
-                  {sessionId ? "Restart" : "Start"}
-                </Button>
+                <div className="flex gap-2">
+                  {sessionId && (
+                    <Button variant="outline" size="sm" onClick={handleStopTest} disabled={testing}>
+                      Stop
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing}>
+                    {sessionId ? "Restart" : "Start"}
+                  </Button>
+                </div>
               </div>
               <select
                 value={selectedLead}

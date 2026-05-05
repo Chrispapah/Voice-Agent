@@ -785,3 +785,10 @@ export function sendTestTurn(botId: string, sessionId: string, humanInput: strin
     body: JSON.stringify({ human_input: humanInput }),
   });
 }
+
+export function stopTestSession(botId: string, sessionId: string, keepalive = false): Promise<void> {
+  return apiRequest<void>(`/api/bots/${botId}/test-session/${sessionId}`, {
+    method: "DELETE",
+    keepalive,
+  });
+}

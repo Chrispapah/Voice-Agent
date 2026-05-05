@@ -198,6 +198,8 @@ class PgSessionStore:
         row = await self.session.get(SessionRow, conversation_id)
         if row is None:
             return None
+        if row.bot_id != self.bot_id:
+            return None
         return copy.deepcopy(row.state_json)
 
     async def save(self, conversation_id: str, state: dict) -> None:
@@ -215,6 +217,6 @@ class PgSessionStore:
 
     async def delete(self, conversation_id: str) -> None:
         row = await self.session.get(SessionRow, conversation_id)
-        if row is not None:
+        if row is not None and row.bot_id == self.bot_id:
             await self.session.delete(row)
             await self.session.flush()
