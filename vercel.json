@@ -1,5 +1,5 @@
 {
-  "installCommand": "cd vocal-frontend && npm install",
-  "buildCommand": "cd vocal-frontend && npm run build",
-  "outputDirectory": "vocal-frontend/dist"
+  "installCommand": "npm install",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist"
 }
