@@ -52,6 +52,25 @@ def _deepgram_listen_url(*, model: str, language: str) -> str:
     return "wss://api.deepgram.com/v1/listen?" + urlencode(params)
 
 
+def _first_deepgram_transcript_channel(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Resolve the channel object that holds ``alternatives``.
+
+    Deepgram v1 sends several JSON message types on the same socket. Only
+    ``Results`` has ``channel`` as an object with ``alternatives``. Other types
+    (e.g. ``SpeechStarted``, ``UtteranceEnd``) use ``channel`` as a list of ints,
+    which must not be passed to ``.get``.
+    """
+    ch = payload.get("channel")
+    if isinstance(ch, dict):
+        return ch
+    if isinstance(ch, list) and ch and isinstance(ch[0], dict):
+        return ch[0]
+    multi = payload.get("channels")
+    if isinstance(multi, list) and multi and isinstance(multi[0], dict):
+        return multi[0]
+    return None
+
+
 def _client_message_for_deepgram_connect_failure(exc: Exception) -> str:
     """Map connect-time failures to hints; full detail stays in server logs."""
     msg_l = str(exc).lower()
@@ -267,7 +286,9 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                                     err = payload.get("description") or str(payload)
                                     await _send_json(websocket, {"type": "error", "message": f"Deepgram: {err}"})
                                     continue
-                                channel = payload.get("channel") or {}
+                                channel = _first_deepgram_transcript_channel(payload)
+                                if channel is None:
+                                    continue
                                 alts = channel.get("alternatives") or []
                                 if not alts:
                                     continue
