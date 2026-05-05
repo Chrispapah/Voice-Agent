@@ -7,9 +7,10 @@ import uuid
 from typing import Any
 from urllib.parse import urlencode
 
+import aiohttp
 import httpx
-from websockets.exceptions import InvalidStatus
-from websockets.legacy.client import connect as legacy_ws_connect
+from aiohttp import WSMsgType
+from aiohttp.client_exceptions import WSServerHandshakeError
 from fastapi import APIRouter, HTTPException, WebSocket
 from jose import JWTError
 from loguru import logger
@@ -224,72 +225,80 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         model = str(bot_cfg_merged.get("deepgram_model") or "nova-2")
         language = str(bot_cfg_merged.get("deepgram_language") or "en-US")
         uri = _deepgram_listen_url(model=model, language=language)
+        dg_timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=None)
         try:
-            # Legacy client + extra_headers: avoids websockets 14+ asyncio client passing
-            # additional_headers into loop.create_connection() (TypeError on Railway).
-            async with legacy_ws_connect(
-                uri,
-                extra_headers=[("Authorization", f"Token {key}")],
-                ping_interval=20,
-                ping_timeout=20,
-            ) as dg:
-                async def forward_audio() -> None:
-                    try:
-                        while not stop_event.is_set():
-                            try:
-                                chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.25)
-                            except asyncio.TimeoutError:
-                                continue
-                            if chunk is None:
-                                break
-                            await dg.send(chunk)
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception:
-                        logger.exception("Deepgram forward failed")
-
-                forward_task = asyncio.create_task(forward_audio())
-                try:
-                    async for message in dg:
-                        if stop_event.is_set():
-                            break
-                        if isinstance(message, bytes):
-                            continue
+            # aiohttp WebSocket: avoids fragile interactions between the `websockets` package,
+            # vocode's websockets<13 pin, and uvicorn/uvloop on Python 3.12.
+            async with aiohttp.ClientSession(timeout=dg_timeout) as session:
+                async with session.ws_connect(
+                    uri,
+                    headers={"Authorization": f"Token {key}"},
+                    heartbeat=20,
+                    autoping=True,
+                ) as dg:
+                    async def forward_audio() -> None:
                         try:
-                            payload = json.loads(message)
-                        except json.JSONDecodeError:
-                            continue
-                        if payload.get("type") == "Error":
-                            err = payload.get("description") or str(payload)
-                            await _send_json(websocket, {"type": "error", "message": f"Deepgram: {err}"})
-                            continue
-                        channel = payload.get("channel") or {}
-                        alts = channel.get("alternatives") or []
-                        if not alts:
-                            continue
-                        transcript = (alts[0].get("transcript") or "").strip()
-                        if not transcript:
-                            continue
-                        is_final = bool(payload.get("is_final") or payload.get("speech_final"))
-                        if is_final:
-                            await _send_json(websocket, {"type": "transcript.final", "text": transcript})
-                            asyncio.create_task(schedule_pipeline(transcript))
-                        else:
-                            await _send_json(websocket, {"type": "transcript.partial", "text": transcript})
-                finally:
-                    forward_task.cancel()
+                            while not stop_event.is_set():
+                                try:
+                                    chunk = await asyncio.wait_for(audio_queue.get(), timeout=0.25)
+                                except asyncio.TimeoutError:
+                                    continue
+                                if chunk is None:
+                                    break
+                                await dg.send_bytes(chunk)
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            logger.exception("Deepgram forward failed")
+
+                    forward_task = asyncio.create_task(forward_audio())
                     try:
-                        await forward_task
-                    except asyncio.CancelledError:
-                        pass
-                    try:
-                        await dg.send(json.dumps({"type": "CloseStream"}))
-                    except Exception:
-                        pass
+                        async for msg in dg:
+                            if stop_event.is_set():
+                                break
+                            if msg.type == WSMsgType.BINARY:
+                                continue
+                            if msg.type == WSMsgType.TEXT:
+                                try:
+                                    payload = json.loads(msg.data)
+                                except json.JSONDecodeError:
+                                    continue
+                                if payload.get("type") == "Error":
+                                    err = payload.get("description") or str(payload)
+                                    await _send_json(websocket, {"type": "error", "message": f"Deepgram: {err}"})
+                                    continue
+                                channel = payload.get("channel") or {}
+                                alts = channel.get("alternatives") or []
+                                if not alts:
+                                    continue
+                                transcript = (alts[0].get("transcript") or "").strip()
+                                if not transcript:
+                                    continue
+                                is_final = bool(payload.get("is_final") or payload.get("speech_final"))
+                                if is_final:
+                                    await _send_json(websocket, {"type": "transcript.final", "text": transcript})
+                                    asyncio.create_task(schedule_pipeline(transcript))
+                                else:
+                                    await _send_json(websocket, {"type": "transcript.partial", "text": transcript})
+                            elif msg.type in (WSMsgType.CLOSE, WSMsgType.CLOSING):
+                                break
+                            elif msg.type == WSMsgType.ERROR:
+                                logger.warning("Deepgram websocket protocol error: {}", msg)
+                                break
+                    finally:
+                        forward_task.cancel()
+                        try:
+                            await forward_task
+                        except asyncio.CancelledError:
+                            pass
+                        try:
+                            await dg.send_str(json.dumps({"type": "CloseStream"}))
+                        except Exception:
+                            pass
         except asyncio.CancelledError:
             raise
-        except InvalidStatus as exc:
-            code = getattr(getattr(exc, "response", None), "status_code", None)
+        except WSServerHandshakeError as exc:
+            code = exc.status
             logger.warning("Deepgram WebSocket handshake failed HTTP {}", code)
             if code == 401:
                 msg = (
@@ -301,6 +310,12 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             else:
                 msg = f"Deepgram WebSocket rejected the connection (HTTP {code}). See server logs."
             await _send_json(websocket, {"type": "error", "message": msg})
+        except aiohttp.ClientError as exc:
+            logger.exception("Deepgram connection failed (aiohttp)")
+            await _send_json(
+                websocket,
+                {"type": "error", "message": _client_message_for_deepgram_connect_failure(exc)},
+            )
         except Exception as exc:
             logger.exception("Deepgram connection failed")
             await _send_json(

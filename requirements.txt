@@ -19,4 +19,5 @@ sqlalchemy[asyncio]
 python-jose[cryptography]
 cryptography
 httpx
+aiohttp>=3.9.5,<4
 websockets>=12
