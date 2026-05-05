@@ -35,7 +35,7 @@ export default function KnowledgeBasePage() {
   const [wholeKbMaxChunks, setWholeKbMaxChunks] = useState(80);
   const [wholeKbMaxContextChars, setWholeKbMaxContextChars] = useState(90000);
   const [hybridMaxMatches, setHybridMaxMatches] = useState(18);
-  const [llmProvider, setLlmProvider] = useState("openai");
+  const [llmProvider, setLlmProvider] = useState("groq");
   const [answerModel, setAnswerModel] = useState("gpt-4.1-nano");
   const [embeddingModel, setEmbeddingModel] = useState("text-embedding-3-small");
   const [openAiApiKey, setOpenAiApiKey] = useState("");

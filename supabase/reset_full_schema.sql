@@ -121,8 +121,8 @@ CREATE TABLE public.bot_configs (
   is_active             boolean NOT NULL DEFAULT true,
 
   -- LLM
-  llm_provider          varchar(20)  NOT NULL DEFAULT 'openai',
-  llm_model_name        varchar(100) NOT NULL DEFAULT 'gpt-4o-mini',
+  llm_provider          varchar(20)  NOT NULL DEFAULT 'groq',
+  llm_model_name        varchar(100) NOT NULL DEFAULT 'llama-3.3-70b-versatile',
   llm_temperature       double precision NOT NULL DEFAULT 0.4,
   llm_max_tokens        integer NOT NULL DEFAULT 300,
   openai_api_key        text,

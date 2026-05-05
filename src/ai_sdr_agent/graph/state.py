@@ -94,8 +94,8 @@ class ConversationState(TypedDict):
 
 _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "bot_id": "",
-    "llm_provider": "stub",
-    "llm_model_name": "gpt-4o-mini",
+    "llm_provider": "groq",
+    "llm_model_name": "llama-3.3-70b-versatile",
     "llm_temperature": 0.4,
     "llm_max_tokens": 220,
     "openai_api_key": None,

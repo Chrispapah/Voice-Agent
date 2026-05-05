@@ -19,7 +19,7 @@ class SDRSettings(BaseSettings):
     port: int = 3000
     base_url: str | None = None
 
-    llm_provider: Literal["openai", "anthropic", "groq", "stub"] = "stub"
+    llm_provider: Literal["openai", "anthropic", "groq", "stub"] = "groq"
     llm_model_name: str = "llama-3.3-70b-versatile"
     llm_temperature: float = 0.4
     llm_max_tokens: int = 220

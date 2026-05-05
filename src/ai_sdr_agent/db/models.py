@@ -39,8 +39,8 @@ class BotConfigRow(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # LLM
-    llm_provider: Mapped[str] = mapped_column(String(20), default="openai")
-    llm_model_name: Mapped[str] = mapped_column(String(100), default="gpt-4o-mini")
+    llm_provider: Mapped[str] = mapped_column(String(20), default="groq")
+    llm_model_name: Mapped[str] = mapped_column(String(100), default="llama-3.3-70b-versatile")
     llm_temperature: Mapped[float] = mapped_column(Float, default=0.4)
     llm_max_tokens: Mapped[int] = mapped_column(Integer, default=300)
     openai_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)

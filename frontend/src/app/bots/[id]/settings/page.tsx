@@ -226,7 +226,7 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
           <>
             <Field label="LLM Provider">
               <select
-                value={current("llm_provider") || "openai"}
+                value={current("llm_provider") || "groq"}
                 onChange={(e) => update("llm_provider", e.target.value)}
                 className="input-field"
               >

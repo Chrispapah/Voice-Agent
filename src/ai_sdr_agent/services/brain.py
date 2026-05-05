@@ -9,13 +9,7 @@ from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Awaitable, Callable, Protocol, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 from loguru import logger
-
-try:
-    from langchain_anthropic import ChatAnthropic
-except ImportError:  # pragma: no cover
-    ChatAnthropic = None
 
 try:
     from langchain_groq import ChatGroq
@@ -27,7 +21,22 @@ try:
 except ImportError:  # pragma: no cover
     AsyncGroq = None
 
-from ai_sdr_agent.config import SDRSettings
+from ai_sdr_agent.config import SDRSettings, get_settings
+
+_GROQ_FALLBACK_MODEL = "llama-3.3-70b-versatile"
+
+
+def _is_likely_non_groq_chat_model(model_name: str) -> bool:
+    u = (model_name or "").strip().lower()
+    if not u:
+        return True
+    return (
+        u.startswith("gpt-")
+        or u.startswith("claude")
+        or u.startswith("o1")
+        or u.startswith("o3")
+        or "davinci" in u
+    )
 
 ResponseChunkSink = Callable[[str], Awaitable[None]]
 _RESPONSE_CHUNK_SINK: ContextVar[ResponseChunkSink | None] = ContextVar(
@@ -318,63 +327,47 @@ class StubConversationBrain:
 
 
 class LangChainConversationBrain:
-    """LLM-backed brain. Accepts either SDRSettings (legacy) or a bot_config dict."""
+    """Conversation LLM (respond, classify, extract) always uses Groq via bot or env API key."""
 
     _RESPOND_TRANSCRIPT_LIMIT = 8
     _EXTRACTION_TRANSCRIPT_LIMIT = 6
 
     def __init__(self, settings: SDRSettings | None = None, *, bot_config: dict | None = None):
+        env = settings if settings is not None else get_settings()
         if bot_config:
-            provider = bot_config.get("llm_provider", "openai")
-            model_name = bot_config.get("llm_model_name", "gpt-4o-mini")
+            model_name = bot_config.get("llm_model_name", _GROQ_FALLBACK_MODEL)
             temperature = bot_config.get("llm_temperature", 0.4)
             max_tokens = bot_config.get("llm_max_tokens", 220)
-            openai_key = bot_config.get("openai_api_key")
-            anthropic_key = bot_config.get("anthropic_api_key")
-            groq_key = bot_config.get("groq_api_key")
+            groq_key = bot_config.get("groq_api_key") or env.groq_api_key
         elif settings:
-            provider = settings.llm_provider
             model_name = settings.llm_model_name
             temperature = settings.llm_temperature
             max_tokens = settings.llm_max_tokens
-            openai_key = settings.openai_api_key
-            anthropic_key = settings.anthropic_api_key
             groq_key = settings.groq_api_key
         else:
             raise ValueError("Either settings or bot_config must be provided")
 
-        if provider == "openai":
-            self._model = ChatOpenAI(
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_key=openai_key,
-            )
-        elif provider == "groq" and ChatGroq is not None:
-            self._model = ChatGroq(
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_key=groq_key,
-            )
-        elif provider == "anthropic" and ChatAnthropic is not None:
-            self._model = ChatAnthropic(
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                api_key=anthropic_key,
-            )
-        else:
-            raise ValueError(f"Unsupported llm_provider: {provider}")
+        if _is_likely_non_groq_chat_model(model_name):
+            candidate = env.llm_model_name
+            model_name = candidate if not _is_likely_non_groq_chat_model(candidate) else _GROQ_FALLBACK_MODEL
 
-        self._provider = provider
+        if not groq_key:
+            raise ValueError("GROQ_API_KEY or bot groq_api_key is required (all conversation LLM uses Groq).")
+        if ChatGroq is None:
+            raise ValueError("langchain_groq is required for ConversationBrain.")
+
+        self._model = ChatGroq(
+            model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            api_key=groq_key,
+        )
+        self._provider = "groq"
         self._model_name = model_name
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._groq_async_client = (
-            AsyncGroq(api_key=groq_key)
-            if provider == "groq" and AsyncGroq is not None and groq_key
-            else None
+            AsyncGroq(api_key=groq_key) if AsyncGroq is not None and groq_key else None
         )
 
     def supports_response_token_stream(self) -> bool:
@@ -752,10 +745,11 @@ def build_conversation_brain(
     bot_config: dict | None = None,
 ) -> ConversationBrain:
     """Build a brain from SDRSettings (legacy) or a per-bot config dict."""
+    env_settings = settings if settings is not None else get_settings()
     provider = (
         (bot_config or {}).get("llm_provider")
-        or (settings.llm_provider if settings else "stub")
+        or env_settings.llm_provider
     )
     if provider == "stub":
         return StubConversationBrain()
-    return LangChainConversationBrain(settings, bot_config=bot_config)
+    return LangChainConversationBrain(env_settings, bot_config=bot_config)
