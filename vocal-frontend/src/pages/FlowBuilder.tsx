@@ -66,6 +66,31 @@ import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentG
 
 type BuilderMode = "single" | "graph";
 type ChatMessage = { role: "human" | "agent"; content: string };
+type SpeechRecognitionEventLike = Event & {
+  resultIndex: number;
+  results: {
+    length: number;
+    [index: number]: {
+      isFinal: boolean;
+      0: { transcript: string };
+    };
+  };
+};
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  abort: () => void;
+  start: () => void;
+  stop: () => void;
+};
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: new () => SpeechRecognitionLike;
+  webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+};
 
 const nodeTypes = { agentSpec: AgentGraphNode };
 
@@ -171,6 +196,12 @@ function firstUsableSpec(bot: BotConfig | null): ConversationSpecV1 {
 function isBenignStopError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   return err.message.includes("404") || err.message.toLowerCase().includes("not found");
+}
+
+function speechRecognitionConstructor(): (new () => SpeechRecognitionLike) | null {
+  if (typeof window === "undefined") return null;
+  const speechWindow = window as SpeechRecognitionWindow;
+  return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition || null;
 }
 
 function ToolSelector({
@@ -307,8 +338,11 @@ export default function FlowBuilderPage() {
   const [input, setInput] = useState("");
   const [testing, setTesting] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [listening, setListening] = useState(false);
+  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const sessionIdRef = useRef(sessionId);
   const botIdRef = useRef(botId);
   nodesRef.current = nodes;
@@ -318,6 +352,8 @@ export default function FlowBuilderPage() {
 
   useEffect(() => {
     return () => {
+      recognitionRef.current?.abort();
+      window.speechSynthesis?.cancel();
       const activeSessionId = sessionIdRef.current;
       const activeBotId = botIdRef.current;
       if (activeBotId && activeSessionId) {
@@ -325,6 +361,55 @@ export default function FlowBuilderPage() {
       }
     };
   }, []);
+
+  function speakAgentResponse(text: string) {
+    if (!voiceOutputEnabled || !text.trim() || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = deepgramLanguage || "en-US";
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function toggleVoiceOutput() {
+    setVoiceOutputEnabled((enabled) => {
+      if (enabled) window.speechSynthesis?.cancel();
+      return !enabled;
+    });
+  }
+
+  function toggleListening() {
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    const SpeechRecognition = speechRecognitionConstructor();
+    if (!SpeechRecognition) {
+      setError("Speech recognition is not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = deepgramLanguage || "en-US";
+    recognition.onresult = (event) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        transcript += event.results[i][0].transcript;
+      }
+      setInput(transcript.trim());
+    };
+    recognition.onerror = (event) => {
+      setListening(false);
+      setError(event.error ? `Speech recognition error: ${event.error}` : "Speech recognition failed");
+    };
+    recognition.onend = () => setListening(false);
+    setError("");
+    setListening(true);
+    recognition.start();
+  }
 
   useEffect(() => {
     if (!botId) return;
@@ -616,6 +701,7 @@ export default function FlowBuilderPage() {
       const response = await startTestSession(botId, leadId);
       setSessionId(response.conversation_id);
       setMessages([{ role: "agent", content: response.agent_response }]);
+      speakAgentResponse(response.agent_response);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
         navigate("/auth");
@@ -633,6 +719,8 @@ export default function FlowBuilderPage() {
     setTesting(true);
     setError("");
     try {
+      recognitionRef.current?.abort();
+      window.speechSynthesis?.cancel();
       await stopTestSession(botId, activeSessionId);
     } catch (err: unknown) {
       if (!isBenignStopError(err)) {
@@ -663,6 +751,7 @@ export default function FlowBuilderPage() {
     try {
       const response = await sendTestTurn(botId, sessionId, text);
       setMessages((current) => [...current, { role: "agent", content: response.agent_response }]);
+      speakAgentResponse(response.agent_response);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
         navigate("/auth");
@@ -950,6 +1039,14 @@ export default function FlowBuilderPage() {
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="flex items-center gap-2 text-sm font-semibold"><MessageSquare className="h-4 w-4" /> Test Console</h2>
                 <div className="flex gap-2">
+                  <Button
+                    variant={voiceOutputEnabled ? "default" : "outline"}
+                    size="sm"
+                    onClick={toggleVoiceOutput}
+                    title={voiceOutputEnabled ? "Disable spoken replies" : "Enable spoken replies"}
+                  >
+                    <Volume2 className="h-4 w-4" />
+                  </Button>
                   {sessionId && (
                     <Button variant="outline" size="sm" onClick={handleStopTest} disabled={testing}>
                       Stop
@@ -987,10 +1084,20 @@ export default function FlowBuilderPage() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={sessionId ? "Type a reply..." : "Start test first"}
+                  placeholder={sessionId ? (listening ? "Listening..." : "Type or speak a reply...") : "Start test first"}
                   disabled={!sessionId || testing}
                   className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 />
+                <Button
+                  type="button"
+                  variant={listening ? "default" : "outline"}
+                  size="sm"
+                  onClick={toggleListening}
+                  disabled={!sessionId || testing}
+                  title={listening ? "Stop listening" : "Speak reply"}
+                >
+                  <Mic className="h-4 w-4" />
+                </Button>
                 <Button type="submit" size="sm" disabled={!sessionId || !input.trim() || testing}>
                   <Send className="h-4 w-4" />
                 </Button>
