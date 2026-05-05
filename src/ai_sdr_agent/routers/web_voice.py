@@ -28,6 +28,52 @@ from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_b
 
 router = APIRouter(prefix="/api/bots", tags=["voice"])
 
+# Same phrase-boundary heuristics as SDRVocodeAgent._emit_live_chunk (telephony).
+_STREAM_PUNCTUATION = ".?,!;:"
+_STREAM_HARD_FLUSH_CHARS = 24
+
+
+class _TelephonyStylePhraseBuffer:
+    """Accumulates LLM token chunks and emits phrase-sized strings for TTS."""
+
+    def __init__(self) -> None:
+        self.buffer = ""
+
+    async def feed(self, on_phrase, chunk: str) -> None:
+        if not chunk:
+            return
+        self.buffer += chunk
+        while self.buffer:
+            boundary_index = next(
+                (idx for idx, char in enumerate(self.buffer) if char in _STREAM_PUNCTUATION),
+                -1,
+            )
+            if boundary_index >= 2:
+                output = self.buffer[: boundary_index + 1].strip()
+                self.buffer = self.buffer[boundary_index + 1 :].lstrip()
+                if output:
+                    text = output if output.endswith(" ") else output + " "
+                    await on_phrase(text)
+                continue
+            if len(self.buffer) >= _STREAM_HARD_FLUSH_CHARS:
+                space_index = self.buffer.rfind(" ")
+                if space_index > 0:
+                    output = self.buffer[:space_index].strip()
+                    self.buffer = self.buffer[space_index + 1 :].lstrip()
+                    if output:
+                        text = output if output.endswith(" ") else output + " "
+                        await on_phrase(text)
+                    continue
+            break
+
+    async def flush(self, on_phrase) -> None:
+        if not self.buffer:
+            return
+        buffered = self.buffer
+        self.buffer = ""
+        text = buffered if buffered.endswith(" ") else buffered + " "
+        await on_phrase(text)
+
 
 def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> dict[str, Any]:
     out = dict(bot_cfg)
@@ -46,7 +92,7 @@ def _deepgram_listen_url(*, model: str, language: str) -> str:
         "language": language,
         "smart_format": "true",
         "interim_results": "true",
-        "endpointing": "400",
+        "endpointing": "300",
         "vad_events": "true",
     }
     return "wss://api.deepgram.com/v1/listen?" + urlencode(params)
@@ -151,57 +197,33 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         assert conversation_id and bot_cfg_merged and bid
         if not user_text.strip():
             return
-        try:
-            async with get_async_session_factory()() as db:
-                lead_repo = PgLeadRepository(db)
-                session_store = PgSessionStore(db, bid)
-                call_log_repo = PgCallLogRepository(db, bid)
-                svc = _build_service_for_bot(bot_cfg_merged, lead_repo, session_store, call_log_repo)
-                state = await svc.handle_turn(conversation_id, user_text)
-                await db.commit()
-            if my_gen != generation:
-                return
-            reply = (state.get("last_agent_response") or "").strip()
-            await _send_json(
-                websocket,
-                {
-                    "type": "agent.text",
-                    "text": reply,
-                    "stage": state.get("current_node"),
-                    "next_node": state.get("next_node"),
-                },
-            )
-            if not reply or my_gen != generation:
-                await _send_json(websocket, {"type": "agent.done"})
-                return
-            eleven_key = bot_cfg_merged.get("elevenlabs_api_key") or ""
-            voice_id = bot_cfg_merged.get("elevenlabs_voice_id") or ""
-            model_id = str(bot_cfg_merged.get("elevenlabs_model_id") or "eleven_turbo_v2")
+        eleven_key = bot_cfg_merged.get("elevenlabs_api_key") or ""
+        voice_id = bot_cfg_merged.get("elevenlabs_voice_id") or ""
+        model_id = str(bot_cfg_merged.get("elevenlabs_model_id") or "eleven_turbo_v2")
+        e_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+        e_headers = {
+            "xi-api-key": eleven_key,
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+        }
+
+        async def _stream_elevenlabs_text(spoken_text: str) -> bool:
+            if not spoken_text.strip() or my_gen != generation:
+                return True
             if not eleven_key or not voice_id:
-                await _send_json(
-                    websocket,
-                    {"type": "error", "message": "ElevenLabs API key or voice id not configured."},
-                )
-                await _send_json(websocket, {"type": "agent.done"})
-                return
+                return True
             try:
-                e_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
-                e_headers = {
-                    "xi-api-key": eleven_key,
-                    "Accept": "audio/mpeg",
-                    "Content-Type": "application/json",
-                }
                 async with httpx_client.stream(
                     "POST",
                     e_url,
                     headers=e_headers,
-                    json={"text": reply, "model_id": model_id},
+                    json={"text": spoken_text.strip(), "model_id": model_id},
                     timeout=120.0,
                 ) as response:
                     response.raise_for_status()
                     async for chunk in response.aiter_bytes(4096):
                         if my_gen != generation:
-                            break
+                            return False
                         if chunk:
                             await _send_json(
                                 websocket,
@@ -215,6 +237,92 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                     raise
                 logger.exception("ElevenLabs streaming failed")
                 await _send_json(websocket, {"type": "error", "message": "TTS request failed"})
+                return False
+            return True
+
+        try:
+            async with get_async_session_factory()() as db:
+                lead_repo = PgLeadRepository(db)
+                session_store = PgSessionStore(db, bid)
+                call_log_repo = PgCallLogRepository(db, bid)
+                svc = _build_service_for_bot(bot_cfg_merged, lead_repo, session_store, call_log_repo)
+                brain = svc.dependencies.brain
+
+                if brain.supports_response_token_stream():
+                    phrase_parts: list[str] = []
+                    tts_streams_started = False
+
+                    async def _on_phrase(phrase: str) -> None:
+                        nonlocal tts_streams_started
+                        raw = phrase.strip()
+                        if not raw or my_gen != generation:
+                            return
+                        phrase_parts.append(raw)
+                        cumulative = " ".join(phrase_parts).strip()
+                        await _send_json(websocket, {"type": "agent.text", "text": cumulative})
+                        if not eleven_key or not voice_id:
+                            return
+                        tts_streams_started = True
+                        ok = await _stream_elevenlabs_text(raw)
+                        if not ok:
+                            return
+
+                    streamed = await svc.start_streamed_turn(conversation_id, user_text)
+                    buf = _TelephonyStylePhraseBuffer()
+                    async for token in streamed.chunks:
+                        if my_gen != generation:
+                            break
+                        await buf.feed(_on_phrase, token)
+                    await buf.flush(_on_phrase)
+                    state = await streamed.final_state_task
+                    await db.commit()
+                    if my_gen != generation:
+                        return
+                    reply = (state.get("last_agent_response") or "").strip()
+                    if reply and not tts_streams_started and eleven_key and voice_id:
+                        await _send_json(websocket, {"type": "agent.text", "text": reply})
+                        await _stream_elevenlabs_text(reply)
+                    await _send_json(
+                        websocket,
+                        {
+                            "type": "agent.text",
+                            "text": reply,
+                            "stage": state.get("current_node"),
+                            "next_node": state.get("next_node"),
+                        },
+                    )
+                    if not eleven_key or not voice_id:
+                        await _send_json(
+                            websocket,
+                            {"type": "error", "message": "ElevenLabs API key or voice id not configured."},
+                        )
+                else:
+                    state = await svc.handle_turn(conversation_id, user_text)
+                    await db.commit()
+                    if my_gen != generation:
+                        return
+                    reply = (state.get("last_agent_response") or "").strip()
+                    await _send_json(
+                        websocket,
+                        {
+                            "type": "agent.text",
+                            "text": reply,
+                            "stage": state.get("current_node"),
+                            "next_node": state.get("next_node"),
+                        },
+                    )
+                    if not reply or my_gen != generation:
+                        await _send_json(websocket, {"type": "agent.done"})
+                        return
+                    if not eleven_key or not voice_id:
+                        await _send_json(
+                            websocket,
+                            {"type": "error", "message": "ElevenLabs API key or voice id not configured."},
+                        )
+                        await _send_json(websocket, {"type": "agent.done"})
+                        return
+                    await _stream_elevenlabs_text(reply)
+
             if my_gen == generation:
                 await _send_json(websocket, {"type": "agent.done"})
         except asyncio.CancelledError:

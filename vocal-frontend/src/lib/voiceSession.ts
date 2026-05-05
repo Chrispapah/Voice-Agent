@@ -95,7 +95,6 @@ export class VoiceSession {
           this.callbacks.onTranscriptFinal?.(msg.text);
           break;
         case "agent.text":
-          this.audioChunks = [];
           this.callbacks.onAgentText?.(msg.text);
           break;
         case "agent.audio": {
