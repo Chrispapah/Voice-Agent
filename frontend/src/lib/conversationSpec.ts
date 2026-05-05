@@ -12,6 +12,8 @@ export interface SpecNode {
   system_prompt: string;
   loop_min_turns?: number | null;
   loop_max_turns?: number | null;
+  /** Router LLM hint when choosing among outbound edges (not spoken). */
+  classify_hint?: string | null;
 }
 
 export interface SpecEdge {

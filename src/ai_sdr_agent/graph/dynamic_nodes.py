@@ -66,10 +66,36 @@ def _trace(state: ConversationState) -> dict[str, Any]:
     }
 
 
+def _classify_routing_context(
+    spec: ConversationSpecV1,
+    *,
+    current_id: str,
+    outgoing: list[str],
+) -> str:
+    """Human-readable destination lines + optional per-node hint for graph edge selection."""
+    lines: list[str] = []
+    for lid in outgoing:
+        node = next((n for n in spec.nodes if n.id == lid), None)
+        lbl = (node.label or "").strip() if node else ""
+        lines.append(f"- {lid}: {lbl}" if lbl else f"- {lid}")
+    block = "\n".join(lines)
+    cur = next((n for n in spec.nodes if n.id == current_id), None)
+    hint = (cur.classify_hint or "").strip() if cur else ""
+    parts = [
+        "",
+        "Candidate destinations (respond with exactly one id from your allowed list):",
+        block,
+    ]
+    if hint:
+        parts.extend(["", "Routing guidance:", hint])
+    return "\n".join(parts)
+
+
 async def _pick_next_node(
     *,
     brain: ConversationBrain,
     state: ConversationState,
+    spec: ConversationSpecV1,
     current_id: str,
     outgoing: list[str],
     trace: dict[str, Any],
@@ -84,6 +110,7 @@ async def _pick_next_node(
         f"The active agent was {current_id!r}. Based on the user's latest message, "
         "choose which agent should speak next. Only pick from the allowed labels."
     )
+    instruction += _classify_routing_context(spec, current_id=current_id, outgoing=outgoing)
     choice = await brain.classify(
         instruction=instruction,
         human_input=human,
@@ -232,6 +259,7 @@ def make_graph_agent_node(
         raw_next = await _pick_next_node(
             brain=brain,
             state=state,
+            spec=spec,
             current_id=node_id,
             outgoing=outgoing,
             trace=trace,

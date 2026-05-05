@@ -12,6 +12,8 @@ export interface SpecNode {
   loop_min_turns?: number | null;
   /** After this many completed stays, force exit to a non-self neighbor. */
   loop_max_turns?: number | null;
+  /** Shown only to the edge-router LLM when this node fans out (not in TTS prompts). */
+  classify_hint?: string | null;
 }
 
 export interface SpecEdge {

@@ -7,6 +7,8 @@ Router rules (graph mode):
 - **1 outgoing edge** → that target is chosen without an extra LLM call.
 - **2+ outgoing edges** → ``ConversationBrain.classify`` picks one label from the
   allowed target node ids (instruction summarizes the last user turn and options).
+  Destination **labels** from the graph are included when set; optional per-node
+  ``classify_hint`` adds routing rules for ambiguous intents.
 - Optional per-node ``loop_min_turns`` / ``loop_max_turns`` constrain self-loops:
   min blocks leaving until enough completed stays; max forces exit to a non-self
   neighbor after enough stays (only when those edges exist).
@@ -50,6 +52,11 @@ class SpecNode(BaseModel):
         default=None,
         ge=1,
         description="After this many completed stays, force exit to a non-self neighbor if one exists.",
+    )
+    classify_hint: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="When this node has multiple outbound edges, appended to the router LLM prompt.",
     )
 
     @field_validator("id")

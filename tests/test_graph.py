@@ -216,6 +216,28 @@ def test_parse_graph_spec_and_execution_kind():
     assert graph_execution_kind({"conversation_spec": raw}) == "graph"
 
 
+def test_parse_graph_spec_node_classify_hint():
+    raw = {
+        "conversation_spec_version": 1,
+        "mode": "graph",
+        "template": "custom",
+        "entry_node_id": "alpha",
+        "nodes": [
+            {
+                "id": "alpha",
+                "label": "A",
+                "system_prompt": "ALPHA body",
+                "classify_hint": "If the user wants bookings, pick beta.",
+            },
+            {"id": "beta", "label": "B", "system_prompt": "B body"},
+        ],
+        "edges": [{"from": "alpha", "to": "beta"}],
+    }
+    spec = parse_conversation_spec(raw)
+    alpha = next(n for n in spec.nodes if n.id == "alpha")
+    assert alpha.classify_hint == "If the user wants bookings, pick beta."
+
+
 class _GraphStubBrain(StubConversationBrain):
     async def respond(
         self,
