@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ReactFlow,
   Background,
+  BaseEdge,
   Controls,
   MiniMap,
   BackgroundVariant,
@@ -12,6 +13,7 @@ import {
   type Connection,
   type Edge,
   type EdgeChange,
+  type EdgeProps,
   type Node,
   type NodeChange,
 } from "@xyflow/react";
@@ -67,6 +69,28 @@ type ChatMessage = { role: "human" | "agent"; content: string };
 
 const nodeTypes = { agentSpec: AgentGraphNode };
 
+function SelfLoopEdge({
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  markerEnd,
+  style,
+}: EdgeProps) {
+  const loopHeight = 120;
+  const loopWidth = 80;
+  const edgePath = [
+    `M ${sourceX} ${sourceY}`,
+    `C ${sourceX + loopWidth} ${sourceY - loopHeight}`,
+    `${targetX - loopWidth} ${targetY - loopHeight}`,
+    `${targetX} ${targetY}`,
+  ].join(" ");
+
+  return <BaseEdge path={edgePath} markerEnd={markerEnd} style={style} />;
+}
+
+const edgeTypes = { selfLoop: SelfLoopEdge };
+
 function inferMode(spec: ConversationSpecV1 | null | undefined): BuilderMode {
   return spec?.mode === "single" ? "single" : "graph";
 }
@@ -91,6 +115,7 @@ function specToEdges(spec: ConversationSpecV1): Edge[] {
     id: `e-${e.from}-${e.to}-${i}`,
     source: e.from,
     target: e.to,
+    type: e.from === e.to ? "selfLoop" : undefined,
     style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
   }));
 }
@@ -400,7 +425,11 @@ export default function FlowBuilderPage() {
     (connection: Connection) => {
       setEdges((current) => {
         const next = addEdge(
-          { ...connection, style: { stroke: "hsl(var(--primary))", strokeWidth: 2 } },
+          {
+            ...connection,
+            type: connection.source === connection.target ? "selfLoop" : undefined,
+            style: { stroke: "hsl(var(--primary))", strokeWidth: 2 },
+          },
           current,
         );
         pushGraphSpec(nodesRef.current, next, entryNodeId);
@@ -833,6 +862,7 @@ export default function FlowBuilderPage() {
                 onNodesChange={onNodesChange}
                 onEdgesChange={onEdgesChange}
                 onConnect={onConnect}
+                edgeTypes={edgeTypes}
                 onNodeClick={(_, node) => {
                   setSelectedNodeId(node.id);
                   setSelectedEdgeId(null);
