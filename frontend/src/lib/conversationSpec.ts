@@ -10,6 +10,8 @@ export interface SpecNode {
   id: string;
   label?: string | null;
   system_prompt: string;
+  loop_min_turns?: number | null;
+  loop_max_turns?: number | null;
 }
 
 export interface SpecEdge {

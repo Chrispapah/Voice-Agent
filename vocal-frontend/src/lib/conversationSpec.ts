@@ -8,6 +8,10 @@ export interface SpecNode {
   label?: string | null;
   system_prompt: string;
   tool_ids?: string[];
+  /** Minimum completed self-loop turns before classifier may route to a different node. */
+  loop_min_turns?: number | null;
+  /** After this many completed stays, force exit to a non-self neighbor. */
+  loop_max_turns?: number | null;
 }
 
 export interface SpecEdge {

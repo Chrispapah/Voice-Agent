@@ -6,7 +6,9 @@ import time
 import pytest
 
 from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDependencies
-from ai_sdr_agent.graph.spec import ConversationSpecV1, graph_execution_kind, parse_conversation_spec
+from pydantic import ValidationError
+
+from ai_sdr_agent.graph.spec import ConversationSpecV1, SpecNode, graph_execution_kind, parse_conversation_spec
 from ai_sdr_agent.graph.state import _DEFAULT_BOT_CONFIG
 from ai_sdr_agent.services.brain import StubConversationBrain
 from ai_sdr_agent.services.persistence import (
@@ -235,6 +237,48 @@ class _GraphStubBrain(StubConversationBrain):
         )
 
 
+class _LoopRoutingBrain(_GraphStubBrain):
+    """Graph tests: fixed classifier label + short replies for loop fixtures."""
+
+    def __init__(self, *, classify_as: str, opener_stay: str | None = None):
+        self._classify_as = classify_as
+        self._opener_stay = opener_stay
+
+    async def classify(
+        self,
+        *,
+        instruction: str,
+        human_input: str,
+        labels,
+        trace: dict | None = None,
+    ):
+        if not (human_input or "").strip():
+            if self._opener_stay and self._opener_stay in labels:
+                return self._opener_stay
+        if self._classify_as in labels:
+            return self._classify_as
+        return labels[0]
+
+    async def respond(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+        trace: dict | None = None,
+    ) -> str:
+        if "N1 LOOP" in system_prompt:
+            return "n1 reply"
+        if "N2 BODY" in system_prompt:
+            return "n2 reply"
+        return await super().respond(
+            system_prompt=system_prompt,
+            transcript=transcript,
+            max_tokens=max_tokens,
+            trace=trace,
+        )
+
+
 @pytest.mark.asyncio
 async def test_custom_graph_two_nodes_linear():
     spec = {
@@ -285,3 +329,91 @@ async def test_single_agent_mode_reuses_internal_node():
     state = await service.handle_turn(conversation_id, "Yes, I oversee sales operations.")
     assert state["current_node"] == "__single__"
     assert state["next_node"] == "__single__"
+
+
+def test_spec_node_loop_min_max_validation():
+    SpecNode(id="a", system_prompt="x", loop_min_turns=1, loop_max_turns=2)
+    with pytest.raises(ValidationError):
+        SpecNode(id="a", system_prompt="x", loop_min_turns=3, loop_max_turns=2)
+
+
+@pytest.mark.asyncio
+async def test_custom_graph_loop_min_turns_blocks_early_exit():
+    spec = {
+        "conversation_spec_version": 1,
+        "mode": "graph",
+        "template": "custom",
+        "entry_node_id": "n1",
+        "nodes": [
+            {"id": "n1", "system_prompt": "N1 LOOP stay", "loop_min_turns": 2},
+            {"id": "n2", "system_prompt": "N2 BODY continue"},
+        ],
+        "edges": [{"from": "n1", "to": "n1"}, {"from": "n1", "to": "n2"}],
+    }
+    bot_cfg = _stub_bot_config(conversation_spec=spec, initial_greeting="Hi.")
+    service, _, _, _ = _build_conversation_service(
+        brain=_LoopRoutingBrain(classify_as="n2", opener_stay="n1"),
+        bot_config=bot_cfg,
+    )
+    conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
+    await service.handle_turn(conversation_id, "")
+
+    state = await service.handle_turn(conversation_id, "one")
+    assert state["current_node"] == "n1"
+    assert state["next_node"] == "n1"
+    assert state.get("graph_node_streaks", {}).get("n1") == 1
+
+    state = await service.handle_turn(conversation_id, "two")
+    assert state["current_node"] == "n1"
+    assert state["next_node"] == "n1"
+    assert state.get("graph_node_streaks", {}).get("n1") == 2
+
+    state = await service.handle_turn(conversation_id, "three")
+    assert state["current_node"] == "n1"
+    assert state["next_node"] == "n2"
+    assert state.get("graph_node_streaks", {}).get("n1") == 0
+
+    state = await service.handle_turn(conversation_id, "four")
+    assert state["current_node"] == "n2"
+    assert state["next_node"] == "n2"
+
+
+@pytest.mark.asyncio
+async def test_custom_graph_loop_max_turns_forces_exit():
+    spec = {
+        "conversation_spec_version": 1,
+        "mode": "graph",
+        "template": "custom",
+        "entry_node_id": "n1",
+        "nodes": [
+            {"id": "n1", "system_prompt": "N1 LOOP stay", "loop_max_turns": 2},
+            {"id": "n2", "system_prompt": "N2 BODY continue"},
+        ],
+        "edges": [{"from": "n1", "to": "n1"}, {"from": "n1", "to": "n2"}],
+    }
+    bot_cfg = _stub_bot_config(conversation_spec=spec, initial_greeting="Hi.")
+    service, _, _, _ = _build_conversation_service(
+        brain=_LoopRoutingBrain(classify_as="n1", opener_stay="n1"),
+        bot_config=bot_cfg,
+    )
+    conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
+    await service.handle_turn(conversation_id, "")
+
+    state = await service.handle_turn(conversation_id, "one")
+    assert state["current_node"] == "n1"
+    assert state["next_node"] == "n1"
+    assert state.get("graph_node_streaks", {}).get("n1") == 1
+
+    state = await service.handle_turn(conversation_id, "two")
+    assert state["current_node"] == "n1"
+    assert state["next_node"] == "n1"
+    assert state.get("graph_node_streaks", {}).get("n1") == 2
+
+    state = await service.handle_turn(conversation_id, "three")
+    assert state["current_node"] == "n1"
+    assert state["next_node"] == "n2"
+    assert state.get("graph_node_streaks", {}).get("n1") == 0
+
+    state = await service.handle_turn(conversation_id, "four")
+    assert state["current_node"] == "n2"
+    assert state["next_node"] == "n2"

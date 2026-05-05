@@ -143,7 +143,13 @@ function specToNodes(spec: ConversationSpecV1): Node[] {
     id: n.id,
     type: "agentSpec",
     position: spec.positions?.[n.id] ?? { x: 160 + i * 320, y: 160 },
-    data: { label: n.label || n.id, system_prompt: n.system_prompt, tool_ids: n.tool_ids ?? [] },
+    data: {
+      label: n.label || n.id,
+      system_prompt: n.system_prompt,
+      tool_ids: n.tool_ids ?? [],
+      ...(n.loop_min_turns != null ? { loop_min_turns: n.loop_min_turns } : {}),
+      ...(n.loop_max_turns != null ? { loop_max_turns: n.loop_max_turns } : {}),
+    },
   }));
 }
 
@@ -164,12 +170,23 @@ function nodesEdgesToSpec(
   edges: Edge[],
   entryNodeId: string,
 ): ConversationSpecV1 {
-  const specNodes: SpecNode[] = nodes.map((n) => ({
-    id: n.id,
-    label: typeof n.data?.label === "string" ? n.data.label : null,
-    system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
-    tool_ids: normalizeToolIds(n.data?.tool_ids),
-  }));
+  const specNodes: SpecNode[] = nodes.map((n) => {
+    const sn: SpecNode = {
+      id: n.id,
+      label: typeof n.data?.label === "string" ? n.data.label : null,
+      system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
+      tool_ids: normalizeToolIds(n.data?.tool_ids),
+    };
+    const lo = n.data?.loop_min_turns;
+    const hi = n.data?.loop_max_turns;
+    if (typeof lo === "number" && Number.isFinite(lo) && lo >= 1) {
+      sn.loop_min_turns = Math.floor(lo);
+    }
+    if (typeof hi === "number" && Number.isFinite(hi) && hi >= 1) {
+      sn.loop_max_turns = Math.floor(hi);
+    }
+    return sn;
+  });
   const specEdges: SpecEdge[] = edges.map((e) => ({ from: e.source, to: e.target }));
   const positions: Record<string, { x: number; y: number }> = {};
   for (const n of nodes) {
@@ -688,6 +705,28 @@ export default function FlowBuilderPage() {
     });
   }
 
+  function updateSelectedNodeLoopField(field: "loop_min_turns" | "loop_max_turns", raw: string) {
+    if (!selectedNodeId) return;
+    setNodes((current) => {
+      const next = current.map((node) => {
+        if (node.id !== selectedNodeId) return node;
+        const data: Record<string, unknown> = { ...(node.data as Record<string, unknown>) };
+        const trimmed = raw.trim();
+        if (trimmed === "") {
+          delete data[field];
+        } else {
+          const num = parseInt(trimmed, 10);
+          if (!Number.isFinite(num)) return node;
+          const v = Math.max(1, Math.floor(num));
+          data[field] = v;
+        }
+        return { ...node, data };
+      });
+      pushGraphSpec(next, edgesRef.current, entryNodeId);
+      return next;
+    });
+  }
+
   function updateSelectedNodeTools(toolIds: string[]) {
     if (!selectedNodeId) return;
     setNodes((current) => {
@@ -1156,6 +1195,45 @@ export default function FlowBuilderPage() {
                     className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
                   />
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">LOOP MIN TURNS</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      placeholder="—"
+                      value={
+                        typeof selectedNode.data?.loop_min_turns === "number"
+                          ? selectedNode.data.loop_min_turns
+                          : ""
+                      }
+                      onChange={(e) => updateSelectedNodeLoopField("loop_min_turns", e.target.value)}
+                      className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">LOOP MAX TURNS</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      placeholder="—"
+                      value={
+                        typeof selectedNode.data?.loop_max_turns === "number"
+                          ? selectedNode.data.loop_max_turns
+                          : ""
+                      }
+                      onChange={(e) => updateSelectedNodeLoopField("loop_max_turns", e.target.value)}
+                      className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] leading-snug text-muted-foreground">
+                  Optional. When a node has multiple outgoing edges including a self-loop, the classifier picks the next
+                  node. Min turns blocks early exits; max turns forces a move to a different node after enough completed
+                  stays. Leave blank to disable.
+                </p>
                 <div>
                   <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">SYSTEM PROMPT</label>
                   <textarea

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from ai_sdr_agent.graph.spec import SINGLE_AGENT_NODE_ID, graph_execution_kind
 
@@ -90,6 +90,8 @@ class ConversationState(TypedDict):
     follow_up_action: str | None
     qualification_notes: dict[str, str | bool | None]
     metadata: dict[str, str]
+    # Custom graph mode: consecutive self-loop completions per node id (for loop_min/max_turns).
+    graph_node_streaks: NotRequired[dict[str, int]]
 
 
 _DEFAULT_BOT_CONFIG: BotConfigDict = {
@@ -190,4 +192,5 @@ def build_initial_state(
         "follow_up_action": None,
         "qualification_notes": {},
         "metadata": {},
+        "graph_node_streaks": {},
     }

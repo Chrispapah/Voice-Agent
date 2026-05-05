@@ -7,6 +7,9 @@ Router rules (graph mode):
 - **1 outgoing edge** → that target is chosen without an extra LLM call.
 - **2+ outgoing edges** → ``ConversationBrain.classify`` picks one label from the
   allowed target node ids (instruction summarizes the last user turn and options).
+- Optional per-node ``loop_min_turns`` / ``loop_max_turns`` constrain self-loops:
+  min blocks leaving until enough completed stays; max forces exit to a non-self
+  neighbor after enough stays (only when those edges exist).
 - To end a graph conversation, add an explicit edge to the terminal ``complete`` node.
 
 Single mode:
@@ -36,6 +39,18 @@ class SpecNode(BaseModel):
     label: str | None = Field(default=None, max_length=120)
     system_prompt: str = Field(..., min_length=1)
     tool_ids: list[str] = Field(default_factory=list)
+    # Consecutive "stay" turns on this node (self-loop) for custom graph routing.
+    # Applied only when the node has 2+ outgoing edges including a self-loop (classify path).
+    loop_min_turns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Minimum completed stay cycles before classifier may leave this node.",
+    )
+    loop_max_turns: int | None = Field(
+        default=None,
+        ge=1,
+        description="After this many completed stays, force exit to a non-self neighbor if one exists.",
+    )
 
     @field_validator("id")
     @classmethod
@@ -49,6 +64,13 @@ class SpecNode(BaseModel):
         if v in RESERVED_NODE_IDS:
             raise ValueError(f"node id {v!r} is reserved")
         return v
+
+    @model_validator(mode="after")
+    def loop_min_max_consistent(self):
+        if self.loop_min_turns is not None and self.loop_max_turns is not None:
+            if self.loop_max_turns < self.loop_min_turns:
+                raise ValueError("loop_max_turns must be >= loop_min_turns when both are set")
+        return self
 
 
 class SpecEdge(BaseModel):

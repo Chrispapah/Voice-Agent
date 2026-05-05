@@ -9,6 +9,7 @@ from loguru import logger
 from ai_sdr_agent.graph.prompts import _VOICE_OUTPUT_RULES, _template_vars, format_reply_for_tts
 from ai_sdr_agent.graph.spec import (
     SINGLE_AGENT_NODE_ID,
+    ConversationSpecV1,
     build_adjacency,
     parse_conversation_spec,
     prompt_for_node,
@@ -94,18 +95,58 @@ async def _pick_next_node(
     return outgoing[0]
 
 
+def _loop_limits_for_node(spec: ConversationSpecV1, node_id: str) -> tuple[int | None, int | None]:
+    node = next((n for n in spec.nodes if n.id == node_id), None)
+    if node is None:
+        return None, None
+    lo = node.loop_min_turns
+    hi = node.loop_max_turns
+    if lo is not None and lo < 1:
+        lo = None
+    return lo, hi
+
+
+def _apply_loop_min_max(
+    *,
+    node_id: str,
+    outgoing: list[str],
+    raw_next: str,
+    prior_streak: int,
+    loop_min: int | None,
+    loop_max: int | None,
+) -> str:
+    has_self = node_id in outgoing
+    non_self = next((t for t in outgoing if t != node_id), None)
+    next_n = raw_next if raw_next in outgoing else outgoing[0]
+    if loop_max is not None and non_self is not None and prior_streak >= loop_max:
+        if next_n == node_id:
+            return non_self
+    if loop_min is not None and has_self and non_self is not None:
+        if next_n != node_id and prior_streak < loop_min:
+            return node_id
+    return next_n
+
+
 def _append_agent(
     state: ConversationState,
     content: str,
     node_name: str,
     next_node: str,
+    *,
+    graph_node_streaks: dict[str, int] | None = None,
 ) -> dict[str, Any]:
+    streaks: dict[str, int] = dict(
+        graph_node_streaks
+        if graph_node_streaks is not None
+        else (state.get("graph_node_streaks") or {})
+    )
     return {
         "transcript": state["transcript"] + [{"role": "agent", "content": content}],
         "current_node": node_name,
         "last_agent_response": content,
         "next_node": next_node,
         "route_decision": next_node,
+        "graph_node_streaks": streaks,
     }
 
 
@@ -194,20 +235,37 @@ def make_graph_agent_node(
                 trace=trace,
             )
         )
-        next_node = await _pick_next_node(
+        raw_next = await _pick_next_node(
             brain=brain,
             state=state,
             current_id=node_id,
             outgoing=outgoing,
             trace=trace,
         )
+        streaks = dict(state.get("graph_node_streaks") or {})
+        prior = int(streaks.get(node_id, 0))
+        next_node = raw_next
+        if len(outgoing) > 1:
+            loop_min, loop_max = _loop_limits_for_node(spec, node_id)
+            next_node = _apply_loop_min_max(
+                node_id=node_id,
+                outgoing=outgoing,
+                raw_next=raw_next,
+                prior_streak=prior,
+                loop_min=loop_min,
+                loop_max=loop_max,
+            )
+        if next_node == node_id:
+            streaks[node_id] = prior + 1
+        else:
+            streaks[node_id] = 0
         logger.info(
             "graph_agent_node node={} next={} latency_ms={:.0f}",
             node_id,
             next_node,
             (time.perf_counter() - t0) * 1000,
         )
-        return _append_agent(state, response, node_id, next_node)
+        return _append_agent(state, response, node_id, next_node, graph_node_streaks=streaks)
 
     return graph_agent_step
 

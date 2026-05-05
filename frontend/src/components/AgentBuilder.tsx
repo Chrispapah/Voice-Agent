@@ -54,7 +54,12 @@ function specToNodes(spec: ConversationSpecV1): Node[] {
     id: n.id,
     type: "agentSpec",
     position: spec.positions?.[n.id] ?? { x: 80 + i * 300, y: 100 },
-    data: { label: n.label || n.id, system_prompt: n.system_prompt },
+    data: {
+      label: n.label || n.id,
+      system_prompt: n.system_prompt,
+      ...(n.loop_min_turns != null ? { loop_min_turns: n.loop_min_turns } : {}),
+      ...(n.loop_max_turns != null ? { loop_max_turns: n.loop_max_turns } : {}),
+    },
   }));
 }
 
@@ -73,11 +78,22 @@ function nodesEdgesToSpec(
   edges: Edge[],
   entryNodeId: string,
 ): ConversationSpecV1 {
-  const specNodes: SpecNode[] = nodes.map((n) => ({
-    id: n.id,
-    label: typeof n.data?.label === "string" ? n.data.label : null,
-    system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
-  }));
+  const specNodes: SpecNode[] = nodes.map((n) => {
+    const sn: SpecNode = {
+      id: n.id,
+      label: typeof n.data?.label === "string" ? n.data.label : null,
+      system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
+    };
+    const lo = (n.data as { loop_min_turns?: unknown })?.loop_min_turns;
+    const hi = (n.data as { loop_max_turns?: unknown })?.loop_max_turns;
+    if (typeof lo === "number" && Number.isFinite(lo) && lo >= 1) {
+      sn.loop_min_turns = Math.floor(lo);
+    }
+    if (typeof hi === "number" && Number.isFinite(hi) && hi >= 1) {
+      sn.loop_max_turns = Math.floor(hi);
+    }
+    return sn;
+  });
   const specEdges: SpecEdge[] = edges.map((e) => ({ from: e.source, to: e.target }));
   const positions: Record<string, { x: number; y: number }> = {};
   for (const n of nodes) {
