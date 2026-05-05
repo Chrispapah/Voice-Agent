@@ -101,7 +101,7 @@ def _route_turn(state: ConversationState) -> dict:
     target = state["next_node"]
     metadata = state.get("metadata", {})
     logger.info(
-        "Routing conversation_id={} turn_id={} to node={} from current_node={}",
+        "Routing conversation_id={} turn_id={} target_node={} last_speaker_node={}",
         metadata.get("conversation_id", "-"),
         metadata.get("turn_id", "-"),
         target,

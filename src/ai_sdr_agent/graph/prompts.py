@@ -11,6 +11,7 @@ Voice output (mandatory — this is read aloud by TTS in one pass):
 - Use one or two short sentences in most turns. Use at most three very short sentences only when listing meeting time options.
 - No paragraphs, bullet lists, markdown, or numbered lists.
 - Do not use line breaks; write a single continuous line of speech (commas and periods are fine).
+- Do not end the call yourself: avoid saying goodbye, hang up, "I'll let you go", "I need to go", or pretending the call ended unless the user clearly wants to stop. Stay on topic and follow your node's goal until routing moves on.
 """
 
 

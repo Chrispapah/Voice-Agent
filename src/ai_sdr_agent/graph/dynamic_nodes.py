@@ -18,6 +18,33 @@ from ai_sdr_agent.graph.state import ConversationState
 if TYPE_CHECKING:
     from ai_sdr_agent.services.brain import ConversationBrain
 
+# One warning per (conversation_id, graph node) — avoids log spam while a session is stuck.
+_sticky_routing_warned: set[tuple[str, str]] = set()
+_STICKY_WARN_CAP = 4096
+
+
+def _maybe_warn_sticky_routing(state: ConversationState, node_id: str, outgoing: list[str]) -> None:
+    """If this node cannot leave (0 outgoing or only a self-loop), classify never advances the flow."""
+    trapped = (not outgoing) or (len(outgoing) == 1 and outgoing[0] == node_id)
+    if not trapped:
+        return
+    meta = state.get("metadata") or {}
+    conv = str(meta.get("conversation_id", "") or "").strip()
+    if not conv:
+        return
+    key = (conv, node_id)
+    if key in _sticky_routing_warned:
+        return
+    if len(_sticky_routing_warned) >= _STICKY_WARN_CAP:
+        _sticky_routing_warned.clear()
+    _sticky_routing_warned.add(key)
+    logger.warning(
+        "Graph node {!r} cannot advance (outgoing_edges={}). Add outbound edges to the next "
+        "stage or to 'complete'. Otherwise turns stay here until max_call_turns triggers goodbye.",
+        node_id,
+        outgoing,
+    )
+
 
 def _interpolate_placeholders(template: str, state: ConversationState) -> str:
     ctx = dict(_template_vars(state))
@@ -132,6 +159,7 @@ def make_graph_agent_node(
         trace = {**_trace(state), "node": node_id}
         has_human = any(m.get("role") == "human" for m in state["transcript"])
         outgoing = list(adjacency.get(node_id, []))
+        _maybe_warn_sticky_routing(state, node_id, outgoing)
         if not has_human:
             raw = state.get("bot_config", {}).get("initial_greeting") or "Hello."
             response = format_reply_for_tts(str(raw))

@@ -58,6 +58,7 @@ import {
 } from "@/lib/api";
 import { VoiceSession } from "@/lib/voiceSession";
 import {
+  SINGLE_AGENT_NODE_ID,
   defaultGraphConversationSpec,
   defaultSingleConversationSpec,
   type ConversationSpecV1,
@@ -199,6 +200,18 @@ function newNodeId(existing: Set<string>): string {
   return `step_${i}`;
 }
 
+const RESERVED_GRAPH_NODE_IDS = new Set<string>(["complete", "route_turn", SINGLE_AGENT_NODE_ID]);
+
+function validateGraphNodeId(id: string): string | null {
+  const v = id.trim();
+  if (!v) return "Node id cannot be empty.";
+  if (!/^[a-zA-Z][a-zA-Z0-9_]*$/.test(v)) {
+    return "Use only letters, digits, and underscores; start with a letter.";
+  }
+  if (RESERVED_GRAPH_NODE_IDS.has(v)) return `The id "${v}" is reserved by the runtime.`;
+  return null;
+}
+
 function firstUsableSpec(bot: BotConfig | null): ConversationSpecV1 {
   const spec = bot?.conversation_spec;
   if (spec?.template !== "sdr" && (spec?.mode === "single" || spec?.mode === "graph")) return spec;
@@ -335,6 +348,7 @@ export default function FlowBuilderPage() {
   const [nodes, setNodes] = useState<Node[]>(specToNodes(defaultGraphConversationSpec()));
   const [edges, setEdges] = useState<Edge[]>(specToEdges(defaultGraphConversationSpec()));
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [nodeIdDraft, setNodeIdDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
@@ -475,6 +489,11 @@ export default function FlowBuilderPage() {
     [nodes, selectedNodeId],
   );
 
+  useEffect(() => {
+    if (selectedNode) setNodeIdDraft(selectedNode.id);
+    else setNodeIdDraft("");
+  }, [selectedNode?.id, selectedNodeId]);
+
   const pushGraphSpec = useCallback(
     (nextNodes: Node[], nextEdges: Edge[], entry: string) => {
       setSpec((current) => nodesEdgesToSpec(current.mode === "graph" ? current : defaultGraphConversationSpec(), nextNodes, nextEdges, entry));
@@ -607,6 +626,55 @@ export default function FlowBuilderPage() {
       return;
     }
     deleteSelectedNode();
+  }
+
+  function commitNodeIdRename() {
+    if (!selectedNodeId || !selectedNode) return;
+    const oldId = selectedNodeId;
+    const newId = nodeIdDraft.trim();
+    if (newId === oldId) return;
+    const err = validateGraphNodeId(newId);
+    if (err) {
+      setError(err);
+      setNodeIdDraft(oldId);
+      return;
+    }
+    const curNodes = nodesRef.current;
+    const curEdges = edgesRef.current;
+    if (curNodes.some((n) => n.id === newId)) {
+      setError("Another node already uses this id.");
+      setNodeIdDraft(oldId);
+      return;
+    }
+    const nextNodes = curNodes.map((node) => (node.id === oldId ? { ...node, id: newId } : node));
+    const nextEdges = curEdges.map((e, i) => {
+      const src = e.source === oldId ? newId : e.source;
+      const tgt = e.target === oldId ? newId : e.target;
+      return {
+        ...e,
+        id: `e-${src}-${tgt}-${i}`,
+        source: src,
+        target: tgt,
+        type: src === tgt ? "selfLoop" : undefined,
+      };
+    });
+    const nextEntry = entryNodeId === oldId ? newId : entryNodeId;
+    setError("");
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setEntryNodeId(nextEntry);
+    setSelectedNodeId(newId);
+    setNodeIdDraft(newId);
+    setSelectedEdgeId(null);
+    setNodeKnowledgeBaseIds((current) => {
+      if (!(oldId in current)) return current;
+      const kb = current[oldId] ?? [];
+      const nextMap = { ...current };
+      delete nextMap[oldId];
+      nextMap[newId] = kb;
+      return nextMap;
+    });
+    pushGraphSpec(nextNodes, nextEdges, nextEntry);
   }
 
   function updateSelectedNode(field: "label" | "system_prompt", value: string) {
@@ -1061,6 +1129,25 @@ export default function FlowBuilderPage() {
           <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
             {mode === "graph" && selectedNode ? (
               <div className="space-y-3">
+                <div>
+                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">NODE ID</label>
+                  <input
+                    value={nodeIdDraft}
+                    onChange={(e) => setNodeIdDraft(e.target.value)}
+                    onBlur={() => commitNodeIdRename()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    spellCheck={false}
+                    className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+                  />
+                  <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                    Technical id sent to LangGraph (classifier labels are these ids). Renaming updates all edges and KB
+                    assignments for this node.
+                  </p>
+                </div>
                 <div>
                   <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">NODE LABEL</label>
                   <input
