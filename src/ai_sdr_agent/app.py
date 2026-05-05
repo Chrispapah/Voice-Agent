@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel
 from vocode.streaming.models.telephony import BaseCallConfig
@@ -124,6 +125,17 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
         yield
 
     app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def log_unhandled_errors(request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logger.exception("Unhandled request error path={}", request.url.path)
+            return JSONResponse(
+                status_code=500,
+                content={"detail": "Internal server error"},
+            )
 
     # CORS for deployed frontend and local development.
     app.add_middleware(
