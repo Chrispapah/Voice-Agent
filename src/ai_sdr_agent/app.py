@@ -20,7 +20,7 @@ from ai_sdr_agent.agent_factory import SDRAgentFactory
 from ai_sdr_agent.config import SDRSettings, get_settings
 from ai_sdr_agent.db.engine import init_db
 from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDependencies
-from ai_sdr_agent.routers import bots_router, test_sessions_router
+from ai_sdr_agent.routers import bots_router, test_sessions_router, web_voice_router
 from ai_sdr_agent.services.brain import build_conversation_brain
 from ai_sdr_agent.services.call_scheduler import CallScheduler
 from ai_sdr_agent.services.latency_analytics import shared_latency_analytics
@@ -165,6 +165,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     # ── AI engine router (authenticated via Supabase JWT) ──────────
     app.include_router(bots_router)
     app.include_router(test_sessions_router)
+    app.include_router(web_voice_router)
 
     # ── Legacy routes (telephony + backward compat) ────────────────
 

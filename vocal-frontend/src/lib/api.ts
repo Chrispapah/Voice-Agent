@@ -274,6 +274,22 @@ async function requireAccessToken(): Promise<string> {
   return token;
 }
 
+/** Resolves the same bearer token used for REST API calls (for WebSocket auth messages). */
+export async function resolveAccessToken(): Promise<string> {
+  return requireAccessToken();
+}
+
+/** `wss://` / `ws://` URL for the browser voice session WebSocket. */
+export function getVoiceSessionWebSocketUrl(botId: string): string {
+  const trimmed = API_BASE.trim().replace(/\/$/, "");
+  const wsBase = trimmed.startsWith("https://")
+    ? `wss://${trimmed.slice("https://".length)}`
+    : trimmed.startsWith("http://")
+      ? `ws://${trimmed.slice("http://".length)}`
+      : trimmed;
+  return `${wsBase}/api/bots/${botId}/voice-session`;
+}
+
 async function requireCurrentUserId(): Promise<string> {
   assertSupabaseConfigured();
   const {

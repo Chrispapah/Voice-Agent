@@ -18,3 +18,5 @@ google-cloud-speech>=2.26.0,<3.0.0
 sqlalchemy[asyncio]
 python-jose[cryptography]
 cryptography
+httpx
+websockets>=12

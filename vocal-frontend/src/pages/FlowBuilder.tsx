@@ -30,6 +30,7 @@ import {
   Save,
   Send,
   Sparkles,
+  Square,
   Trash2,
   Volume2,
   Wrench,
@@ -55,6 +56,7 @@ import {
   setNodeKnowledgeBaseAssignments,
   type KnowledgeBase,
 } from "@/lib/api";
+import { VoiceSession } from "@/lib/voiceSession";
 import {
   defaultGraphConversationSpec,
   defaultSingleConversationSpec,
@@ -340,6 +342,9 @@ export default function FlowBuilderPage() {
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
   const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceConnecting, setVoiceConnecting] = useState(false);
+  const voiceRef = useRef<VoiceSession | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -354,6 +359,7 @@ export default function FlowBuilderPage() {
     return () => {
       recognitionRef.current?.abort();
       window.speechSynthesis?.cancel();
+      void voiceRef.current?.stop();
       const activeSessionId = sessionIdRef.current;
       const activeBotId = botIdRef.current;
       if (activeBotId && activeSessionId) {
@@ -693,6 +699,9 @@ export default function FlowBuilderPage() {
     setTesting(true);
     setError("");
     try {
+      await voiceRef.current?.stop();
+      voiceRef.current = null;
+      setVoiceActive(false);
       if (sessionId) {
         await stopTestSession(botId, sessionId).catch(() => undefined);
       }
@@ -721,6 +730,9 @@ export default function FlowBuilderPage() {
     try {
       recognitionRef.current?.abort();
       window.speechSynthesis?.cancel();
+      await voiceRef.current?.stop();
+      voiceRef.current = null;
+      setVoiceActive(false);
       await stopTestSession(botId, activeSessionId);
     } catch (err: unknown) {
       if (!isBenignStopError(err)) {
@@ -763,6 +775,44 @@ export default function FlowBuilderPage() {
     }
   }
 
+  async function handleStopVoice() {
+    await voiceRef.current?.stop();
+    voiceRef.current = null;
+    setVoiceActive(false);
+  }
+
+  async function handleStartVoice() {
+    if (!botId || voiceActive) return;
+    setError("");
+    setVoiceConnecting(true);
+    try {
+      await handleSave();
+      const leadId = await ensureLead();
+      const vs = new VoiceSession({
+        onReady: (cid) => setSessionId(cid),
+        onTranscriptFinal: (t) => setMessages((m) => [...m, { role: "human", content: t }]),
+        onAgentText: (t) => setMessages((m) => [...m, { role: "agent", content: t }]),
+        onError: (msg) => setError(msg),
+        onClose: () => {
+          voiceRef.current = null;
+          setVoiceActive(false);
+        },
+      });
+      voiceRef.current = vs;
+      await vs.start(botId, leadId, sessionId);
+      setVoiceActive(true);
+    } catch (err: unknown) {
+      if (err instanceof AuthRequiredError) {
+        navigate("/auth");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to start voice session");
+      voiceRef.current = null;
+    } finally {
+      setVoiceConnecting(false);
+    }
+  }
+
   if (loading) {
     return <div className="flex h-screen items-center justify-center text-muted-foreground">Loading agent...</div>;
   }
@@ -801,7 +851,7 @@ export default function FlowBuilderPage() {
         </nav>
         <div className="flex items-center gap-2">
           {status && <span className="text-xs text-success">{status}</span>}
-          <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing || saving}>
+          <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing || saving || voiceActive || voiceConnecting}>
             <Play className="w-3.5 h-3.5 mr-1" /> Test
           </Button>
           <Button size="sm" className="bg-gradient-primary text-primary-foreground hover:opacity-90 shadow-elegant" onClick={handleSave} disabled={saving}>
@@ -1036,9 +1086,9 @@ export default function FlowBuilderPage() {
             )}
 
             <div className="border-t border-border pt-4">
-              <div className="mb-3 flex items-center justify-between">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-semibold"><MessageSquare className="h-4 w-4" /> Test Console</h2>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-1.5 justify-end">
                   <Button
                     variant={voiceOutputEnabled ? "default" : "outline"}
                     size="sm"
@@ -1052,11 +1102,23 @@ export default function FlowBuilderPage() {
                       Stop
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing}>
+                  <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing || voiceActive || voiceConnecting}>
                     {sessionId ? "Restart" : "Start"}
                   </Button>
+                  {!voiceActive ? (
+                    <Button variant="outline" size="sm" onClick={() => void handleStartVoice()} disabled={voiceConnecting || testing}>
+                      <Mic className="w-3.5 h-3.5 mr-1" /> {voiceConnecting ? "Voice…" : "Start Voice"}
+                    </Button>
+                  ) : (
+                    <Button variant="outline" size="sm" onClick={() => void handleStopVoice()}>
+                      <Square className="w-3.5 h-3.5 mr-1" /> Stop Voice
+                    </Button>
+                  )}
                 </div>
               </div>
+              <p className="mb-3 text-[11px] text-muted-foreground leading-relaxed">
+                Realtime voice sends microphone audio to the backend (Deepgram STT); replies are synthesized with ElevenLabs. Configure keys on the server and voice ID on the agent.
+              </p>
               <select
                 value={selectedLead}
                 onChange={(e) => setSelectedLead(e.target.value)}
@@ -1084,8 +1146,16 @@ export default function FlowBuilderPage() {
                 <input
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={sessionId ? (listening ? "Listening..." : "Type or speak a reply...") : "Start test first"}
-                  disabled={!sessionId || testing}
+                  placeholder={
+                    sessionId
+                      ? voiceActive
+                        ? "Voice session active…"
+                        : listening
+                          ? "Listening…"
+                          : "Type or speak a reply…"
+                      : "Start test or voice first"
+                  }
+                  disabled={!sessionId || testing || voiceActive}
                   className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 />
                 <Button
@@ -1093,7 +1163,7 @@ export default function FlowBuilderPage() {
                   variant={listening ? "default" : "outline"}
                   size="sm"
                   onClick={toggleListening}
-                  disabled={!sessionId || testing}
+                  disabled={!sessionId || testing || voiceActive}
                   title={listening ? "Stop listening" : "Speak reply"}
                 >
                   <Mic className="h-4 w-4" />

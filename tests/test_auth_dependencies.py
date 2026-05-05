@@ -31,6 +31,17 @@ ES256_TOKEN = (
 
 
 def test_decode_supabase_jwt_supports_es256_jwks(monkeypatch):
+    # Fixture JWT uses a fixed exp; avoid time-dependent failures.
+    real_decode = jwt.decode
+
+    def decode_without_exp(*args: object, **kwargs: object):
+        kw = dict(kwargs)
+        opts = dict(kw.get("options") or {})
+        opts["verify_exp"] = False
+        kw["options"] = opts
+        return real_decode(*args, **kw)
+
+    monkeypatch.setattr(jwt, "decode", decode_without_exp)
     monkeypatch.setattr(
         dependencies,
         "get_settings",

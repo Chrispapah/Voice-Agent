@@ -21,6 +21,13 @@ def _normalize_database_url(database_url: str) -> str:
     return database_url
 
 
+def get_async_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return the app-wide async session factory (after :func:`init_db`)."""
+    if _session_factory is None:
+        raise RuntimeError("Database not initialised – call init_db() first")
+    return _session_factory
+
+
 def _get_engine(database_url: str) -> AsyncEngine:
     global _engine
     if _engine is None:
