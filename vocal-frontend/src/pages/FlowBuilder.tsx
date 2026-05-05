@@ -143,6 +143,11 @@ function firstUsableSpec(bot: BotConfig | null): ConversationSpecV1 {
   return defaultGraphConversationSpec();
 }
 
+function isBenignStopError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  return err.message.includes("404") || err.message.toLowerCase().includes("not found");
+}
+
 function ToolSelector({
   tools,
   selectedToolIds,
@@ -600,18 +605,21 @@ export default function FlowBuilderPage() {
     setError("");
     try {
       await stopTestSession(botId, activeSessionId);
+    } catch (err: unknown) {
+      if (!isBenignStopError(err)) {
+        if (err instanceof AuthRequiredError) {
+          navigate("/auth");
+          return;
+        }
+        setError(err instanceof Error ? err.message : "Failed to stop test session");
+        return;
+      }
+    } finally {
       setSessionId(null);
       setMessages([]);
       setInput("");
       setStatus("Test stopped");
       setTimeout(() => setStatus(""), 2000);
-    } catch (err: unknown) {
-      if (err instanceof AuthRequiredError) {
-        navigate("/auth");
-        return;
-      }
-      setError(err instanceof Error ? err.message : "Failed to stop test session");
-    } finally {
       setTesting(false);
     }
   }
