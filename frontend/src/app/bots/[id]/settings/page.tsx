@@ -141,6 +141,7 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
             </span>
           )}
           <button
+            type="button"
             onClick={handleSave}
             disabled={saving || Object.keys(dirty).length === 0}
             className="flex items-center gap-2 rounded-md bg-[var(--primary)] px-4 py-2 text-sm font-medium text-[var(--primary-foreground)] hover:opacity-90 disabled:opacity-50"
@@ -155,6 +156,7 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
       <div className="mb-6 flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--secondary)] p-1">
         {visibleTabs.map((t) => (
           <button
+            type="button"
             key={t.id}
             onClick={() => setTab(t.id)}
             className={`whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
