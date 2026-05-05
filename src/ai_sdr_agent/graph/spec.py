@@ -6,7 +6,8 @@ Router rules (graph mode):
 - **0 outgoing edges** → the current node keeps handling the conversation.
 - **1 outgoing edge** → that target is chosen without an extra LLM call.
 - **2+ outgoing edges** → ``ConversationBrain.classify`` picks one label from the
-  allowed target node ids (instruction summarizes the last user turn and options).
+  allowed target node ids (the prompt includes recent caller lines so fragmented
+  voice/STT does not route on a single partial clause).
   Destination **labels** from the graph are included when set; optional per-node
   ``classify_hint`` adds routing rules for ambiguous intents.
 - Optional per-node ``loop_min_turns`` / ``loop_max_turns`` constrain self-loops:
