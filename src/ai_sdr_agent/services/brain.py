@@ -8,7 +8,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Awaitable, Callable, Protocol, Sequence
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from loguru import logger
 
@@ -87,13 +87,13 @@ def _slice_transcript(
 
 def _messages_from_transcript(
     transcript: list[dict[str, str]],
-) -> list[HumanMessage | SystemMessage]:
-    messages: list[HumanMessage | SystemMessage] = []
+) -> list[BaseMessage]:
+    messages: list[BaseMessage] = []
     for item in transcript:
         if item["role"] == "human":
             messages.append(HumanMessage(content=item["content"]))
         else:
-            messages.append(SystemMessage(content=f"Agent previously said: {item['content']}"))
+            messages.append(AIMessage(content=item["content"]))
     return messages
 
 
@@ -107,12 +107,7 @@ def _groq_messages_from_transcript(
         if item["role"] == "human":
             messages.append({"role": "user", "content": item["content"]})
         else:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": f"Agent previously said: {item['content']}",
-                }
-            )
+            messages.append({"role": "assistant", "content": item["content"]})
     return messages
 
 
