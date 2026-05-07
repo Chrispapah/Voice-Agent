@@ -417,7 +417,7 @@ async def test_custom_graph_loop_min_turns_blocks_early_exit():
     assert state.get("graph_node_streaks", {}).get("n1") == 2
 
     state = await service.handle_turn(conversation_id, "two")
-    assert state["current_node"] == "n1"
+    assert state["current_node"] == "n2"
     assert state["next_node"] == "n2"
     assert state.get("graph_node_streaks", {}).get("n1") == 0
 
@@ -454,7 +454,7 @@ async def test_custom_graph_loop_max_turns_forces_exit():
     assert state.get("graph_node_streaks", {}).get("n1") == 2
 
     state = await service.handle_turn(conversation_id, "two")
-    assert state["current_node"] == "n1"
+    assert state["current_node"] == "n2"
     assert state["next_node"] == "n2"
     assert state.get("graph_node_streaks", {}).get("n1") == 0
 

@@ -290,17 +290,17 @@ def make_graph_agent_node(
         _maybe_warn_sticky_routing(state, node_id, outgoing)
 
         utter_map = dict(state.get("graph_node_utterance_index") or {})
-        utter_idx = int(utter_map.get(node_id, 0))
-        modes = reply_turn_modes_for_node(spec, node_id)
-        static_src = static_message_for_node(spec, node_id)
-        reply_kind = _pick_reply_mode(
-            modes=modes,
-            utterance_index=utter_idx,
-            has_human=has_human,
-            static_text=static_src,
-        )
 
         if not has_human:
+            utter_idx = int(utter_map.get(node_id, 0))
+            modes = reply_turn_modes_for_node(spec, node_id)
+            static_src = static_message_for_node(spec, node_id)
+            reply_kind = _pick_reply_mode(
+                modes=modes,
+                utterance_index=utter_idx,
+                has_human=False,
+                static_text=static_src,
+            )
             if reply_kind == "static":
                 response = format_reply_for_tts(_interpolate_placeholders(static_src or "", state))
                 logger.info(
@@ -359,25 +359,6 @@ def make_graph_agent_node(
                 graph_node_utterance_index=new_um,
             )
 
-        if reply_kind == "static":
-            response = format_reply_for_tts(_interpolate_placeholders(static_src or "", state))
-            logger.info(
-                "graph_agent_node static_message node={} latency_ms={:.0f}",
-                node_id,
-                (time.perf_counter() - t0) * 1000,
-            )
-        else:
-            base_prompt = _interpolate_placeholders(prompt_for_node(spec, node_id), state)
-            system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
-            max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
-            response = format_reply_for_tts(
-                await brain.respond(
-                    system_prompt=system,
-                    transcript=state["transcript"],
-                    max_tokens=max_out,
-                    trace=trace,
-                )
-            )
         raw_next = await _pick_next_node(
             brain=brain,
             state=state,
@@ -399,25 +380,64 @@ def make_graph_agent_node(
                 loop_min=loop_min,
                 loop_max=loop_max,
             )
+
+        speak_node = next_node
+        if next_node == "complete":
+            speak_node = node_id
+
+        speak_idx = int(utter_map.get(speak_node, 0))
+        speak_modes = reply_turn_modes_for_node(spec, speak_node)
+        speak_static = static_message_for_node(spec, speak_node)
+        reply_kind = _pick_reply_mode(
+            modes=speak_modes,
+            utterance_index=speak_idx,
+            has_human=True,
+            static_text=speak_static,
+        )
+
+        trace_reply = {**_trace(state), "node": speak_node}
+        if reply_kind == "static":
+            response = format_reply_for_tts(_interpolate_placeholders(speak_static or "", state))
+            logger.info(
+                "graph_agent_node static_message route_from={} speak_as={} latency_ms={:.0f}",
+                node_id,
+                speak_node,
+                (time.perf_counter() - t0) * 1000,
+            )
+        else:
+            base_prompt = _interpolate_placeholders(prompt_for_node(spec, speak_node), state)
+            system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
+            max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
+            response = format_reply_for_tts(
+                await brain.respond(
+                    system_prompt=system,
+                    transcript=state["transcript"],
+                    max_tokens=max_out,
+                    trace=trace_reply,
+                )
+            )
+
         if next_node == node_id:
             streaks[node_id] = prior + 1
         else:
             streaks[node_id] = 0
+
         new_um = dict(utter_map)
-        if next_node == node_id:
-            new_um[node_id] = utter_idx + 1
-        else:
+        new_um[speak_node] = speak_idx + 1
+        if node_id != next_node:
             new_um.pop(node_id, None)
+
         logger.info(
-            "graph_agent_node node={} next={} latency_ms={:.0f}",
+            "graph_agent_node route_from={} speak_as={} next={} latency_ms={:.0f}",
             node_id,
+            speak_node,
             next_node,
             (time.perf_counter() - t0) * 1000,
         )
         return _append_agent(
             state,
             response,
-            node_id,
+            speak_node,
             next_node,
             graph_node_streaks=streaks,
             graph_node_utterance_index=new_um,

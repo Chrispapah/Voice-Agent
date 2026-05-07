@@ -13,6 +13,8 @@ Router rules (graph mode):
 - **1 outgoing edge** → that target is chosen without an extra LLM call.
 - **2+ outgoing edges** → ``ConversationBrain.classify`` picks one label from the
   allowed target node ids (instruction summarizes the last user turn and options).
+  After routing, the assistant **speaks using the chosen destination node's**
+  ``system_prompt`` / ``static_message`` (not the previous node's).
   Destination **labels** from the graph are included when set; optional per-node
   ``classify_hint`` adds routing rules for ambiguous intents.
 - Optional per-node ``loop_min_turns`` / ``loop_max_turns`` constrain self-loops:
