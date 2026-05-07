@@ -16,8 +16,9 @@ Router rules (graph mode):
   Destination **labels** from the graph are included when set; optional per-node
   ``classify_hint`` adds routing rules for ambiguous intents.
 - Optional per-node ``loop_min_turns`` / ``loop_max_turns`` constrain self-loops:
-  min blocks leaving until enough completed stays; max forces exit to a non-self
-  neighbor after enough stays (only when those edges exist).
+  min blocks leaving until enough completed stays (each agent utterance at the node,
+  including the static or LLM opener before any user speech, counts as one stay);
+  max forces exit to a non-self neighbor after enough stays (only when those edges exist).
 - To end a graph conversation, add an explicit edge to the terminal ``complete`` node.
 
 Single mode:
@@ -54,7 +55,10 @@ class SpecNode(BaseModel):
     loop_min_turns: int | None = Field(
         default=None,
         ge=0,
-        description="Minimum completed stay cycles before classifier may leave this node.",
+        description=(
+            "Minimum completed stay cycles before classifier may leave this node "
+            "(includes opener utterance)."
+        ),
     )
     loop_max_turns: int | None = Field(
         default=None,

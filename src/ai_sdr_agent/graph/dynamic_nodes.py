@@ -329,6 +329,22 @@ def make_graph_agent_node(
                 next_node = outgoing[0]
             else:
                 next_node = node_id
+            streaks = dict(state.get("graph_node_streaks") or {})
+            prior = int(streaks.get(node_id, 0))
+            if len(outgoing) > 1:
+                loop_min, loop_max = _loop_limits_for_node(spec, node_id)
+                next_node = _apply_loop_min_max(
+                    node_id=node_id,
+                    outgoing=outgoing,
+                    raw_next=next_node,
+                    prior_streak=prior,
+                    loop_min=loop_min,
+                    loop_max=loop_max,
+                )
+            if next_node == node_id:
+                streaks[node_id] = prior + 1
+            else:
+                streaks[node_id] = 0
             new_um = dict(utter_map)
             if next_node == node_id:
                 new_um[node_id] = utter_idx + 1
@@ -339,6 +355,7 @@ def make_graph_agent_node(
                 response,
                 node_id,
                 next_node,
+                graph_node_streaks=streaks,
                 graph_node_utterance_index=new_um,
             )
 

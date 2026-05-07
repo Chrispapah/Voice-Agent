@@ -408,24 +408,20 @@ async def test_custom_graph_loop_min_turns_blocks_early_exit():
         bot_config=bot_cfg,
     )
     conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
-    await service.handle_turn(conversation_id, "")
+    state = await service.handle_turn(conversation_id, "")
+    assert state.get("graph_node_streaks", {}).get("n1") == 1
 
     state = await service.handle_turn(conversation_id, "one")
     assert state["current_node"] == "n1"
     assert state["next_node"] == "n1"
-    assert state.get("graph_node_streaks", {}).get("n1") == 1
-
-    state = await service.handle_turn(conversation_id, "two")
-    assert state["current_node"] == "n1"
-    assert state["next_node"] == "n1"
     assert state.get("graph_node_streaks", {}).get("n1") == 2
 
-    state = await service.handle_turn(conversation_id, "three")
+    state = await service.handle_turn(conversation_id, "two")
     assert state["current_node"] == "n1"
     assert state["next_node"] == "n2"
     assert state.get("graph_node_streaks", {}).get("n1") == 0
 
-    state = await service.handle_turn(conversation_id, "four")
+    state = await service.handle_turn(conversation_id, "three")
     assert state["current_node"] == "n2"
     assert state["next_node"] == "n2"
 
@@ -449,24 +445,20 @@ async def test_custom_graph_loop_max_turns_forces_exit():
         bot_config=bot_cfg,
     )
     conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
-    await service.handle_turn(conversation_id, "")
+    state = await service.handle_turn(conversation_id, "")
+    assert state.get("graph_node_streaks", {}).get("n1") == 1
 
     state = await service.handle_turn(conversation_id, "one")
     assert state["current_node"] == "n1"
     assert state["next_node"] == "n1"
-    assert state.get("graph_node_streaks", {}).get("n1") == 1
-
-    state = await service.handle_turn(conversation_id, "two")
-    assert state["current_node"] == "n1"
-    assert state["next_node"] == "n1"
     assert state.get("graph_node_streaks", {}).get("n1") == 2
 
-    state = await service.handle_turn(conversation_id, "three")
+    state = await service.handle_turn(conversation_id, "two")
     assert state["current_node"] == "n1"
     assert state["next_node"] == "n2"
     assert state.get("graph_node_streaks", {}).get("n1") == 0
 
-    state = await service.handle_turn(conversation_id, "four")
+    state = await service.handle_turn(conversation_id, "three")
     assert state["current_node"] == "n2"
     assert state["next_node"] == "n2"
 
