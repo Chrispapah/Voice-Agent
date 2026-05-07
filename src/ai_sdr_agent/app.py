@@ -264,7 +264,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
                         lead_id="lead-001",
                         calendar_id=settings.default_calendar_id,
                         sales_rep_name=settings.default_sales_rep_name,
-                        initial_message_text=settings.initial_greeting,
+                        initial_message_text="",
                     ),
                     transcriber_config=_build_transcriber_config(settings),
                     synthesizer_config=_build_synthesizer_config(settings),

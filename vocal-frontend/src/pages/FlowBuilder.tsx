@@ -61,6 +61,8 @@ import {
   SINGLE_AGENT_NODE_ID,
   defaultGraphConversationSpec,
   defaultSingleConversationSpec,
+  formatReplyTurnModes,
+  parseReplyTurnModes,
   type ConversationSpecV1,
   type SpecEdge,
   type SpecNode,
@@ -150,6 +152,9 @@ function specToNodes(spec: ConversationSpecV1): Node[] {
       tool_ids: n.tool_ids ?? [],
       ...(n.loop_min_turns != null ? { loop_min_turns: n.loop_min_turns } : {}),
       ...(n.loop_max_turns != null ? { loop_max_turns: n.loop_max_turns } : {}),
+      reply_turn_modes_text: formatReplyTurnModes(
+        Array.isArray(n.reply_turn_modes) ? n.reply_turn_modes : undefined,
+      ),
     },
   }));
 }
@@ -191,6 +196,10 @@ function nodesEdgesToSpec(
     if (typeof hi === "number" && Number.isFinite(hi) && hi >= 1) {
       sn.loop_max_turns = Math.floor(hi);
     }
+    const rmodes = parseReplyTurnModes(String(n.data?.reply_turn_modes_text ?? ""));
+    if (rmodes?.length) {
+      sn.reply_turn_modes = rmodes;
+    }
     return sn;
   });
   const specEdges: SpecEdge[] = edges.map((e) => ({ from: e.source, to: e.target }));
@@ -210,10 +219,16 @@ function nodesEdgesToSpec(
   };
 }
 
-function withSinglePromptToolIds(systemPrompt: string, toolIds: string[]): ConversationSpecV1 {
+function withSinglePromptToolIds(
+  systemPrompt: string,
+  toolIds: string[],
+  preserve?: ConversationSpecV1 | null,
+): ConversationSpecV1 {
   return {
     ...defaultSingleConversationSpec(systemPrompt),
     tool_ids: toolIds,
+    single_static_message: preserve?.single_static_message ?? null,
+    single_reply_turn_modes: preserve?.single_reply_turn_modes,
   };
 }
 
@@ -360,7 +375,6 @@ export default function FlowBuilderPage() {
   const botId = id || "";
   const [bot, setBot] = useState<BotConfig | null>(null);
   const [draftName, setDraftName] = useState("");
-  const [initialGreeting, setInitialGreeting] = useState("");
   const [elevenlabsVoiceId, setElevenlabsVoiceId] = useState("");
   const [elevenlabsModelId, setElevenlabsModelId] = useState("");
   const [deepgramModel, setDeepgramModel] = useState("");
@@ -480,7 +494,6 @@ export default function FlowBuilderPage() {
         const loadedSpec = firstUsableSpec(loadedBot);
         setBot(loadedBot);
         setDraftName(loadedBot.name);
-        setInitialGreeting(loadedBot.initial_greeting || "");
         setElevenlabsVoiceId(loadedBot.elevenlabs_voice_id || "");
         setElevenlabsModelId(loadedBot.elevenlabs_model_id || "");
         setDeepgramModel(loadedBot.deepgram_model || "");
@@ -585,10 +598,11 @@ export default function FlowBuilderPage() {
   function changeMode(nextMode: BuilderMode) {
     setMode(nextMode);
     if (nextMode === "single") {
-      const systemPrompt = spec.mode === "single" && spec.system_prompt
-        ? spec.system_prompt
-        : "You are a helpful voice agent. Keep replies to one or two short sentences. Context: {lead_name} at {company}.";
-      setSpec(withSinglePromptToolIds(systemPrompt, spec.mode === "single" ? spec.tool_ids ?? [] : []));
+      const systemPrompt =
+        spec.mode === "single" && spec.system_prompt
+          ? spec.system_prompt
+          : "You are a helpful voice agent. Keep replies to one or two short sentences. Context: {lead_name} at {company}.";
+      setSpec(withSinglePromptToolIds(systemPrompt, spec.mode === "single" ? spec.tool_ids ?? [] : [], spec));
       return;
     }
     const graphSpec = spec.mode === "graph" ? spec : defaultGraphConversationSpec();
@@ -610,6 +624,7 @@ export default function FlowBuilderPage() {
           label: id,
           system_prompt: "Describe this agent's role. Keep voice replies short and natural.",
           static_message: "",
+          reply_turn_modes_text: "",
           tool_ids: [],
         },
       },
@@ -701,6 +716,32 @@ export default function FlowBuilderPage() {
     pushGraphSpec(nextNodes, nextEdges, nextEntry);
   }
 
+  function updateSelectedNodeReplyModesText(raw: string) {
+    if (!selectedNodeId) return;
+    setNodes((current) => {
+      const next = current.map((node) =>
+        node.id === selectedNodeId ? { ...node, data: { ...node.data, reply_turn_modes_text: raw } } : node,
+      );
+      pushGraphSpec(next, edgesRef.current, entryNodeId);
+      return next;
+    });
+  }
+
+  function updateSingleStaticMessage(value: string) {
+    setSpec((current) =>
+      current.mode === "single"
+        ? { ...current, single_static_message: value.trim() ? value : null }
+        : current,
+    );
+  }
+
+  function updateSingleReplyModesText(raw: string) {
+    const modes = parseReplyTurnModes(raw);
+    setSpec((current) =>
+      current.mode === "single" ? { ...current, single_reply_turn_modes: modes ?? null } : current,
+    );
+  }
+
   function updateSelectedNode(field: "label" | "system_prompt" | "static_message", value: string) {
     if (!selectedNodeId) return;
     setNodes((current) => {
@@ -754,13 +795,15 @@ export default function FlowBuilderPage() {
   }
 
   function updateSinglePrompt(value: string) {
-    setSpec((current) => withSinglePromptToolIds(value, current.mode === "single" ? current.tool_ids ?? [] : []));
+    setSpec((current) =>
+      withSinglePromptToolIds(value, current.mode === "single" ? current.tool_ids ?? [] : [], current),
+    );
   }
 
   function updateSingleAgentTools(toolIds: string[]) {
     setSpec((current) => {
       const systemPrompt = current.mode === "single" ? current.system_prompt || "" : "";
-      return withSinglePromptToolIds(systemPrompt, toolIds);
+      return withSinglePromptToolIds(systemPrompt, toolIds, current);
     });
   }
 
@@ -776,7 +819,6 @@ export default function FlowBuilderPage() {
       );
       const saved = await updateBot(bot.id, {
         name: draftName,
-        initial_greeting: initialGreeting,
         elevenlabs_voice_id: elevenlabsVoiceId || null,
         elevenlabs_model_id: elevenlabsModelId || "eleven_turbo_v2",
         deepgram_model: deepgramModel || "nova-2",
@@ -993,15 +1035,11 @@ export default function FlowBuilderPage() {
       <div className="flex-1 flex min-h-0">
         <aside className="w-72 border-r border-border bg-surface flex flex-col">
           <div className="p-4 space-y-4 border-b border-border">
-            <div>
-              <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">INITIAL GREETING</label>
-              <textarea
-                rows={5}
-                value={initialGreeting}
-                onChange={(e) => setInitialGreeting(e.target.value)}
-                className="mt-2 w-full text-sm border border-border rounded-lg p-3 bg-surface-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/40 resize-none"
-              />
-            </div>
+            <p className="text-[11px] leading-relaxed text-muted-foreground rounded-lg border border-border bg-card p-3">
+              The first spoken line comes from your <strong>entry node</strong>: use its system prompt (LLM) or set{" "}
+              <strong>reply turn modes</strong> to <code className="text-xs">static</code> with a static message. There is
+              no separate bot-level greeting.
+            </p>
             <div className="rounded-lg border border-border bg-card p-3">
               <div className="mb-3 text-[11px] font-semibold text-muted-foreground tracking-wide">VOICE I/O PLACEHOLDERS</div>
               <div className="space-y-3">
@@ -1102,6 +1140,31 @@ export default function FlowBuilderPage() {
                 onChange={(e) => updateSinglePrompt(e.target.value)}
                 className="mt-2 w-full text-xs font-mono border border-border rounded-lg p-3 bg-surface-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/40 resize-none"
               />
+              <label className="mt-4 block text-[11px] font-semibold text-muted-foreground tracking-wide">
+                SINGLE STATIC MESSAGE (OPTIONAL)
+              </label>
+              <textarea
+                rows={4}
+                value={spec.mode === "single" ? spec.single_static_message || "" : ""}
+                onChange={(e) => updateSingleStaticMessage(e.target.value)}
+                placeholder="Used when a turn mode is static."
+                className="mt-2 w-full text-xs font-mono border border-border rounded-lg p-3 bg-surface-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/40 resize-none"
+              />
+              <label className="mt-4 block text-[11px] font-semibold text-muted-foreground tracking-wide">
+                REPLY TURN MODES (OPTIONAL)
+              </label>
+              <input
+                type="text"
+                spellCheck={false}
+                placeholder="e.g. llm, static — index 0 is opener"
+                value={spec.mode === "single" ? formatReplyTurnModes(spec.single_reply_turn_modes ?? undefined) : ""}
+                onChange={(e) => updateSingleReplyModesText(e.target.value)}
+                className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+              />
+              <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                Comma-separated <code className="text-[10px]">static</code> or <code className="text-[10px]">llm</code>.
+                Leave blank for legacy: after the user speaks, single static message is used when set.
+              </p>
               <ToolSelector
                 tools={tools}
                 selectedToolIds={spec.mode === "single" ? spec.tool_ids ?? [] : []}
@@ -1252,18 +1315,36 @@ export default function FlowBuilderPage() {
                 </div>
                 <div>
                   <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">
+                    REPLY TURN MODES (OPTIONAL)
+                  </label>
+                  <input
+                    type="text"
+                    spellCheck={false}
+                    placeholder="e.g. llm, static, llm — index 0 is opener"
+                    value={String(selectedNode.data?.reply_turn_modes_text ?? "")}
+                    onChange={(e) => updateSelectedNodeReplyModesText(e.target.value)}
+                    className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+                  />
+                  <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                    Comma-separated <code className="text-[10px]">static</code> or <code className="text-[10px]">llm</code>.
+                    Maps to each agent line at this node (0 = before the user speaks). Past the list defaults to{" "}
+                    <code className="text-[10px]">llm</code>. Leave blank for legacy: after the user speaks, a non-empty
+                    static message replaces the reply LLM.
+                  </p>
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">
                     STATIC MESSAGE (OPTIONAL)
                   </label>
                   <textarea
                     rows={5}
-                    placeholder="Leave empty to use the LLM with the system prompt above."
+                    placeholder="Used when a turn mode is static."
                     value={String(selectedNode.data?.static_message ?? "")}
                     onChange={(e) => updateSelectedNode("static_message", e.target.value)}
                     className="mt-2 w-full text-xs font-mono border border-border rounded-lg p-3 bg-surface-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/40 resize-none"
                   />
                   <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
-                    When set, this exact text is spoken on this node after the user speaks (no reply LLM). Opening line
-                    still uses Initial greeting in the left panel.
+                    Same placeholders as the system prompt. Ignored for turns routed to the LLM.
                   </p>
                 </div>
                 <ToolSelector

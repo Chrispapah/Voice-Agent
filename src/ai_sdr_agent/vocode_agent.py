@@ -652,13 +652,15 @@ class SDRVocodeAgent(RespondAgent[SDRAgentConfig]):
             self.agent_config.lead_id,
             self.agent_config.generate_responses,
         )
-        self.produce_interruptible_agent_response_event_nonblocking(
-            AgentResponseMessage(
-                message=BaseMessage(text=self.agent_config.initial_message_text),
-                is_first=True,
-            ),
-            is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
-        )
+        opening = (self.agent_config.initial_message_text or "").strip()
+        if opening:
+            self.produce_interruptible_agent_response_event_nonblocking(
+                AgentResponseMessage(
+                    message=BaseMessage(text=opening),
+                    is_first=True,
+                ),
+                is_interruptible=self.agent_config.allow_agent_to_be_cut_off,
+            )
         self.produce_interruptible_agent_response_event_nonblocking(
             AgentResponseMessage(message=EndOfTurn()),
             is_interruptible=self.agent_config.allow_agent_to_be_cut_off,

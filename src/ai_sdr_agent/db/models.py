@@ -63,13 +63,6 @@ class BotConfigRow(Base):
     twilio_phone_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
 
     # Conversation behaviour
-    initial_greeting: Mapped[str] = mapped_column(
-        Text,
-        default=(
-            "Hi, this is John — I know I'm calling out of the blue. "
-            "Do you have 30 seconds so I can tell you why I'm reaching out?"
-        ),
-    )
     max_call_turns: Mapped[int] = mapped_column(Integer, default=12)
     max_objection_attempts: Mapped[int] = mapped_column(Integer, default=2)
     max_qualify_attempts: Mapped[int] = mapped_column(Integer, default=3)
@@ -112,7 +105,6 @@ class BotConfigRow(Base):
             "twilio_account_sid": self.twilio_account_sid,
             "twilio_auth_token": self.twilio_auth_token,
             "twilio_phone_number": self.twilio_phone_number,
-            "initial_greeting": self.initial_greeting,
             "max_call_turns": self.max_call_turns,
             "max_objection_attempts": self.max_objection_attempts,
             "max_qualify_attempts": self.max_qualify_attempts,

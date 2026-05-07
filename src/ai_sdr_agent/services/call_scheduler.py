@@ -87,10 +87,7 @@ class CallScheduler:
             lead_id=lead.lead_id,
             calendar_id=lead.calendar_id,
             sales_rep_name=lead.owner_name,
-            initial_message_text=self._cfg(
-                "initial_greeting",
-                "Hi, this is your AI assistant. Do you have a moment?",
-            ),
+            initial_message_text="",
         )
         if self.settings is not None and not self._bot_config:
             if self.settings.stt_provider == "google":

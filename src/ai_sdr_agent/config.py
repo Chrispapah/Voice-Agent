@@ -86,10 +86,6 @@ class SDRSettings(BaseSettings):
     default_sender_email: str = "sales@example.com"
     default_from_name: str = "AI SDR"
     outbound_caller_name: str = "John"
-    initial_greeting: str = (
-        "Hi, this is John — I know I'm calling out of the blue. "
-        "Do you have 30 seconds so I can tell you why I'm reaching out?"
-    )
     max_objection_attempts: int = 2
     max_call_turns: int = 12
 

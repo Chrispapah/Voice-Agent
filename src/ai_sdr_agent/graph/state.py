@@ -49,7 +49,6 @@ class BotConfigDict(TypedDict, total=False):
     twilio_account_sid: str | None
     twilio_auth_token: str | None
     twilio_phone_number: str | None
-    initial_greeting: str
     max_call_turns: int
     max_objection_attempts: int
     max_qualify_attempts: int
@@ -97,6 +96,8 @@ class ConversationState(TypedDict):
     metadata: dict[str, str]
     # Custom graph mode: consecutive self-loop completions per node id (for loop_min/max_turns).
     graph_node_streaks: NotRequired[dict[str, int]]
+    # Custom graph / single mode: next utterance index per node id for reply_turn_modes scheduling.
+    graph_node_utterance_index: NotRequired[dict[str, int]]
 
 
 _DEFAULT_BOT_CONFIG: BotConfigDict = {
@@ -117,10 +118,6 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "twilio_account_sid": None,
     "twilio_auth_token": None,
     "twilio_phone_number": None,
-    "initial_greeting": (
-        "Hi, this is John — I know I'm calling out of the blue. "
-        "Do you have 30 seconds so I can tell you why I'm reaching out?"
-    ),
     "max_call_turns": 12,
     "max_objection_attempts": 2,
     "max_qualify_attempts": 3,
@@ -198,4 +195,5 @@ def build_initial_state(
         "qualification_notes": {},
         "metadata": {},
         "graph_node_streaks": {},
+        "graph_node_utterance_index": {},
     }

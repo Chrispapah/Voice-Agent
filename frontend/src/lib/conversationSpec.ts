@@ -6,15 +6,16 @@ export const SINGLE_AGENT_NODE_ID = "__single__" as const;
 export type ConversationSpecMode = "single" | "graph";
 export type ConversationSpecTemplate = "custom" | "sdr";
 
+export type ReplyTurnMode = "static" | "llm";
+
 export interface SpecNode {
   id: string;
   label?: string | null;
   system_prompt: string;
-  /**
-   * When non-empty, overrides the reply LLM for turns after the user speaks.
-   * Opening line still uses bot Initial greeting. Same template variables as system_prompt.
-   */
+  /** Fixed text when reply mode is "static". Same placeholders as system_prompt. */
   static_message?: string | null;
+  /** Ordered modes per agent utterance at this node (0 = opener). */
+  reply_turn_modes?: ReplyTurnMode[] | null;
   loop_min_turns?: number | null;
   loop_max_turns?: number | null;
   /** Router LLM hint when choosing among outbound edges (not spoken). */
@@ -37,6 +38,8 @@ export interface ConversationSpecV1 {
   variables_hint?: string | null;
   /** Optional React Flow positions keyed by node id */
   positions?: Record<string, { x: number; y: number }>;
+  single_static_message?: string | null;
+  single_reply_turn_modes?: ReplyTurnMode[] | null;
 }
 
 export function defaultSdrConversationSpec(): ConversationSpecV1 {
@@ -56,6 +59,24 @@ export function defaultSingleConversationSpec(systemPrompt: string): Conversatio
     template: "custom",
     system_prompt: systemPrompt,
   };
+}
+
+export function formatReplyTurnModes(modes: ReplyTurnMode[] | null | undefined): string {
+  return modes?.length ? modes.join(", ") : "";
+}
+
+export function parseReplyTurnModes(raw: string): ReplyTurnMode[] | undefined {
+  const parts = raw
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (!parts.length) return undefined;
+  const out: ReplyTurnMode[] = [];
+  for (const p of parts) {
+    if (p === "static" || p === "llm") out.push(p);
+    else return undefined;
+  }
+  return out;
 }
 
 export function botExecutionLabel(spec?: ConversationSpecV1 | null): string {

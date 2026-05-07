@@ -145,7 +145,6 @@ CREATE TABLE public.bot_configs (
   twilio_phone_number   varchar(30),
 
   -- Conversation behaviour
-  initial_greeting      text NOT NULL DEFAULT 'Hi, this is John — I know I''m calling out of the blue. Do you have 30 seconds so I can tell you why I''m reaching out?',
   max_call_turns        integer NOT NULL DEFAULT 12,
   max_objection_attempts integer NOT NULL DEFAULT 2,
   max_qualify_attempts  integer NOT NULL DEFAULT 3,
@@ -239,7 +238,7 @@ SELECT
        THEN left(twilio_auth_token, 4) || '****' || right(twilio_auth_token, 4)
   END AS twilio_auth_token,
   twilio_phone_number,
-  initial_greeting, max_call_turns, max_objection_attempts,
+  max_call_turns, max_objection_attempts,
   max_qualify_attempts, max_booking_attempts, sales_rep_name,
   prompt_greeting, prompt_qualify, prompt_pitch,
   prompt_objection, prompt_booking, prompt_wrapup,
@@ -400,7 +399,7 @@ SELECT
        THEN left(twilio_auth_token, 4) || '****' || right(twilio_auth_token, 4)
   END AS twilio_auth_token,
   twilio_phone_number,
-  initial_greeting, max_call_turns, max_objection_attempts,
+  max_call_turns, max_objection_attempts,
   max_qualify_attempts, max_booking_attempts, sales_rep_name,
   prompt_greeting, prompt_qualify, prompt_pitch,
   prompt_objection, prompt_booking, prompt_wrapup,

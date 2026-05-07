@@ -200,14 +200,10 @@ export default function BotSettingsPage({ params }: { params: Promise<{ id: stri
                 className="input-field"
               />
             </Field>
-            <Field label="Initial Greeting">
-              <textarea
-                rows={3}
-                value={current("initial_greeting") || ""}
-                onChange={(e) => update("initial_greeting", e.target.value)}
-                className="input-field"
-              />
-            </Field>
+            <p className="text-sm text-[var(--muted-foreground)]">
+              The first spoken line is defined in the Agent Builder (entry node system prompt, static message, and reply
+              turn modes)—not here.
+            </p>
             <Field label="Active">
               <label className="flex items-center gap-2">
                 <input

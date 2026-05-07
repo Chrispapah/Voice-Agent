@@ -114,7 +114,6 @@ export interface BotConfig {
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
   twilio_phone_number: string | null;
-  initial_greeting: string;
   max_call_turns: number;
   max_objection_attempts: number;
   max_qualify_attempts: number;

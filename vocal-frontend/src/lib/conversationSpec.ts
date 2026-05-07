@@ -3,16 +3,22 @@ export const SINGLE_AGENT_NODE_ID = "__single__" as const;
 export type ConversationSpecMode = "single" | "graph";
 export type ConversationSpecTemplate = "custom" | "sdr";
 
+export type ReplyTurnMode = "static" | "llm";
+
 export interface SpecNode {
   id: string;
   label?: string | null;
   system_prompt: string;
   tool_ids?: string[];
   /**
-   * When non-empty, overrides the reply LLM after the user speaks.
-   * Opening line still uses Initial greeting. Same template variables as system_prompt.
+   * Fixed text when this node's reply mode is "static". Same placeholders as system_prompt.
    */
   static_message?: string | null;
+  /**
+   * Ordered modes per agent utterance at this node (0 = opener before the user speaks).
+   * If omitted with static_message set: after the user speaks, replies use static_message (legacy).
+   */
+  reply_turn_modes?: ReplyTurnMode[] | null;
   /** Minimum completed self-loop turns before classifier may route to a different node. */
   loop_min_turns?: number | null;
   /** After this many completed stays, force exit to a non-self neighbor. */
@@ -37,6 +43,10 @@ export interface ConversationSpecV1 {
   edges?: SpecEdge[];
   variables_hint?: string | null;
   positions?: Record<string, { x: number; y: number }>;
+  /** Single mode: fixed text when a turn uses "static" in single_reply_turn_modes. */
+  single_static_message?: string | null;
+  /** Single mode: same semantics as per-node reply_turn_modes. */
+  single_reply_turn_modes?: ReplyTurnMode[] | null;
 }
 
 export function defaultGraphConversationSpec(): ConversationSpecV1 {
@@ -77,6 +87,25 @@ export function defaultSingleConversationSpec(systemPrompt: string): Conversatio
     system_prompt: systemPrompt,
     tool_ids: [],
   };
+}
+
+export function formatReplyTurnModes(modes: ReplyTurnMode[] | null | undefined): string {
+  return modes?.length ? modes.join(", ") : "";
+}
+
+/** Parse comma/space-separated static|llm tokens; returns undefined if empty or invalid. */
+export function parseReplyTurnModes(raw: string): ReplyTurnMode[] | undefined {
+  const parts = raw
+    .split(/[,;\s]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  if (!parts.length) return undefined;
+  const out: ReplyTurnMode[] = [];
+  for (const p of parts) {
+    if (p === "static" || p === "llm") out.push(p);
+    else return undefined;
+  }
+  return out;
 }
 
 export function botExecutionLabel(spec?: ConversationSpecV1 | null): string {

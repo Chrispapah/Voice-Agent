@@ -322,15 +322,12 @@ async def test_custom_graph_static_message_skips_reply_llm():
         ],
         "edges": [{"from": "alpha", "to": "beta"}],
     }
-    bot_cfg = _stub_bot_config(
-        conversation_spec=spec,
-        initial_greeting="Opening line.",
-    )
+    bot_cfg = _stub_bot_config(conversation_spec=spec)
     service, _, _, _ = _build_conversation_service(brain=_GraphStubBrain(), bot_config=bot_cfg)
 
     conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
     state = await service.handle_turn(conversation_id, "")
-    assert "Opening line" in state["last_agent_response"]
+    assert "alpha reply" in state["last_agent_response"]
 
     state = await service.handle_turn(conversation_id, "Hello from human.")
     assert state["last_agent_response"] == "Exactly static reply."
@@ -350,17 +347,14 @@ async def test_custom_graph_two_nodes_linear():
         ],
         "edges": [{"from": "alpha", "to": "beta"}],
     }
-    bot_cfg = _stub_bot_config(
-        conversation_spec=spec,
-        initial_greeting="Opening line from entry node.",
-    )
+    bot_cfg = _stub_bot_config(conversation_spec=spec)
     service, _, _, _ = _build_conversation_service(brain=_GraphStubBrain(), bot_config=bot_cfg)
     conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
 
     state = await service.handle_turn(conversation_id, "")
     assert state["current_node"] == "alpha"
     assert state["next_node"] == "beta"
-    assert "Opening line" in state["last_agent_response"]
+    assert state["last_agent_response"] == "alpha reply"
 
     state = await service.handle_turn(conversation_id, "Hello from human.")
     assert state["current_node"] == "beta"
@@ -408,7 +402,7 @@ async def test_custom_graph_loop_min_turns_blocks_early_exit():
         ],
         "edges": [{"from": "n1", "to": "n1"}, {"from": "n1", "to": "n2"}],
     }
-    bot_cfg = _stub_bot_config(conversation_spec=spec, initial_greeting="Hi.")
+    bot_cfg = _stub_bot_config(conversation_spec=spec)
     service, _, _, _ = _build_conversation_service(
         brain=_LoopRoutingBrain(classify_as="n2", opener_stay="n1"),
         bot_config=bot_cfg,
@@ -449,7 +443,7 @@ async def test_custom_graph_loop_max_turns_forces_exit():
         ],
         "edges": [{"from": "n1", "to": "n1"}, {"from": "n1", "to": "n2"}],
     }
-    bot_cfg = _stub_bot_config(conversation_spec=spec, initial_greeting="Hi.")
+    bot_cfg = _stub_bot_config(conversation_spec=spec)
     service, _, _, _ = _build_conversation_service(
         brain=_LoopRoutingBrain(classify_as="n1", opener_stay="n1"),
         bot_config=bot_cfg,
@@ -475,3 +469,29 @@ async def test_custom_graph_loop_max_turns_forces_exit():
     state = await service.handle_turn(conversation_id, "four")
     assert state["current_node"] == "n2"
     assert state["next_node"] == "n2"
+
+
+@pytest.mark.asyncio
+async def test_reply_turn_modes_static_opener():
+    """Opener uses static_message when reply_turn_modes[0] is static."""
+    spec = {
+        "conversation_spec_version": 1,
+        "mode": "graph",
+        "template": "custom",
+        "entry_node_id": "alpha",
+        "nodes": [
+            {
+                "id": "alpha",
+                "system_prompt": "ALPHA_PROMPT opener",
+                "static_message": "Exactly opener static.",
+                "reply_turn_modes": ["static"],
+            },
+            {"id": "beta", "system_prompt": "BETA_PROMPT"},
+        ],
+        "edges": [{"from": "alpha", "to": "beta"}],
+    }
+    bot_cfg = _stub_bot_config(conversation_spec=spec)
+    service, _, _, _ = _build_conversation_service(brain=_GraphStubBrain(), bot_config=bot_cfg)
+    conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
+    state = await service.handle_turn(conversation_id, "")
+    assert state["last_agent_response"] == "Exactly opener static."

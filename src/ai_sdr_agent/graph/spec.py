@@ -3,9 +3,12 @@
 Router rules (graph mode):
 - After an agent node speaks, the runtime picks the next node from **outgoing edges**
   of the current node.
-- Optional per-node ``static_message``: when non-empty, the reply LLM is skipped for turns
-  after the user has spoken; the string is spoken (placeholders supported). The bot-level
-  ``initial_greeting`` still controls the opening line on the first turn.
+- Optional per-node ``static_message``: fixed spoken text when that turn uses ``static``
+  in ``reply_turn_modes`` (or legacy: whenever the user has already spoken and no modes set).
+- Optional per-node ``reply_turn_modes``: ordered list (``static`` / ``llm``) for successive
+  agent utterances **at this node** (including the opener before any user speech). If omitted
+  with ``static_message`` set, legacy behavior applies: opener uses the LLM (or static only
+  when modes explicitly request it); after the user speaks, replies use ``static_message``.
 - **0 outgoing edges** → the current node keeps handling the conversation.
 - **1 outgoing edge** → that target is chosen without an extra LLM call.
 - **2+ outgoing edges** → ``ConversationBrain.classify`` picks one label from the
@@ -30,6 +33,8 @@ from __future__ import annotations
 
 import re
 from typing import Any, Literal
+
+ReplyTurnMode = Literal["static", "llm"]
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -65,11 +70,26 @@ class SpecNode(BaseModel):
         default=None,
         max_length=8000,
         description=(
-            "When set (non-empty), agent speech on this node uses this fixed text instead of the reply LLM "
-            "after the user has spoken. Does not replace bot-level initial_greeting for the opening line. "
+            "Fixed spoken text when this node's reply mode is ``static`` (see reply_turn_modes). "
             "Supports the same {placeholder} variables as system_prompt."
         ),
     )
+    reply_turn_modes: list[ReplyTurnMode] | None = Field(
+        default=None,
+        description=(
+            "Order maps to successive agent utterances at this node (0 = opener before user speaks, "
+            "then each reply while on this node). Each entry chooses static_message vs LLM (system_prompt). "
+            "Indices beyond this list default to llm. When omitted and static_message is set, legacy "
+            "behavior applies for utterances after the user has spoken."
+        ),
+    )
+
+    @field_validator("reply_turn_modes", mode="before")
+    @classmethod
+    def empty_reply_modes(cls, v: object) -> object:
+        if v == []:
+            return None
+        return v
 
     @field_validator("id")
     @classmethod
@@ -122,6 +142,23 @@ class ConversationSpecV1(BaseModel):
     nodes: list[SpecNode] = Field(default_factory=list)
     edges: list[SpecEdge] = Field(default_factory=list)
     variables_hint: str | None = None
+    # Single-mode only: opener / turn scheduling without graph nodes.
+    single_static_message: str | None = Field(
+        default=None,
+        max_length=8000,
+        description="Fixed text for single-mode turns that use reply mode static.",
+    )
+    single_reply_turn_modes: list[ReplyTurnMode] | None = Field(
+        default=None,
+        description="Same semantics as per-node reply_turn_modes for the virtual single agent.",
+    )
+
+    @field_validator("single_reply_turn_modes", mode="before")
+    @classmethod
+    def empty_single_reply_modes(cls, v: object) -> object:
+        if v == []:
+            return None
+        return v
 
     @model_validator(mode="after")
     def validate_mode_shape(self) -> ConversationSpecV1:
@@ -136,6 +173,8 @@ class ConversationSpecV1(BaseModel):
                 raise ValueError("single mode must not set entry_node_id")
             return self
         # graph
+        if self.single_static_message is not None or self.single_reply_turn_modes is not None:
+            raise ValueError("graph mode must not set single_static_message or single_reply_turn_modes")
         if not self.nodes:
             raise ValueError("graph mode requires at least one node")
         if not self.entry_node_id:
@@ -194,11 +233,20 @@ def prompt_for_node(spec: ConversationSpecV1, node_id: str) -> str:
 
 
 def static_message_for_node(spec: ConversationSpecV1, node_id: str) -> str | None:
-    """Non-empty static spoken reply for this node after the user has spoken, if configured."""
+    """Non-empty static spoken text for this node when reply mode is ``static``."""
     if spec.mode != "graph":
         return None
     for n in spec.nodes:
         if n.id == node_id:
             raw = (n.static_message or "").strip()
             return raw if raw else None
+    return None
+
+
+def reply_turn_modes_for_node(spec: ConversationSpecV1, node_id: str) -> list[ReplyTurnMode] | None:
+    if spec.mode != "graph":
+        return None
+    for n in spec.nodes:
+        if n.id == node_id:
+            return n.reply_turn_modes
     return None

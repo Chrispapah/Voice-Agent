@@ -9,10 +9,11 @@ from loguru import logger
 from ai_sdr_agent.graph.prompts import _VOICE_OUTPUT_RULES, _template_vars, format_reply_for_tts
 from ai_sdr_agent.graph.spec import (
     SINGLE_AGENT_NODE_ID,
-    ConversationSpecV1,
+    ReplyTurnMode,
     build_adjacency,
     parse_conversation_spec,
     prompt_for_node,
+    reply_turn_modes_for_node,
     static_message_for_node,
 )
 from ai_sdr_agent.graph.state import ConversationState
@@ -23,6 +24,37 @@ if TYPE_CHECKING:
 # One warning per (conversation_id, graph node) — avoids log spam while a session is stuck.
 _sticky_routing_warned: set[tuple[str, str]] = set()
 _STICKY_WARN_CAP = 4096
+
+
+def _pick_reply_mode(
+    *,
+    modes: list[ReplyTurnMode] | None,
+    utterance_index: int,
+    has_human: bool,
+    static_text: str | None,
+) -> ReplyTurnMode:
+    """Resolve static vs LLM for this utterance.
+
+    When ``modes`` is non-empty, index maps to successive agent lines at this node (0 = opener).
+    Indices past the list default to ``llm``. ``static`` falls back to ``llm`` if ``static_text`` is empty.
+
+    When ``modes`` is absent or empty, legacy graph behavior: after the user has spoken, a non-empty
+    ``static_text`` forces ``static``; the opener uses ``llm``.
+    """
+    trimmed = (static_text or "").strip()
+    if modes:
+        mode: ReplyTurnMode = modes[utterance_index] if utterance_index < len(modes) else "llm"
+        if mode == "static" and not trimmed:
+            logger.warning(
+                "reply_turn_modes requested static but static_message is empty; using llm instead "
+                "(utterance_index={})",
+                utterance_index,
+            )
+            return "llm"
+        return mode
+    if has_human and trimmed:
+        return "static"
+    return "llm"
 
 
 def _maybe_warn_sticky_routing(state: ConversationState, node_id: str, outgoing: list[str]) -> None:
@@ -162,20 +194,28 @@ def _append_agent(
     next_node: str,
     *,
     graph_node_streaks: dict[str, int] | None = None,
+    graph_node_utterance_index: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     streaks: dict[str, int] = dict(
         graph_node_streaks
         if graph_node_streaks is not None
         else (state.get("graph_node_streaks") or {})
     )
-    return {
+    utter_idx: dict[str, int] = dict(
+        graph_node_utterance_index
+        if graph_node_utterance_index is not None
+        else (state.get("graph_node_utterance_index") or {})
+    )
+    out: dict[str, Any] = {
         "transcript": state["transcript"] + [{"role": "agent", "content": content}],
         "current_node": node_name,
         "last_agent_response": content,
         "next_node": next_node,
         "route_decision": next_node,
         "graph_node_streaks": streaks,
+        "graph_node_utterance_index": utter_idx,
     }
+    return out
 
 
 def make_single_agent_node(
@@ -188,29 +228,48 @@ def make_single_agent_node(
             raise RuntimeError("single_agent_step requires single-mode spec")
         trace = _trace(state)
         has_human = any(m.get("role") == "human" for m in state["transcript"])
-        if not has_human:
-            raw = state.get("bot_config", {}).get("initial_greeting") or "Hello."
-            text = format_reply_for_tts(str(raw))
-            next_n = SINGLE_AGENT_NODE_ID
-            logger.info("single_agent_node used initial_greeting latency_ms={:.0f}", (time.perf_counter() - t0) * 1000)
-            return _append_agent(state, text, SINGLE_AGENT_NODE_ID, next_n)
-
-        system = _interpolate_placeholders(spec.system_prompt or "", state)
-        system = f"{system.strip()}\n{_VOICE_OUTPUT_RULES}"
-        max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
-        response = format_reply_for_tts(
-            await brain.respond(
-                system_prompt=system,
-                transcript=state["transcript"],
-                max_tokens=max_out,
-                trace=trace,
+        utter_map = dict(state.get("graph_node_utterance_index") or {})
+        idx = int(utter_map.get(SINGLE_AGENT_NODE_ID, 0))
+        static_src = (spec.single_static_message or "").strip() or None
+        modes = spec.single_reply_turn_modes
+        mode = _pick_reply_mode(
+            modes=modes,
+            utterance_index=idx,
+            has_human=has_human,
+            static_text=static_src,
+        )
+        if mode == "static":
+            text = format_reply_for_tts(_interpolate_placeholders(static_src or "", state))
+            logger.info(
+                "single_agent_node static_message latency_ms={:.0f}",
+                (time.perf_counter() - t0) * 1000,
             )
+        else:
+            system = _interpolate_placeholders(spec.system_prompt or "", state)
+            system = f"{system.strip()}\n{_VOICE_OUTPUT_RULES}"
+            max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
+            text = format_reply_for_tts(
+                await brain.respond(
+                    system_prompt=system,
+                    transcript=state["transcript"],
+                    max_tokens=max_out,
+                    trace=trace,
+                )
+            )
+            logger.info(
+                "single_agent_node LLM latency_ms={:.0f}",
+                (time.perf_counter() - t0) * 1000,
+            )
+        next_n = SINGLE_AGENT_NODE_ID
+        new_um = dict(utter_map)
+        new_um[SINGLE_AGENT_NODE_ID] = idx + 1
+        return _append_agent(
+            state,
+            text,
+            SINGLE_AGENT_NODE_ID,
+            next_n,
+            graph_node_utterance_index=new_um,
         )
-        logger.info(
-            "single_agent_node LLM latency_ms={:.0f}",
-            (time.perf_counter() - t0) * 1000,
-        )
-        return _append_agent(state, response, SINGLE_AGENT_NODE_ID, SINGLE_AGENT_NODE_ID)
 
     return single_agent_step
 
@@ -229,26 +288,62 @@ def make_graph_agent_node(
         has_human = any(m.get("role") == "human" for m in state["transcript"])
         outgoing = list(adjacency.get(node_id, []))
         _maybe_warn_sticky_routing(state, node_id, outgoing)
+
+        utter_map = dict(state.get("graph_node_utterance_index") or {})
+        utter_idx = int(utter_map.get(node_id, 0))
+        modes = reply_turn_modes_for_node(spec, node_id)
+        static_src = static_message_for_node(spec, node_id)
+        reply_kind = _pick_reply_mode(
+            modes=modes,
+            utterance_index=utter_idx,
+            has_human=has_human,
+            static_text=static_src,
+        )
+
         if not has_human:
-            raw = state.get("bot_config", {}).get("initial_greeting") or "Hello."
-            response = format_reply_for_tts(str(raw))
-            # Stay on this node until the user speaks: multi-edge routing uses classify
-            # on the last user message; the opener has none, so avoid a blind LLM pick.
+            if reply_kind == "static":
+                response = format_reply_for_tts(_interpolate_placeholders(static_src or "", state))
+                logger.info(
+                    "graph_agent_node opener static node={} latency_ms={:.0f}",
+                    node_id,
+                    (time.perf_counter() - t0) * 1000,
+                )
+            else:
+                base_prompt = _interpolate_placeholders(prompt_for_node(spec, node_id), state)
+                system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
+                max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
+                response = format_reply_for_tts(
+                    await brain.respond(
+                        system_prompt=system,
+                        transcript=state["transcript"],
+                        max_tokens=max_out,
+                        trace=trace,
+                    )
+                )
+                logger.info(
+                    "graph_agent_node opener llm node={} latency_ms={:.0f}",
+                    node_id,
+                    (time.perf_counter() - t0) * 1000,
+                )
             if len(outgoing) == 1:
                 next_node = outgoing[0]
             else:
                 next_node = node_id
-            logger.info(
-                "graph_agent_node opener node={} next={} latency_ms={:.0f}",
+            new_um = dict(utter_map)
+            if next_node == node_id:
+                new_um[node_id] = utter_idx + 1
+            else:
+                new_um.pop(node_id, None)
+            return _append_agent(
+                state,
+                response,
                 node_id,
                 next_node,
-                (time.perf_counter() - t0) * 1000,
+                graph_node_utterance_index=new_um,
             )
-            return _append_agent(state, response, node_id, next_node)
 
-        static_reply = static_message_for_node(spec, node_id)
-        if static_reply:
-            response = format_reply_for_tts(_interpolate_placeholders(static_reply, state))
+        if reply_kind == "static":
+            response = format_reply_for_tts(_interpolate_placeholders(static_src or "", state))
             logger.info(
                 "graph_agent_node static_message node={} latency_ms={:.0f}",
                 node_id,
@@ -291,13 +386,25 @@ def make_graph_agent_node(
             streaks[node_id] = prior + 1
         else:
             streaks[node_id] = 0
+        new_um = dict(utter_map)
+        if next_node == node_id:
+            new_um[node_id] = utter_idx + 1
+        else:
+            new_um.pop(node_id, None)
         logger.info(
             "graph_agent_node node={} next={} latency_ms={:.0f}",
             node_id,
             next_node,
             (time.perf_counter() - t0) * 1000,
         )
-        return _append_agent(state, response, node_id, next_node, graph_node_streaks=streaks)
+        return _append_agent(
+            state,
+            response,
+            node_id,
+            next_node,
+            graph_node_streaks=streaks,
+            graph_node_utterance_index=new_um,
+        )
 
     return graph_agent_step
 

@@ -49,7 +49,6 @@ _BOT_UPDATE_FIELDS = {
     "twilio_account_sid",
     "twilio_auth_token",
     "twilio_phone_number",
-    "initial_greeting",
     "max_call_turns",
     "max_objection_attempts",
     "max_qualify_attempts",
@@ -90,7 +89,6 @@ class BotUpdateRequest(BaseModel):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_phone_number: str | None = None
-    initial_greeting: str | None = None
     max_call_turns: int | None = None
     max_objection_attempts: int | None = None
     max_qualify_attempts: int | None = None
@@ -145,7 +143,6 @@ def _public_bot(row: BotConfigRow) -> dict[str, Any]:
         "twilio_account_sid": _mask_secret(row.twilio_account_sid),
         "twilio_auth_token": _mask_secret(row.twilio_auth_token),
         "twilio_phone_number": row.twilio_phone_number,
-        "initial_greeting": row.initial_greeting,
         "max_call_turns": row.max_call_turns,
         "max_objection_attempts": row.max_objection_attempts,
         "max_qualify_attempts": row.max_qualify_attempts,
