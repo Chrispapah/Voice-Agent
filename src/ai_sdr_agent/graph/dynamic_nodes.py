@@ -13,6 +13,7 @@ from ai_sdr_agent.graph.spec import (
     build_adjacency,
     parse_conversation_spec,
     prompt_for_node,
+    static_message_for_node,
 )
 from ai_sdr_agent.graph.state import ConversationState
 
@@ -245,17 +246,26 @@ def make_graph_agent_node(
             )
             return _append_agent(state, response, node_id, next_node)
 
-        base_prompt = _interpolate_placeholders(prompt_for_node(spec, node_id), state)
-        system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
-        max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
-        response = format_reply_for_tts(
-            await brain.respond(
-                system_prompt=system,
-                transcript=state["transcript"],
-                max_tokens=max_out,
-                trace=trace,
+        static_reply = static_message_for_node(spec, node_id)
+        if static_reply:
+            response = format_reply_for_tts(_interpolate_placeholders(static_reply, state))
+            logger.info(
+                "graph_agent_node static_message node={} latency_ms={:.0f}",
+                node_id,
+                (time.perf_counter() - t0) * 1000,
             )
-        )
+        else:
+            base_prompt = _interpolate_placeholders(prompt_for_node(spec, node_id), state)
+            system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
+            max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
+            response = format_reply_for_tts(
+                await brain.respond(
+                    system_prompt=system,
+                    transcript=state["transcript"],
+                    max_tokens=max_out,
+                    trace=trace,
+                )
+            )
         raw_next = await _pick_next_node(
             brain=brain,
             state=state,

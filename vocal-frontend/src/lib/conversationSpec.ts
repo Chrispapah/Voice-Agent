@@ -8,6 +8,11 @@ export interface SpecNode {
   label?: string | null;
   system_prompt: string;
   tool_ids?: string[];
+  /**
+   * When non-empty, overrides the reply LLM after the user speaks.
+   * Opening line still uses Initial greeting. Same template variables as system_prompt.
+   */
+  static_message?: string | null;
   /** Minimum completed self-loop turns before classifier may route to a different node. */
   loop_min_turns?: number | null;
   /** After this many completed stays, force exit to a non-self neighbor. */

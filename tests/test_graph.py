@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from copy import deepcopy
 from pathlib import Path
@@ -299,6 +301,40 @@ class _LoopRoutingBrain(_GraphStubBrain):
             max_tokens=max_tokens,
             trace=trace,
         )
+
+
+@pytest.mark.asyncio
+async def test_custom_graph_static_message_skips_reply_llm():
+    """After the opener, the next graph step is ``beta`` (single edge from entry); static_message applies there."""
+    spec = {
+        "conversation_spec_version": 1,
+        "mode": "graph",
+        "template": "custom",
+        "entry_node_id": "alpha",
+        "nodes": [
+            {"id": "alpha", "label": "A", "system_prompt": "ALPHA_PROMPT outbound"},
+            {
+                "id": "beta",
+                "label": "B",
+                "system_prompt": "BETA_PROMPT continue",
+                "static_message": "Exactly static reply.",
+            },
+        ],
+        "edges": [{"from": "alpha", "to": "beta"}],
+    }
+    bot_cfg = _stub_bot_config(
+        conversation_spec=spec,
+        initial_greeting="Opening line.",
+    )
+    service, _, _, _ = _build_conversation_service(brain=_GraphStubBrain(), bot_config=bot_cfg)
+
+    conversation_id = await service.start_session("lead-001", bot_config=bot_cfg)
+    state = await service.handle_turn(conversation_id, "")
+    assert "Opening line" in state["last_agent_response"]
+
+    state = await service.handle_turn(conversation_id, "Hello from human.")
+    assert state["last_agent_response"] == "Exactly static reply."
+    assert state["current_node"] == "beta"
 
 
 @pytest.mark.asyncio

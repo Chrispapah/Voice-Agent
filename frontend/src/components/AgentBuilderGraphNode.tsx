@@ -13,7 +13,6 @@ type AgentGraphNodeData = Record<string, unknown> & {
 function AgentBuilderGraphNodeInner({ id, data, selected }: NodeProps<Node<AgentGraphNodeData>>) {
   const entryNodeId = useContext(AgentGraphEntryContext);
   const isEntry = id === entryNodeId;
-  const label = typeof data.label === "string" && data.label.length > 0 ? data.label : id;
 
   return (
     <>
@@ -41,8 +40,7 @@ function AgentBuilderGraphNodeInner({ id, data, selected }: NodeProps<Node<Agent
               Entry
             </span>
           ) : null}
-          <div className="text-sm font-semibold leading-snug text-[var(--foreground)]">{label}</div>
-          <div className="mt-1 truncate font-mono text-[10px] text-[var(--muted-foreground)]">{id}</div>
+          <div className="truncate font-mono text-sm font-semibold leading-snug text-[var(--foreground)]">{id}</div>
         </div>
       </div>
       <Handle

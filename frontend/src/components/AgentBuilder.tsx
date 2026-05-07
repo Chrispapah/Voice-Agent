@@ -57,6 +57,7 @@ function specToNodes(spec: ConversationSpecV1): Node[] {
     data: {
       label: n.label || n.id,
       system_prompt: n.system_prompt,
+      static_message: typeof n.static_message === "string" ? n.static_message : "",
       ...(n.loop_min_turns != null ? { loop_min_turns: n.loop_min_turns } : {}),
       ...(n.loop_max_turns != null ? { loop_max_turns: n.loop_max_turns } : {}),
     },
@@ -84,6 +85,13 @@ function nodesEdgesToSpec(
       label: typeof n.data?.label === "string" ? n.data.label : null,
       system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
     };
+    const staticRaw =
+      typeof (n.data as { static_message?: unknown })?.static_message === "string"
+        ? String((n.data as { static_message: string }).static_message).trim()
+        : "";
+    if (staticRaw) {
+      sn.static_message = staticRaw;
+    }
     const lo = (n.data as { loop_min_turns?: unknown })?.loop_min_turns;
     const hi = (n.data as { loop_max_turns?: unknown })?.loop_max_turns;
     if (typeof lo === "number" && Number.isFinite(lo) && lo >= 1) {
@@ -301,7 +309,7 @@ export function AgentBuilder({ botId, value, onChange }: AgentBuilderProps) {
             >
               {nodes.map((n) => (
                 <option key={n.id} value={n.id}>
-                  {typeof n.data?.label === "string" && n.data.label ? `${n.data.label} (${n.id})` : n.id}
+                  {n.id}
                 </option>
               ))}
             </select>
@@ -321,6 +329,7 @@ export function AgentBuilder({ botId, value, onChange }: AgentBuilderProps) {
                       label: id,
                       system_prompt:
                         "Describe this agent’s role in one paragraph. Voice: one or two short sentences per turn.",
+                      static_message: "",
                     },
                   },
                 ];
@@ -415,6 +424,26 @@ export function AgentBuilder({ botId, value, onChange }: AgentBuilderProps) {
                   });
                 }}
               />
+              <label className="mb-1 mt-3 block text-xs font-medium">Static message (optional)</label>
+              <textarea
+                rows={4}
+                className="input-field font-mono text-xs"
+                placeholder="Leave empty to use the LLM with the system prompt above."
+                value={String(nodes.find((n) => n.id === selectedId)?.data?.static_message ?? "")}
+                onChange={(e) => {
+                  setNodes((curr) => {
+                    const next = curr.map((n) =>
+                      n.id === selectedId ? { ...n, data: { ...n.data, static_message: e.target.value } } : n,
+                    );
+                    pushGraphSpec(next, edges, entryNodeId);
+                    return next;
+                  });
+                }}
+              />
+              <p className="mt-1 text-[11px] text-[var(--muted-foreground)]">
+                When set, this exact text is spoken on this node after the user speaks (no reply LLM). The opening
+                line still uses General → Initial greeting.
+              </p>
             </div>
           )}
 

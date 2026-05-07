@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
+
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 
 from ai_sdr_agent.graph.spec import SINGLE_AGENT_NODE_ID, graph_execution_kind
 

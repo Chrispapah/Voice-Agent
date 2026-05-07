@@ -13,7 +13,6 @@ type AgentGraphNodeData = Record<string, unknown> & {
 function AgentGraphNodeInner({ id, data, selected }: NodeProps<Node<AgentGraphNodeData>>) {
   const entryNodeId = useContext(AgentGraphEntryContext);
   const isEntry = id === entryNodeId;
-  const label = typeof data.label === "string" && data.label.length > 0 ? data.label : id;
   const toolCount = Array.isArray(data.tool_ids) ? data.tool_ids.length : 0;
 
   return (
@@ -32,15 +31,14 @@ function AgentGraphNodeInner({ id, data, selected }: NodeProps<Node<AgentGraphNo
               Entry
             </span>
           )}
-          <div className="text-sm font-semibold leading-snug text-foreground">{label}</div>
-          <div className="mt-1 flex items-center justify-between gap-3">
-            <span className="truncate font-mono text-[10px] text-muted-foreground">{id}</span>
-            {toolCount > 0 && (
+          <div className="truncate font-mono text-sm font-semibold leading-snug text-foreground">{id}</div>
+          {toolCount > 0 ? (
+            <div className="mt-1 flex justify-end">
               <span className="inline-flex items-center gap-1 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                 <Wrench className="h-3 w-3" /> {toolCount}
               </span>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
       </div>
       <Handle type="source" position={Position.Right} className="!h-3 !w-3 !border-2 !border-background !bg-primary" />

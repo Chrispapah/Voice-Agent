@@ -146,6 +146,7 @@ function specToNodes(spec: ConversationSpecV1): Node[] {
     data: {
       label: n.label || n.id,
       system_prompt: n.system_prompt,
+      static_message: typeof n.static_message === "string" ? n.static_message : "",
       tool_ids: n.tool_ids ?? [],
       ...(n.loop_min_turns != null ? { loop_min_turns: n.loop_min_turns } : {}),
       ...(n.loop_max_turns != null ? { loop_max_turns: n.loop_max_turns } : {}),
@@ -177,6 +178,11 @@ function nodesEdgesToSpec(
       system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
       tool_ids: normalizeToolIds(n.data?.tool_ids),
     };
+    const staticRaw =
+      typeof n.data?.static_message === "string" ? String(n.data.static_message).trim() : "";
+    if (staticRaw) {
+      sn.static_message = staticRaw;
+    }
     const lo = n.data?.loop_min_turns;
     const hi = n.data?.loop_max_turns;
     if (typeof lo === "number" && Number.isFinite(lo) && lo >= 1) {
@@ -603,6 +609,7 @@ export default function FlowBuilderPage() {
         data: {
           label: id,
           system_prompt: "Describe this agent's role. Keep voice replies short and natural.",
+          static_message: "",
           tool_ids: [],
         },
       },
@@ -694,7 +701,7 @@ export default function FlowBuilderPage() {
     pushGraphSpec(nextNodes, nextEdges, nextEntry);
   }
 
-  function updateSelectedNode(field: "label" | "system_prompt", value: string) {
+  function updateSelectedNode(field: "label" | "system_prompt" | "static_message", value: string) {
     if (!selectedNodeId) return;
     setNodes((current) => {
       const next = current.map((node) =>
@@ -1076,7 +1083,7 @@ export default function FlowBuilderPage() {
                   className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
                 >
                   {nodes.map((node) => (
-                    <option key={node.id} value={node.id}>{String(node.data?.label || node.id)}</option>
+                    <option key={node.id} value={node.id}>{node.id}</option>
                   ))}
                 </select>
               </div>
@@ -1242,6 +1249,22 @@ export default function FlowBuilderPage() {
                     onChange={(e) => updateSelectedNode("system_prompt", e.target.value)}
                     className="mt-2 w-full text-xs font-mono border border-border rounded-lg p-3 bg-surface-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/40 resize-none"
                   />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">
+                    STATIC MESSAGE (OPTIONAL)
+                  </label>
+                  <textarea
+                    rows={5}
+                    placeholder="Leave empty to use the LLM with the system prompt above."
+                    value={String(selectedNode.data?.static_message ?? "")}
+                    onChange={(e) => updateSelectedNode("static_message", e.target.value)}
+                    className="mt-2 w-full text-xs font-mono border border-border rounded-lg p-3 bg-surface-muted/40 focus:outline-none focus:ring-2 focus:ring-ring/40 resize-none"
+                  />
+                  <p className="mt-1 text-[10px] leading-snug text-muted-foreground">
+                    When set, this exact text is spoken on this node after the user speaks (no reply LLM). Opening line
+                    still uses Initial greeting in the left panel.
+                  </p>
                 </div>
                 <ToolSelector
                   tools={tools}

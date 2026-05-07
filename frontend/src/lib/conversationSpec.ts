@@ -10,6 +10,11 @@ export interface SpecNode {
   id: string;
   label?: string | null;
   system_prompt: string;
+  /**
+   * When non-empty, overrides the reply LLM for turns after the user speaks.
+   * Opening line still uses bot Initial greeting. Same template variables as system_prompt.
+   */
+  static_message?: string | null;
   loop_min_turns?: number | null;
   loop_max_turns?: number | null;
   /** Router LLM hint when choosing among outbound edges (not spoken). */
