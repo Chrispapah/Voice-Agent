@@ -66,8 +66,12 @@ export default function AuthPage() {
     <div className="min-h-screen bg-surface-muted/50 px-4 py-10 text-foreground">
       <div className="mx-auto grid max-w-5xl gap-6 md:grid-cols-[1fr_420px]">
         <section className="rounded-2xl border border-border bg-card p-8 shadow-soft">
-          <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
-            <img src="/akoi-logo-no-back.png" alt="Akoi" className="h-10 w-auto max-w-[200px] object-contain object-left" />
+          <div className="mb-8 flex flex-col items-center gap-6 text-center">
+            <img
+              src="/akoi-logo-no-back.png"
+              alt="Akoi"
+              className="h-[120px] w-auto max-w-[min(100%,600px)] object-contain"
+            />
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Welcome to Akoi</h1>
               <p className="text-sm text-muted-foreground">Sign in to manage agents and publish flows to your LangChain brain.</p>

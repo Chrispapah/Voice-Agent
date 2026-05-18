@@ -58,19 +58,19 @@ export default function DashboardPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
+      <div className="mb-10 flex justify-center">
+        <img
+          src="/akoi-logo-no-back.png"
+          alt="Akoi"
+          className="h-[108px] w-auto max-w-[min(100%,480px)] object-contain"
+        />
+      </div>
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <img
-            src="/akoi-logo-no-back.png"
-            alt="Akoi"
-            className="h-9 w-auto max-w-[160px] object-contain object-left"
-          />
-          <div>
-            <h1 className="text-2xl font-bold">Your conversations</h1>
-            <p className="text-sm text-[var(--muted-foreground)]">
-              Welcome back, {user?.display_name || user?.email}
-            </p>
-          </div>
+        <div>
+          <h1 className="text-2xl font-bold">Your conversations</h1>
+          <p className="text-sm text-[var(--muted-foreground)]">
+            Welcome back, {user?.display_name || user?.email}
+          </p>
         </div>
         <div className="flex gap-3">
           <button

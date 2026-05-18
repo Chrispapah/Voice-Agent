@@ -33,7 +33,7 @@ export default function LoginPage() {
           <img
             src="/akoi-logo-no-back.png"
             alt="Akoi"
-            className="mx-auto mb-5 h-10 w-auto max-w-[200px] object-contain"
+            className="mx-auto mb-8 h-[120px] w-auto max-w-[min(100%,600px)] object-contain"
           />
           <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
