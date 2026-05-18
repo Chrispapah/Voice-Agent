@@ -59,7 +59,7 @@ class SDRSettings(BaseSettings):
 
     tts_provider: Literal["elevenlabs", "azure"] = "elevenlabs"
     elevenlabs_api_key: str | None = None
-    elevenlabs_voice_id: str | None = None
+    elevenlabs_voice_id: str | None = "4hx4668A4ljDTKS4m5oV"
     elevenlabs_model_id: str = "eleven_turbo_v2"
     elevenlabs_use_websocket: bool = False
     elevenlabs_optimize_streaming_latency: int = 4

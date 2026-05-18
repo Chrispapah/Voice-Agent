@@ -49,7 +49,9 @@ class BotConfigRow(Base):
 
     # TTS – ElevenLabs
     elevenlabs_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    elevenlabs_voice_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    elevenlabs_voice_id: Mapped[str | None] = mapped_column(
+        String(100), nullable=True, default="4hx4668A4ljDTKS4m5oV"
+    )
     elevenlabs_model_id: Mapped[str] = mapped_column(String(100), default="eleven_turbo_v2")
 
     # STT – Deepgram
