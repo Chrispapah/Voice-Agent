@@ -34,6 +34,28 @@ def resolve_telephony_deepgram_model(raw_model: str | None) -> str:
     return model
 
 
+def resolve_web_voice_deepgram_model(raw_model: str | None) -> str:
+    """Browser voice sends MediaRecorder WebM/Opus, not 8 kHz mulaw.
+
+    The telephony ``phonecall`` model (and ``*-phonecall``) targets phone audio; using it for
+    browser streams with some locales can make Deepgram reject the WebSocket with HTTP 400.
+    Map those to a general Nova model."""
+    model = (raw_model or "").strip() or "nova-2"
+    lower = model.lower()
+    if lower == "phonecall" or "phonecall" in lower:
+        return "nova-2"
+    return model
+
+
+def normalize_deepgram_language_code(code: str | None) -> str:
+    """Map BCP-47 style codes to Deepgram live-stream language tokens where needed."""
+    raw = (code or "el").strip()
+    norm = raw.lower().replace("_", "-")
+    if norm == "el" or norm.startswith("el-"):
+        return "el"
+    return raw
+
+
 def build_telephony_google_transcriber_config(settings: SDRSettings) -> SDRGoogleTranscriberConfig:
     """Google phone_call model (mulaw 8kHz) + ~utterance silence via client-side timer on interims."""
     logger.info(

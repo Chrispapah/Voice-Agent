@@ -27,6 +27,10 @@ from ai_sdr_agent.db.repositories import (
 )
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
 from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
+from ai_sdr_agent.transcriber_factory import (
+    normalize_deepgram_language_code,
+    resolve_web_voice_deepgram_model,
+)
 
 router = APIRouter(prefix="/api/bots", tags=["voice"])
 
@@ -434,8 +438,8 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                 {"type": "error", "message": "Deepgram API key required for browser voice (bot or server env)." },
             )
             return
-        model = str(bot_cfg_merged.get("deepgram_model") or "nova-2")
-        language = str(bot_cfg_merged.get("deepgram_language") or "el")
+        model = resolve_web_voice_deepgram_model(str(bot_cfg_merged.get("deepgram_model") or "nova-2"))
+        language = normalize_deepgram_language_code(str(bot_cfg_merged.get("deepgram_language") or "el"))
         uri = _deepgram_listen_url(model=model, language=language)
         dg_timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=None)
         try:
@@ -514,11 +518,23 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             raise
         except WSServerHandshakeError as exc:
             code = exc.status
-            logger.warning("Deepgram WebSocket handshake failed HTTP {}", code)
+            logger.warning(
+                "Deepgram WebSocket handshake failed HTTP {} model={} language={} message={!r}",
+                code,
+                model,
+                language,
+                getattr(exc, "message", "") or str(exc),
+            )
             if code == 401:
                 msg = (
                     "Deepgram rejected the API key (401). Add DEEPGRAM_API_KEY on the server (Railway) "
                     "or a real deepgram_api_key on the bot in Supabase (not a masked placeholder)."
+                )
+            elif code == 400:
+                msg = (
+                    "Deepgram rejected the connection (HTTP 400): invalid model/language or query "
+                    "parameters. For browser voice, use a general STT model such as nova-2 (not "
+                    "phonecall) and a supported language code (e.g. el for Greek)."
                 )
             elif code in (402, 403):
                 msg = f"Deepgram returned HTTP {code}; check billing, project, or key permissions."
