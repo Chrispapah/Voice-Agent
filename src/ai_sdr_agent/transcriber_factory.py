@@ -56,6 +56,20 @@ def normalize_deepgram_language_code(code: str | None) -> str:
     return raw
 
 
+def prefer_nova3_for_greek_browser_stt(model: str, language_code: str | None) -> str:
+    """Nova 3 reports stronger Greek support than Nova 2; browser audio is high-rate (not phonecall).
+
+    Telephony still uses ``phonecall`` / ``nova-2-phonecall`` (Nova 3 has no phonecall tier)."""
+    if normalize_deepgram_language_code(language_code) != "el":
+        return model
+    m = (model or "").strip().lower()
+    if m == "nova-2":
+        return "nova-3"
+    if m.startswith("nova-2-") and m != "nova-2-phonecall":
+        return "nova-3"
+    return model
+
+
 def build_telephony_google_transcriber_config(settings: SDRSettings) -> SDRGoogleTranscriberConfig:
     """Google phone_call model (mulaw 8kHz) + ~utterance silence via client-side timer on interims."""
     logger.info(

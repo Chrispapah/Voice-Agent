@@ -29,6 +29,7 @@ from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_b
 from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
 from ai_sdr_agent.transcriber_factory import (
     normalize_deepgram_language_code,
+    prefer_nova3_for_greek_browser_stt,
     resolve_web_voice_deepgram_model,
 )
 
@@ -438,8 +439,9 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                 {"type": "error", "message": "Deepgram API key required for browser voice (bot or server env)." },
             )
             return
-        model = resolve_web_voice_deepgram_model(str(bot_cfg_merged.get("deepgram_model") or "nova-2"))
         language = normalize_deepgram_language_code(str(bot_cfg_merged.get("deepgram_language") or "el"))
+        model = resolve_web_voice_deepgram_model(str(bot_cfg_merged.get("deepgram_model") or "nova-2"))
+        model = prefer_nova3_for_greek_browser_stt(model, language)
         uri = _deepgram_listen_url(model=model, language=language)
         dg_timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=None)
         try:
@@ -533,7 +535,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             elif code == 400:
                 msg = (
                     "Deepgram rejected the connection (HTTP 400): invalid model/language or query "
-                    "parameters. For browser voice, use a general STT model such as nova-2 (not "
+                    "parameters. For browser voice, use a general STT model such as nova-3 or nova-2 (not "
                     "phonecall) and a supported language code (e.g. el for Greek)."
                 )
             elif code in (402, 403):
