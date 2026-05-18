@@ -10,9 +10,6 @@ __pycache__/
 .tmp_meta/
 pip_err.txt
 pip_out.txt
-frontend/node_modules/
-frontend/.next/
-frontend/.env.local
 
 # Duplicate workspace folder (same code as repo root); do not commit.
 Voice-Agent-main/
