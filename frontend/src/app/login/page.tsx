@@ -30,9 +30,14 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
+          <img
+            src="/akoi-logo.png"
+            alt="Akoi"
+            className="mx-auto mb-5 h-10 w-auto max-w-[200px] object-contain"
+          />
           <h1 className="text-2xl font-bold tracking-tight">Sign in</h1>
           <p className="mt-1 text-sm text-[var(--muted-foreground)]">
-            Access your voicebot dashboard
+            Access your Akoi dashboard
           </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">

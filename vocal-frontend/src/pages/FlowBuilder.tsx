@@ -851,7 +851,7 @@ export default function FlowBuilderPage() {
       company: "Demo Company",
       phone_number: "+15551234567",
       lead_email: "test@example.com",
-      lead_context: "Created from the vocal frontend test console.",
+      lead_context: "Created from the Akoi test console.",
       timezone: "UTC",
       owner_name: "Sales Team",
       calendar_id: "sales-team",

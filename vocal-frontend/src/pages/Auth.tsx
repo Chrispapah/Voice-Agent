@@ -1,6 +1,6 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, KeyRound, Sparkles } from "lucide-react";
+import { Bot, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearLocalBearerToken, saveLocalBearerToken } from "@/lib/api";
 import { assertSupabaseConfigured, isSupabaseConfigured, supabase } from "@/lib/supabase";
@@ -66,12 +66,10 @@ export default function AuthPage() {
     <div className="min-h-screen bg-surface-muted/50 px-4 py-10 text-foreground">
       <div className="mx-auto grid max-w-5xl gap-6 md:grid-cols-[1fr_420px]">
         <section className="rounded-2xl border border-border bg-card p-8 shadow-soft">
-          <div className="mb-8 flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-primary shadow-elegant">
-              <Sparkles className="h-5 w-5 text-primary-foreground" />
-            </div>
+          <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-6">
+            <img src="/akoi-logo.png" alt="Akoi" className="h-10 w-auto max-w-[200px] object-contain object-left" />
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight">Welcome to Vocal</h1>
+              <h1 className="text-2xl font-semibold tracking-tight">Welcome to Akoi</h1>
               <p className="text-sm text-muted-foreground">Sign in to manage agents and publish flows to your LangChain brain.</p>
             </div>
           </div>
@@ -111,7 +109,7 @@ export default function AuthPage() {
 
           {!isSupabaseConfigured() && (
             <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-foreground">
-              Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to `vocal-frontend/.env.local`, or use a bearer token below.
+              Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to your `.env.local`, or use a bearer token below.
             </div>
           )}
 

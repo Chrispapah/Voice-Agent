@@ -8,7 +8,7 @@ import {
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const STATIC_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN;
-const LOCAL_BEARER_TOKEN_KEY = "vocal-api-bearer-token";
+const LOCAL_BEARER_TOKEN_KEY = "akoi-api-bearer-token";
 
 export class AuthRequiredError extends Error {
   constructor() {

@@ -114,7 +114,7 @@ export default function AgentsPage() {
     setCreating(true);
     setError("");
     try {
-      const bot = await createBot("New Vocal Agent", activeFilter === "folder" ? activeFolderId : null);
+      const bot = await createBot("New Akoi Agent", activeFilter === "folder" ? activeFolderId : null);
       navigate(`/agents/${bot.id}`);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
