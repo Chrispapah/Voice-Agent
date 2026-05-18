@@ -5,13 +5,18 @@
   "redirects": [
     {
       "source": "/akoi-logo.png",
-      "destination": "/akoi-mark.png",
+      "destination": "/akoi-logo-no-back.png",
       "permanent": true
     },
     {
       "source": "/akoi_logo2.png",
-      "destination": "/akoi-mark.png",
+      "destination": "/akoi-logo-no-back.png",
       "permanent": false
+    },
+    {
+      "source": "/akoi-mark.png",
+      "destination": "/akoi-logo-no-back.png",
+      "permanent": true
     }
   ]
 }

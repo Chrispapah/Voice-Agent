@@ -61,7 +61,7 @@ export default function DashboardPage() {
       <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
           <img
-            src="/akoi-mark.png"
+            src="/akoi-logo-no-back.png"
             alt="Akoi"
             className="h-9 w-auto max-w-[160px] object-contain object-left"
           />

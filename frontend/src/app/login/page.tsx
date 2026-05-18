@@ -31,7 +31,7 @@ export default function LoginPage() {
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
           <img
-            src="/akoi-mark.png"
+            src="/akoi-logo-no-back.png"
             alt="Akoi"
             className="mx-auto mb-5 h-10 w-auto max-w-[200px] object-contain"
           />
