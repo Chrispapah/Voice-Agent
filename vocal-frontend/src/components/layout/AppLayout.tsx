@@ -45,7 +45,7 @@ const nav = [
 const Sidebar = () => (
   <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-border bg-surface">
     <div className="px-5 pt-5 pb-3 flex items-center gap-2">
-      <img src="/akoi-logo.png" alt="Akoi" className="h-8 w-auto max-w-[140px] object-contain object-left" />
+      <img src="/akoi_logo2.png" alt="Akoi" className="h-8 w-auto max-w-[140px] object-contain object-left" />
     </div>
     <button className="mx-3 mb-3 flex items-center gap-2 rounded-lg border border-border px-3 py-2 text-sm hover:bg-secondary transition">
       <div className="w-5 h-5 rounded bg-primary/10 text-primary flex items-center justify-center text-[10px] font-bold">C</div>
