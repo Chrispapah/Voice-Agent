@@ -5,6 +5,7 @@ import {
   getSupabaseUrl,
   supabase,
 } from "./supabase";
+import { DEFAULT_ELEVENLABS_VOICE_ID } from "./voiceDefaults";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const STATIC_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN;
@@ -488,7 +489,12 @@ async function createBotInSupabase(name: string, folderId?: string | null): Prom
   const userId = await requireCurrentUserId();
   const { data, error } = await supabase
     .from("bot_configs")
-    .insert({ name, user_id: userId, folder_id: folderId ?? null })
+    .insert({
+      name,
+      user_id: userId,
+      folder_id: folderId ?? null,
+      elevenlabs_voice_id: DEFAULT_ELEVENLABS_VOICE_ID,
+    })
     .select("id")
     .single();
   throwIfSupabaseError(error);

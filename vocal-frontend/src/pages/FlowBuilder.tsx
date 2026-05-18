@@ -67,6 +67,7 @@ import {
   type SpecEdge,
   type SpecNode,
 } from "@/lib/conversationSpec";
+import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/lib/voiceDefaults";
 import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentGraphNode";
 
 type BuilderMode = "single" | "graph";
@@ -431,6 +432,7 @@ export default function FlowBuilderPage() {
 
   function speakAgentResponse(text: string) {
     if (!voiceOutputEnabled || !text.trim() || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    // Text console only: browser speech, not ElevenLabs (use Start Voice for agent TTS).
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = deepgramLanguage || "en-US";
@@ -494,7 +496,7 @@ export default function FlowBuilderPage() {
         const loadedSpec = firstUsableSpec(loadedBot);
         setBot(loadedBot);
         setDraftName(loadedBot.name);
-        setElevenlabsVoiceId(loadedBot.elevenlabs_voice_id || "");
+        setElevenlabsVoiceId(loadedBot.elevenlabs_voice_id || DEFAULT_ELEVENLABS_VOICE_ID);
         setElevenlabsModelId(loadedBot.elevenlabs_model_id || "");
         setDeepgramModel(loadedBot.deepgram_model || "");
         setDeepgramLanguage(loadedBot.deepgram_language || "");
@@ -819,7 +821,7 @@ export default function FlowBuilderPage() {
       );
       const saved = await updateBot(bot.id, {
         name: draftName,
-        elevenlabs_voice_id: elevenlabsVoiceId || null,
+        elevenlabs_voice_id: elevenlabsVoiceId.trim() || DEFAULT_ELEVENLABS_VOICE_ID,
         elevenlabs_model_id: elevenlabsModelId || "eleven_turbo_v2",
         deepgram_model: deepgramModel || "nova-2",
         deepgram_language: deepgramLanguage || "en-US",
@@ -1051,7 +1053,7 @@ export default function FlowBuilderPage() {
                     <input
                       value={elevenlabsVoiceId}
                       onChange={(e) => setElevenlabsVoiceId(e.target.value)}
-                      placeholder="Voice ID"
+                      placeholder={DEFAULT_ELEVENLABS_VOICE_ID}
                       className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
                     />
                     <input
@@ -1372,7 +1374,11 @@ export default function FlowBuilderPage() {
                     variant={voiceOutputEnabled ? "default" : "outline"}
                     size="sm"
                     onClick={toggleVoiceOutput}
-                    title={voiceOutputEnabled ? "Disable spoken replies" : "Enable spoken replies"}
+                    title={
+                      voiceOutputEnabled
+                        ? "Disable browser speech for text test replies (not ElevenLabs)"
+                        : "Speak text test replies with your browser voice (not ElevenLabs). Use Start Voice for ElevenLabs."
+                    }
                   >
                     <Volume2 className="h-4 w-4" />
                   </Button>
@@ -1396,7 +1402,8 @@ export default function FlowBuilderPage() {
                 </div>
               </div>
               <p className="mb-3 text-[11px] text-muted-foreground leading-relaxed">
-                Realtime voice sends microphone audio to the backend (Deepgram STT); replies are synthesized with ElevenLabs. Configure keys on the server and voice ID on the agent.
+                <strong className="font-medium text-foreground">Start Voice</strong> sends mic audio to the backend (Deepgram) and plays replies with ElevenLabs using the agent voice ID. The speaker button next to Test only uses your{" "}
+                <strong className="font-medium text-foreground">browser&apos;s</strong> text-to-speech, not ElevenLabs.
               </p>
               <select
                 value={selectedLead}

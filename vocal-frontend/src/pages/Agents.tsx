@@ -12,6 +12,7 @@ import {
   type AgentListItem,
   type AgentsPageData,
 } from "@/lib/api";
+import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/lib/voiceDefaults";
 
 type AgentFilter = "all" | "templates" | "transfer" | "folder";
 const AGENTS_PAGE_QUERY_KEY = ["agents-page"] as const;
@@ -362,7 +363,7 @@ export default function AgentsPage() {
                     <td className="px-5 py-3.5">
                       <span className="inline-flex items-center gap-1.5">
                         <span className="w-5 h-5 rounded-full bg-gradient-primary" />
-                        {a.elevenlabs_voice_id || "Cimo"}
+                        {a.elevenlabs_voice_id || DEFAULT_ELEVENLABS_VOICE_ID}
                       </span>
                     </td>
                     <td className="px-5 py-3.5 text-muted-foreground">{a.twilio_phone_number || "-"}</td>
