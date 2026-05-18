@@ -114,7 +114,7 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "elevenlabs_model_id": "eleven_turbo_v2",
     "deepgram_api_key": None,
     "deepgram_model": "nova-2",
-    "deepgram_language": "en-US",
+    "deepgram_language": "el",
     "twilio_account_sid": None,
     "twilio_auth_token": None,
     "twilio_phone_number": None,

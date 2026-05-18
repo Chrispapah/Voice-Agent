@@ -57,7 +57,7 @@ class BotConfigRow(Base):
     # STT – Deepgram
     deepgram_api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     deepgram_model: Mapped[str] = mapped_column(String(50), default="nova-2")
-    deepgram_language: Mapped[str] = mapped_column(String(10), default="en-US")
+    deepgram_language: Mapped[str] = mapped_column(String(10), default="el")
 
     # Telephony – Twilio
     twilio_account_sid: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -67,7 +67,7 @@ import {
   type SpecEdge,
   type SpecNode,
 } from "@/lib/conversationSpec";
-import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/lib/voiceDefaults";
+import { DEFAULT_ELEVENLABS_VOICE_ID, DEFAULT_SPEECH_LANGUAGE_CODE } from "@/lib/voiceDefaults";
 import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentGraphNode";
 
 type BuilderMode = "single" | "graph";
@@ -435,7 +435,7 @@ export default function FlowBuilderPage() {
     // Text console only: browser speech, not ElevenLabs (use Start Voice for agent TTS).
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = deepgramLanguage || "en-US";
+    utterance.lang = deepgramLanguage || DEFAULT_SPEECH_LANGUAGE_CODE;
     window.speechSynthesis.speak(utterance);
   }
 
@@ -462,7 +462,7 @@ export default function FlowBuilderPage() {
     recognitionRef.current = recognition;
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = deepgramLanguage || "en-US";
+    recognition.lang = deepgramLanguage || DEFAULT_SPEECH_LANGUAGE_CODE;
     recognition.onresult = (event) => {
       let transcript = "";
       for (let i = event.resultIndex; i < event.results.length; i += 1) {
@@ -499,7 +499,7 @@ export default function FlowBuilderPage() {
         setElevenlabsVoiceId(loadedBot.elevenlabs_voice_id || DEFAULT_ELEVENLABS_VOICE_ID);
         setElevenlabsModelId(loadedBot.elevenlabs_model_id || "");
         setDeepgramModel(loadedBot.deepgram_model || "");
-        setDeepgramLanguage(loadedBot.deepgram_language || "");
+        setDeepgramLanguage(loadedBot.deepgram_language || DEFAULT_SPEECH_LANGUAGE_CODE);
         setSpec(loadedSpec);
         setMode(inferMode(loadedSpec));
         setEntryNodeId(loadedSpec.entry_node_id || loadedSpec.nodes?.[0]?.id || "welcome");
@@ -824,7 +824,7 @@ export default function FlowBuilderPage() {
         elevenlabs_voice_id: elevenlabsVoiceId.trim() || DEFAULT_ELEVENLABS_VOICE_ID,
         elevenlabs_model_id: elevenlabsModelId || "eleven_turbo_v2",
         deepgram_model: deepgramModel || "nova-2",
-        deepgram_language: deepgramLanguage || "en-US",
+        deepgram_language: deepgramLanguage.trim() || DEFAULT_SPEECH_LANGUAGE_CODE,
         conversation_spec: spec,
       });
       await Promise.all([
@@ -1078,7 +1078,7 @@ export default function FlowBuilderPage() {
                     <input
                       value={deepgramLanguage}
                       onChange={(e) => setDeepgramLanguage(e.target.value)}
-                      placeholder="en-US"
+                      placeholder={DEFAULT_SPEECH_LANGUAGE_CODE}
                       className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
                     />
                   </div>

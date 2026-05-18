@@ -97,7 +97,7 @@ class CallScheduler:
         elif self._cfg("stt_provider", "google") == "google":
             transcriber_config = SDRGoogleTranscriberConfig.from_telephone_input_device(
                 model=self._cfg("google_speech_model") or "phone_call",
-                language_code=self._cfg("google_speech_language_code", "en-US"),
+                language_code=self._cfg("google_speech_language_code", "el-GR"),
                 mute_during_speech=self._cfg("google_mute_during_speech", True),
                 google_api_key=self._cfg("google_speech_api_key") or "",
                 utterance_silence_ms=self._cfg("google_utterance_silence_ms", 300),
@@ -120,7 +120,7 @@ class CallScheduler:
                     ),
                 ),
                 api_key=self._cfg("deepgram_api_key"),
-                language=self._cfg("deepgram_language", "en-US"),
+                language=self._cfg("deepgram_language", "el"),
                 model=resolve_telephony_deepgram_model(self._cfg("deepgram_model", "nova-2")),
                 mute_during_speech=self._cfg("deepgram_mute_during_speech", True),
             )

@@ -435,7 +435,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             )
             return
         model = str(bot_cfg_merged.get("deepgram_model") or "nova-2")
-        language = str(bot_cfg_merged.get("deepgram_language") or "en-US")
+        language = str(bot_cfg_merged.get("deepgram_language") or "el")
         uri = _deepgram_listen_url(model=model, language=language)
         dg_timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=None)
         try:

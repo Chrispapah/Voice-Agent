@@ -36,7 +36,7 @@ class SDRSettings(BaseSettings):
     stt_provider: Literal["deepgram", "google"] = "google"
 
     google_speech_api_key: str | None = None
-    google_speech_language_code: str = "en-US"
+    google_speech_language_code: str = "el-GR"
     # phone_call + enhanced matches Twilio mulaw telephony (see google_speech_transcriber).
     google_speech_model: str | None = "phone_call"
     # Client-side: silence after last interim before a "final" (lower = snappier, more mid-sentence cuts). Floored in code at 40ms.
@@ -44,7 +44,7 @@ class SDRSettings(BaseSettings):
     google_mute_during_speech: bool = True
 
     deepgram_api_key: str | None = None
-    deepgram_language: str = "en-US"
+    deepgram_language: str = "el"
     deepgram_model: str = "nova-2"
     # Endpointing: lower = final transcript sooner after a pause (more false end-of-turn / mid-sentence cuts).
     # Deepgram URL "endpointing" = vad_threshold_ms; time/punctuation = Vocode fallbacks when speech_final lags.
@@ -66,7 +66,7 @@ class SDRSettings(BaseSettings):
 
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None
-    azure_voice_name: str = "en-US-JennyNeural"
+    azure_voice_name: str = "el-GR-AthinaNeural"
 
     redis_url: str | None = None
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_sdr"

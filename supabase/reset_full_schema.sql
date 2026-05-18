@@ -137,7 +137,7 @@ CREATE TABLE public.bot_configs (
   -- STT - Deepgram
   deepgram_api_key      text,
   deepgram_model        varchar(50)  NOT NULL DEFAULT 'nova-2',
-  deepgram_language     varchar(10)  NOT NULL DEFAULT 'en-US',
+  deepgram_language     varchar(10)  NOT NULL DEFAULT 'el',
 
   -- Telephony - Twilio
   twilio_account_sid    text,

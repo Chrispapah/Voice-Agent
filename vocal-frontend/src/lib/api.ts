@@ -5,7 +5,7 @@ import {
   getSupabaseUrl,
   supabase,
 } from "./supabase";
-import { DEFAULT_ELEVENLABS_VOICE_ID } from "./voiceDefaults";
+import { DEFAULT_ELEVENLABS_VOICE_ID, DEFAULT_SPEECH_LANGUAGE_CODE } from "./voiceDefaults";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const STATIC_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN;
@@ -494,6 +494,7 @@ async function createBotInSupabase(name: string, folderId?: string | null): Prom
       user_id: userId,
       folder_id: folderId ?? null,
       elevenlabs_voice_id: DEFAULT_ELEVENLABS_VOICE_ID,
+      deepgram_language: DEFAULT_SPEECH_LANGUAGE_CODE,
     })
     .select("id")
     .single();
