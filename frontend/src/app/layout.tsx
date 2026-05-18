@@ -4,11 +4,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Akoi",
   description: "Akoi — self-service platform for creating AI voice agents",
-  icons: { icon: "/akoi_logo2.png" },
+  icons: { icon: "/akoi-mark.png" },
   openGraph: {
     title: "Akoi",
     description: "Akoi — self-service platform for creating AI voice agents",
-    images: ["/akoi_logo2.png"],
+    images: ["/akoi-mark.png"],
   },
 };
 
