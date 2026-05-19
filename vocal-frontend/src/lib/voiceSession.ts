@@ -18,20 +18,37 @@ type ServerJson =
   | { type: "transcript.final"; text: string }
   | { type: "agent.text"; text: string }
   | { type: "agent.audio"; chunk: string }
+  /** End of one TTS synthesis (typically one streamed LLM phrase). Client decodes queued MP3 and plays sequentially. */
+  | { type: "agent.audio_segment_end" }
   | { type: "agent.done" }
   | { type: "agent.interrupted" }
   | { type: "error"; message: string }
   | { type: "pong" };
 
+function mergeChunks(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const merged = new Uint8Array(total);
+  let o = 0;
+  for (const c of chunks) {
+    merged.set(c, o);
+    o += c.length;
+  }
+  return merged;
+}
+
 /**
  * Browser realtime voice client: WebSocket to backend (Deepgram STT + ElevenLabs TTS).
+ * Plays TTS phrase-by-phrase via Web Audio (decode AudioBuffer per segment).
  */
 export class VoiceSession {
   private ws: WebSocket | null = null;
   private recorder: MediaRecorder | null = null;
   private stream: MediaStream | null = null;
-  private audioChunks: Uint8Array[] = [];
-  private playingAudio: HTMLAudioElement | null = null;
+  /** MP3 fragments for the current synthesis segment */
+  private phraseChunks: Uint8Array[] = [];
+  private playbackChain: Promise<void> = Promise.resolve();
+  private audioContext: AudioContext | null = null;
+  private readonly activeSources: AudioBufferSourceNode[] = [];
   private readonly callbacks: VoiceSessionCallbacks;
 
   constructor(callbacks: VoiceSessionCallbacks = {}) {
@@ -40,6 +57,59 @@ export class VoiceSession {
 
   get isActive(): boolean {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
+  }
+
+  /** True while agent speech is playing or queued (phrase chain). */
+  private isPlaybackActive(): boolean {
+    return this.activeSources.length > 0 || this.phraseChunks.length > 0;
+  }
+
+  private async ensureAudioContext(): Promise<AudioContext> {
+    if (!this.audioContext) this.audioContext = new AudioContext();
+    if (this.audioContext.state === "suspended") {
+      await this.audioContext.resume();
+    }
+    return this.audioContext;
+  }
+
+  /** Queue one complete MP3 segment (concat of chunks since last flush). */
+  private flushPhrasePlayback(): void {
+    if (this.phraseChunks.length === 0) return;
+    const merged = mergeChunks(this.phraseChunks);
+    this.phraseChunks = [];
+    const run = async (): Promise<void> => {
+      if (merged.length === 0) return;
+      const ctx = await this.ensureAudioContext();
+      const copy = new Uint8Array(merged.byteLength);
+      copy.set(merged);
+      let audioBuf: AudioBuffer;
+      try {
+        const ab = new ArrayBuffer(copy.byteLength);
+        new Uint8Array(ab).set(copy);
+        audioBuf = await ctx.decodeAudioData(ab);
+      } catch {
+        return;
+      }
+      await new Promise<void>((resolve) => {
+        const src = ctx.createBufferSource();
+        src.buffer = audioBuf;
+        src.connect(ctx.destination);
+        this.activeSources.push(src);
+        src.onended = () => {
+          const idx = this.activeSources.indexOf(src);
+          if (idx >= 0) this.activeSources.splice(idx, 1);
+          resolve();
+        };
+        try {
+          src.start();
+        } catch {
+          const idx = this.activeSources.indexOf(src);
+          if (idx >= 0) this.activeSources.splice(idx, 1);
+          resolve();
+        }
+      });
+    };
+    this.playbackChain = this.playbackChain.then(run).catch(() => undefined);
   }
 
   async start(botId: string, leadId: string, conversationId?: string | null): Promise<void> {
@@ -83,7 +153,7 @@ export class VoiceSession {
           void this.startMic();
           break;
         case "transcript.partial":
-          if (this.playingAudio && this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (this.isPlaybackActive() && this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ type: "interrupt" }));
             this.stopPlayback();
           }
@@ -91,7 +161,7 @@ export class VoiceSession {
           break;
         case "transcript.final":
           this.stopPlayback();
-          this.audioChunks = [];
+          this.phraseChunks = [];
           this.callbacks.onTranscriptFinal?.(msg.text);
           break;
         case "agent.text":
@@ -101,16 +171,19 @@ export class VoiceSession {
           const binary = atob(msg.chunk);
           const buf = new Uint8Array(binary.length);
           for (let i = 0; i < binary.length; i += 1) buf[i] = binary.charCodeAt(i);
-          this.audioChunks.push(buf);
+          this.phraseChunks.push(buf);
           break;
         }
+        case "agent.audio_segment_end":
+          this.flushPhrasePlayback();
+          break;
         case "agent.done":
-          void this.playPendingAudio();
+          this.flushPhrasePlayback();
           this.callbacks.onAgentDone?.();
           break;
         case "agent.interrupted":
           this.stopPlayback();
-          this.audioChunks = [];
+          this.phraseChunks = [];
           this.callbacks.onInterrupted?.();
           break;
         case "error":
@@ -141,6 +214,10 @@ export class VoiceSession {
       this.ws.close();
       this.ws = null;
     }
+    if (this.audioContext?.state !== "closed") {
+      await this.audioContext?.close().catch(() => undefined);
+    }
+    this.audioContext = null;
   }
 
   private async startMic(): Promise<void> {
@@ -179,35 +256,20 @@ export class VoiceSession {
   }
 
   private stopPlayback(): void {
-    if (this.playingAudio) {
-      this.playingAudio.pause();
-      this.playingAudio.src = "";
-      this.playingAudio = null;
+    for (const s of [...this.activeSources]) {
+      try {
+        s.stop(0);
+      } catch {
+        /* noop */
+      }
+      try {
+        s.disconnect();
+      } catch {
+        /* noop */
+      }
     }
-  }
-
-  private async playPendingAudio(): Promise<void> {
-    if (this.audioChunks.length === 0) return;
-    const total = this.audioChunks.reduce((n, c) => n + c.length, 0);
-    const merged = new Uint8Array(total);
-    let o = 0;
-    for (const c of this.audioChunks) {
-      merged.set(c, o);
-      o += c.length;
-    }
-    this.audioChunks = [];
-    const blob = new Blob([merged], { type: "audio/mpeg" });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    this.playingAudio = audio;
-    audio.onended = () => {
-      URL.revokeObjectURL(url);
-      if (this.playingAudio === audio) this.playingAudio = null;
-    };
-    try {
-      await audio.play();
-    } catch {
-      URL.revokeObjectURL(url);
-    }
+    this.activeSources.length = 0;
+    this.playbackChain = Promise.resolve();
+    this.phraseChunks = [];
   }
 }

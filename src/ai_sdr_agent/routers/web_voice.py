@@ -27,6 +27,7 @@ from ai_sdr_agent.db.repositories import (
 )
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
 from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
+from ai_sdr_agent.text.greek_number_words import expand_digit_runs_for_greek_tts
 from ai_sdr_agent.transcriber_factory import (
     normalize_deepgram_language_code,
     prefer_nova3_for_greek_browser_stt,
@@ -281,16 +282,18 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
             await shared_latency_analytics.record_web_voice_turn(sample)
 
         async def _stream_elevenlabs_text(spoken_text: str) -> bool:
-            if not spoken_text.strip() or my_gen != generation:
+            stripped = spoken_text.strip()
+            if not stripped or my_gen != generation:
                 return True
             if not eleven_key or not voice_id:
                 return True
+            tts_text = expand_digit_runs_for_greek_tts(stripped)
             try:
                 async with httpx_client.stream(
                     "POST",
                     e_url,
                     headers=e_headers,
-                    json={"text": spoken_text.strip(), "model_id": model_id},
+                    json={"text": tts_text, "model_id": model_id},
                     timeout=120.0,
                 ) as response:
                     response.raise_for_status()
@@ -313,6 +316,8 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                 logger.exception("ElevenLabs streaming failed")
                 await _send_json(websocket, {"type": "error", "message": "TTS request failed"})
                 return False
+            if my_gen == generation:
+                await _send_json(websocket, {"type": "agent.audio_segment_end"})
             return True
 
         try:
@@ -720,11 +725,12 @@ async def _send_initial_greeting_tts(
             "Accept": "audio/mpeg",
             "Content-Type": "application/json",
         }
+        tts_reply = expand_digit_runs_for_greek_tts(reply)
         async with httpx_client.stream(
             "POST",
             e_url,
             headers=e_headers,
-            json={"text": reply, "model_id": model_id},
+            json={"text": tts_reply, "model_id": model_id},
             timeout=120.0,
         ) as response:
             response.raise_for_status()
@@ -740,6 +746,7 @@ async def _send_initial_greeting_tts(
                         },
                     )
         if my_gen == current_generation():
+            await _send_json(websocket, {"type": "agent.audio_segment_end"})
             await _send_json(websocket, {"type": "agent.done"})
     except httpx.HTTPError:
         logger.exception("Initial greeting TTS failed")
