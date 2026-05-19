@@ -244,6 +244,15 @@ class SDRConversationService:
 
         async def _run() -> ConversationState:
             token = None
+            chunk_stream_ended = False
+
+            async def _end_chunk_stream() -> None:
+                nonlocal chunk_stream_ended
+                if chunk_stream_ended:
+                    return
+                await chunk_queue.put(None)
+                chunk_stream_ended = True
+
             try:
                 get_state_t0 = time.perf_counter()
                 state = await self.get_state(conversation_id)
@@ -279,6 +288,7 @@ class SDRConversationService:
                     logger.info("Conversation already complete conversation_id={}", conversation_id)
                     state["last_agent_response"] = ""
                     await self.dependencies.session_store.save(conversation_id, state)
+                    await _end_chunk_stream()
                     return state
 
                 force_exit = False
@@ -307,7 +317,7 @@ class SDRConversationService:
                         state["call_outcome"] = "not_interested"
                         state["last_agent_response"] = "Thanks for your time. Goodbye."
                         turn_start = time.perf_counter()
-                        return await self._persist_updated_state(
+                        persisted = await self._persist_updated_state(
                             conversation_id,
                             turn_id,
                             state["turn_count"],
@@ -315,13 +325,36 @@ class SDRConversationService:
                             graph_ms=0.0,
                             turn_start=turn_start,
                         )
+                        await _end_chunk_stream()
+                        return persisted
 
                 token = set_response_chunk_sink(_chunk_sink)
-                return await self._run_turn_graph(conversation_id, state)
+                try:
+                    updated_state, graph_ms, turn_start = await self._invoke_graph_for_turn(
+                        conversation_id,
+                        state,
+                    )
+                finally:
+                    if token is not None:
+                        reset_response_chunk_sink(token)
+                        token = None
+                    # Unblock token consumers before persistence so web TTS can flush
+                    # while session_store / call_log writes run.
+                    await _end_chunk_stream()
+
+                return await self._persist_updated_state(
+                    conversation_id,
+                    turn_id,
+                    state["turn_count"],
+                    updated_state,
+                    graph_ms=graph_ms,
+                    turn_start=turn_start,
+                )
             finally:
                 if token is not None:
                     reset_response_chunk_sink(token)
-                await chunk_queue.put(None)
+                if not chunk_stream_ended:
+                    await chunk_queue.put(None)
                 turn_lock.release()
 
         final_state_task = asyncio.create_task(_run())
@@ -448,11 +481,12 @@ class SDRConversationService:
             )
         return updated_state
 
-    async def _run_turn_graph(
+    async def _invoke_graph_for_turn(
         self,
         conversation_id: str,
         state: ConversationState,
-    ) -> ConversationState:
+    ) -> tuple[ConversationState, float, float]:
+        """Run the compiled LangGraph once (no DB persistence)."""
         turn_id = state["metadata"]["turn_id"]
         turn_count = state["turn_count"]
         logger.info(
@@ -474,6 +508,16 @@ class SDRConversationService:
             target_node=state["next_node"],
             route_decision=updated_state["route_decision"],
         )
+        return updated_state, graph_ms, turn_start
+
+    async def _run_turn_graph(
+        self,
+        conversation_id: str,
+        state: ConversationState,
+    ) -> ConversationState:
+        turn_id = state["metadata"]["turn_id"]
+        turn_count = state["turn_count"]
+        updated_state, graph_ms, turn_start = await self._invoke_graph_for_turn(conversation_id, state)
         return await self._persist_updated_state(
             conversation_id,
             turn_id,

@@ -65,7 +65,7 @@ export class VoiceSession {
   }
 
   private async ensureAudioContext(): Promise<AudioContext> {
-    if (!this.audioContext) this.audioContext = new AudioContext();
+    if (!this.audioContext) this.audioContext = new AudioContext({ latencyHint: "interactive" });
     if (this.audioContext.state === "suspended") {
       await this.audioContext.resume();
     }

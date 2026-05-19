@@ -37,10 +37,12 @@ from ai_sdr_agent.transcriber_factory import (
 router = APIRouter(prefix="/api/bots", tags=["voice"])
 
 # Phrase boundaries for streaming LLM → TTS in the browser.
-# Larger flush threshold than telephony: fewer, longer ElevenLabs streams avoid
-# stitching many short MP3 blobs (which sounds choppy when merged for playback).
-_STREAM_PUNCTUATION = ".?,!;:"
-_STREAM_HARD_FLUSH_CHARS = 96
+# Tighter than before: perceived latency is dominated by time-to-first-TTS-byte;
+# slightly more phrase segments is an acceptable trade for faster first audio.
+_STREAM_PUNCTUATION = ".?,!;:\n"
+_STREAM_HARD_FLUSH_CHARS = 52
+# First phrase only: allow shorter clause boundaries so ElevenLabs starts sooner.
+_STREAM_FIRST_PHRASE_MIN_CHARS = 8
 
 
 class _TelephonyStylePhraseBuffer:
@@ -49,6 +51,7 @@ class _TelephonyStylePhraseBuffer:
     def __init__(self, *, hard_flush_chars: int = _STREAM_HARD_FLUSH_CHARS) -> None:
         self.buffer = ""
         self._hard_flush = hard_flush_chars
+        self._phrase_count = 0
 
     async def feed(self, on_phrase, chunk: str) -> None:
         if not chunk:
@@ -59,12 +62,14 @@ class _TelephonyStylePhraseBuffer:
                 (idx for idx, char in enumerate(self.buffer) if char in _STREAM_PUNCTUATION),
                 -1,
             )
-            if boundary_index >= 2:
+            min_boundary = 1 if self._phrase_count == 0 else 2
+            if boundary_index >= min_boundary and boundary_index + 1 >= _STREAM_FIRST_PHRASE_MIN_CHARS:
                 output = self.buffer[: boundary_index + 1].strip()
                 self.buffer = self.buffer[boundary_index + 1 :].lstrip()
                 if output:
                     text = output if output.endswith(" ") else output + " "
                     await on_phrase(text)
+                    self._phrase_count += 1
                 continue
             if len(self.buffer) >= self._hard_flush:
                 space_index = self.buffer.rfind(" ")
@@ -74,6 +79,7 @@ class _TelephonyStylePhraseBuffer:
                     if output:
                         text = output if output.endswith(" ") else output + " "
                         await on_phrase(text)
+                        self._phrase_count += 1
                     continue
             break
 
@@ -84,6 +90,7 @@ class _TelephonyStylePhraseBuffer:
         self.buffer = ""
         text = buffered if buffered.endswith(" ") else buffered + " "
         await on_phrase(text)
+        self._phrase_count += 1
 
 
 def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> dict[str, Any]:
@@ -97,13 +104,41 @@ def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> 
     return out
 
 
+def _elevenlabs_stream_url_and_json(
+    voice_id: str,
+    model_id: str,
+    spoken_plain_text: str,
+    *,
+    optimize_streaming_latency: int,
+    output_format: str = "mp3_22050_32",
+) -> tuple[str, dict[str, Any]]:
+    """ElevenLabs streaming TTS URL + JSON tuned for time-to-first-byte."""
+    lat = max(0, min(4, int(optimize_streaming_latency)))
+    q = urlencode(
+        {
+            "optimize_streaming_latency": str(lat),
+            "output_format": output_format,
+        }
+    )
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?{q}"
+    tts_body_text = expand_digit_runs_for_greek_tts(spoken_plain_text.strip())
+    body: dict[str, Any] = {
+        "text": tts_body_text,
+        "model_id": model_id,
+        # use_speaker_boost adds latency per ElevenLabs docs; style>0 adds compute.
+        "voice_settings": {"use_speaker_boost": False, "style": 0.0},
+    }
+    return url, body
+
+
 def _deepgram_listen_url(*, model: str, language: str) -> str:
     params = {
         "model": model,
         "language": language,
         "smart_format": "true",
         "interim_results": "true",
-        "endpointing": "300",
+        # ms of silence before Deepgram finalizes; lower = faster end-of-utterance (more false cuts).
+        "endpointing": "200",
         "vad_events": "true",
     }
     return "wss://api.deepgram.com/v1/listen?" + urlencode(params)
@@ -218,7 +253,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         eleven_key = bot_cfg_merged.get("elevenlabs_api_key") or ""
         voice_id = bot_cfg_merged.get("elevenlabs_voice_id") or ""
         model_id = str(bot_cfg_merged.get("elevenlabs_model_id") or "eleven_turbo_v2")
-        e_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+        tts_latency_opt = int(get_settings().elevenlabs_optimize_streaming_latency)
         e_headers = {
             "xi-api-key": eleven_key,
             "Accept": "audio/mpeg",
@@ -287,17 +322,22 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                 return True
             if not eleven_key or not voice_id:
                 return True
-            tts_text = expand_digit_runs_for_greek_tts(stripped)
+            e_url, tts_json = _elevenlabs_stream_url_and_json(
+                voice_id,
+                model_id,
+                stripped,
+                optimize_streaming_latency=tts_latency_opt,
+            )
             try:
                 async with httpx_client.stream(
                     "POST",
                     e_url,
                     headers=e_headers,
-                    json={"text": tts_text, "model_id": model_id},
+                    json=tts_json,
                     timeout=120.0,
                 ) as response:
                     response.raise_for_status()
-                    async for chunk in response.aiter_bytes(16384):
+                    async for chunk in response.aiter_bytes(4096):
                         if my_gen != generation:
                             return False
                         if chunk:
@@ -342,12 +382,15 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                             first_phrase_pc[0] = time.perf_counter()
                         phrase_parts.append(raw)
                         cumulative = " ".join(phrase_parts).strip()
-                        await _send_json(websocket, {"type": "agent.text", "text": cumulative})
                         if not eleven_key or not voice_id:
+                            await _send_json(websocket, {"type": "agent.text", "text": cumulative})
                             return
                         tts_streams_started = True
-                        ok = await _stream_elevenlabs_text(raw)
-                        if not ok:
+                        _, ok_audio = await asyncio.gather(
+                            _send_json(websocket, {"type": "agent.text", "text": cumulative}),
+                            _stream_elevenlabs_text(raw),
+                        )
+                        if not ok_audio:
                             return
 
                     streamed = await svc.start_streamed_turn(conversation_id, user_text)
@@ -366,8 +409,10 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                         return
                     reply = (state.get("last_agent_response") or "").strip()
                     if reply and not tts_streams_started and eleven_key and voice_id:
-                        await _send_json(websocket, {"type": "agent.text", "text": reply})
-                        await _stream_elevenlabs_text(reply)
+                        await asyncio.gather(
+                            _send_json(websocket, {"type": "agent.text", "text": reply}),
+                            _stream_elevenlabs_text(reply),
+                        )
                     await _send_json(
                         websocket,
                         {
@@ -719,22 +764,27 @@ async def _send_initial_greeting_tts(
         if not eleven_key or not voice_id:
             await _send_json(websocket, {"type": "agent.done"})
             return
-        e_url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+        tts_latency_opt = int(get_settings().elevenlabs_optimize_streaming_latency)
+        e_url, tts_json = _elevenlabs_stream_url_and_json(
+            voice_id,
+            model_id,
+            reply,
+            optimize_streaming_latency=tts_latency_opt,
+        )
         e_headers = {
             "xi-api-key": eleven_key,
             "Accept": "audio/mpeg",
             "Content-Type": "application/json",
         }
-        tts_reply = expand_digit_runs_for_greek_tts(reply)
         async with httpx_client.stream(
             "POST",
             e_url,
             headers=e_headers,
-            json={"text": tts_reply, "model_id": model_id},
+            json=tts_json,
             timeout=120.0,
         ) as response:
             response.raise_for_status()
-            async for chunk in response.aiter_bytes(16384):
+            async for chunk in response.aiter_bytes(4096):
                 if my_gen != current_generation():
                     break
                 if chunk:
