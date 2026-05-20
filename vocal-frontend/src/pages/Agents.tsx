@@ -329,7 +329,7 @@ export default function AgentsPage() {
                 {!loading && agents.length === 0 && (
                   <tr>
                     <td className="px-5 py-8 text-center text-muted-foreground" colSpan={6}>
-                      No agents yet. Create one to start building a LangChain-backed voice flow.
+                      No agents yet. Create one to start building a voice flow.
                     </td>
                   </tr>
                 )}

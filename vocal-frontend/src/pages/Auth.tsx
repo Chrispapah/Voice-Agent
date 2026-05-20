@@ -74,7 +74,7 @@ export default function AuthPage() {
             />
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Welcome to Akoi</h1>
-              <p className="text-sm text-muted-foreground">Sign in to manage agents and publish flows to your LangChain brain.</p>
+              <p className="text-sm text-muted-foreground">Sign in to manage agents and publish flows.</p>
             </div>
           </div>
 

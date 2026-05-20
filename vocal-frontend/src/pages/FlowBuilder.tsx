@@ -833,7 +833,7 @@ export default function FlowBuilderPage() {
       ]);
       setBot(saved);
       setNodeKnowledgeBaseIds(activeNodeAssignments);
-      setStatus("Published to LangChain brain");
+      setStatus("Published");
       setTimeout(() => setStatus(""), 2500);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
@@ -999,7 +999,6 @@ export default function FlowBuilderPage() {
             <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
               <span>Agent ID: {botId.slice(0, 8)}...</span>
               <span>{mode === "graph" ? "Conversation Flow" : "Single Prompt"}</span>
-              <span>LangChain runtime</span>
             </div>
           </div>
         </div>
@@ -1037,11 +1036,6 @@ export default function FlowBuilderPage() {
       <div className="flex-1 flex min-h-0">
         <aside className="w-72 border-r border-border bg-surface flex flex-col">
           <div className="p-4 space-y-4 border-b border-border">
-            <p className="text-[11px] leading-relaxed text-muted-foreground rounded-lg border border-border bg-card p-3">
-              The first spoken line comes from your <strong>entry node</strong>: use its system prompt (LLM) or set{" "}
-              <strong>reply turn modes</strong> to <code className="text-xs">static</code> with a static message. There is
-              no separate bot-level greeting.
-            </p>
             <div className="rounded-lg border border-border bg-card p-3">
               <div className="mb-3 text-[11px] font-semibold text-muted-foreground tracking-wide">VOICE I/O PLACEHOLDERS</div>
               <div className="space-y-3">
@@ -1224,7 +1218,7 @@ export default function FlowBuilderPage() {
               <div>
                 <Sparkles className="mx-auto mb-3 h-8 w-8 text-primary" />
                 <p className="max-w-md text-sm">
-                  Single Prompt mode sends every turn to one LangChain agent using the prompt on the left.
+                  In Single Prompt mode, every turn uses the prompt on the left.
                 </p>
               </div>
             </div>
@@ -1362,7 +1356,7 @@ export default function FlowBuilderPage() {
               </div>
             ) : (
               <p className="rounded-lg border border-border bg-surface-muted/40 p-3 text-sm text-muted-foreground">
-                {mode === "graph" ? "Select a node to edit its LangChain system prompt." : "Edit the single-agent prompt in the left panel."}
+                {mode === "graph" ? "Select a node to edit its system prompt." : "Edit the single-agent prompt in the left panel."}
               </p>
             )}
 
@@ -1376,8 +1370,8 @@ export default function FlowBuilderPage() {
                     onClick={toggleVoiceOutput}
                     title={
                       voiceOutputEnabled
-                        ? "Disable browser speech for text test replies (not ElevenLabs)"
-                        : "Speak text test replies with your browser voice (not ElevenLabs). Use Start Voice for ElevenLabs."
+                        ? "Turn off read-aloud for typed test replies"
+                        : "Read typed test replies aloud"
                     }
                   >
                     <Volume2 className="h-4 w-4" />
@@ -1401,10 +1395,6 @@ export default function FlowBuilderPage() {
                   )}
                 </div>
               </div>
-              <p className="mb-3 text-[11px] text-muted-foreground leading-relaxed">
-                <strong className="font-medium text-foreground">Start Voice</strong> sends mic audio to the backend (Deepgram) and plays replies with ElevenLabs using the agent voice ID. The speaker button next to Test only uses your{" "}
-                <strong className="font-medium text-foreground">browser&apos;s</strong> text-to-speech, not ElevenLabs.
-              </p>
               <select
                 value={selectedLead}
                 onChange={(e) => setSelectedLead(e.target.value)}
@@ -1417,7 +1407,7 @@ export default function FlowBuilderPage() {
               </select>
               <div className="h-64 space-y-2 overflow-y-auto rounded-lg border border-border bg-surface-muted/40 p-3">
                 {messages.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Start a test to talk to the saved LangChain brain.</p>
+                  <p className="text-sm text-muted-foreground">Start a test to preview this agent.</p>
                 ) : (
                   messages.map((message, index) => (
                     <div key={index} className={`flex ${message.role === "human" ? "justify-end" : "justify-start"}`}>
