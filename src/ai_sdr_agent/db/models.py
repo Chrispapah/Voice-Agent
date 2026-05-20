@@ -61,7 +61,7 @@ class BotConfigRow(Base):
 
     # Browser voice provider
     voice_provider: Mapped[str] = mapped_column(String(30), default="builtin")
-    openai_realtime_model: Mapped[str] = mapped_column(String(100), default="gpt-4o-realtime-preview")
+    openai_realtime_model: Mapped[str] = mapped_column(String(100), default="gpt-realtime")
     openai_realtime_voice: Mapped[str] = mapped_column(String(50), default="alloy")
     openai_realtime_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
 

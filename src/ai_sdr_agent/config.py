@@ -66,7 +66,7 @@ class SDRSettings(BaseSettings):
     elevenlabs_optimize_streaming_latency: int = 4
 
     voice_provider: Literal["builtin", "openai_realtime"] = "builtin"
-    openai_realtime_model: str = "gpt-4o-realtime-preview"
+    openai_realtime_model: str = "gpt-realtime"
     openai_realtime_voice: str = "alloy"
     openai_realtime_instructions: str | None = None
     openai_realtime_transcription_model: str = "gpt-4o-mini-transcribe"

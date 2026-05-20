@@ -53,7 +53,7 @@ CREATE TABLE public.bot_configs (
   deepgram_model character varying NOT NULL DEFAULT 'nova-2'::character varying,
   deepgram_language character varying NOT NULL DEFAULT 'en-US'::character varying,
   voice_provider character varying NOT NULL DEFAULT 'builtin'::character varying,
-  openai_realtime_model character varying NOT NULL DEFAULT 'gpt-4o-realtime-preview'::character varying,
+  openai_realtime_model character varying NOT NULL DEFAULT 'gpt-realtime'::character varying,
   openai_realtime_voice character varying NOT NULL DEFAULT 'alloy'::character varying,
   openai_realtime_instructions text,
   twilio_account_sid text,

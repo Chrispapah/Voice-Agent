@@ -383,7 +383,7 @@ export default function FlowBuilderPage() {
   const [deepgramModel, setDeepgramModel] = useState("");
   const [deepgramLanguage, setDeepgramLanguage] = useState("");
   const [voiceProvider, setVoiceProvider] = useState<BotConfig["voice_provider"]>("builtin");
-  const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState("gpt-4o-realtime-preview");
+  const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState("gpt-realtime");
   const [openAIRealtimeVoice, setOpenAIRealtimeVoice] = useState("alloy");
   const [openAIRealtimeInstructions, setOpenAIRealtimeInstructions] = useState("");
   const [spec, setSpec] = useState<ConversationSpecV1>(defaultGraphConversationSpec());
@@ -507,7 +507,7 @@ export default function FlowBuilderPage() {
         setDeepgramModel(loadedBot.deepgram_model || "");
         setDeepgramLanguage(loadedBot.deepgram_language || DEFAULT_SPEECH_LANGUAGE_CODE);
         setVoiceProvider(loadedBot.voice_provider || "builtin");
-        setOpenAIRealtimeModel(loadedBot.openai_realtime_model || "gpt-4o-realtime-preview");
+        setOpenAIRealtimeModel(loadedBot.openai_realtime_model || "gpt-realtime");
         setOpenAIRealtimeVoice(loadedBot.openai_realtime_voice || "alloy");
         setOpenAIRealtimeInstructions(loadedBot.openai_realtime_instructions || "");
         setSpec(loadedSpec);
@@ -836,7 +836,7 @@ export default function FlowBuilderPage() {
         deepgram_model: deepgramModel || "nova-2",
         deepgram_language: deepgramLanguage.trim() || DEFAULT_SPEECH_LANGUAGE_CODE,
         voice_provider: voiceProvider,
-        openai_realtime_model: openAIRealtimeModel.trim() || "gpt-4o-realtime-preview",
+        openai_realtime_model: openAIRealtimeModel.trim() || "gpt-realtime",
         openai_realtime_voice: openAIRealtimeVoice.trim() || "alloy",
         openai_realtime_instructions: openAIRealtimeInstructions.trim() || null,
         conversation_spec: spec,
@@ -1117,7 +1117,7 @@ export default function FlowBuilderPage() {
                       <input
                         value={openAIRealtimeModel}
                         onChange={(e) => setOpenAIRealtimeModel(e.target.value)}
-                        placeholder="gpt-4o-realtime-preview"
+                        placeholder="gpt-realtime"
                         className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
                       />
                       <input

@@ -1,6 +1,6 @@
 ALTER TABLE public.bot_configs
   ADD COLUMN IF NOT EXISTS voice_provider character varying NOT NULL DEFAULT 'builtin',
-  ADD COLUMN IF NOT EXISTS openai_realtime_model character varying NOT NULL DEFAULT 'gpt-4o-realtime-preview',
+  ADD COLUMN IF NOT EXISTS openai_realtime_model character varying NOT NULL DEFAULT 'gpt-realtime',
   ADD COLUMN IF NOT EXISTS openai_realtime_voice character varying NOT NULL DEFAULT 'alloy',
   ADD COLUMN IF NOT EXISTS openai_realtime_instructions text;
 

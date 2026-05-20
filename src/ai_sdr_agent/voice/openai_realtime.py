@@ -57,7 +57,6 @@ class OpenAIRealtimeVoiceBridge:
                 _realtime_url(self.model),
                 headers={
                     "Authorization": f"Bearer {self.api_key}",
-                    "OpenAI-Beta": "realtime=v1",
                 },
                 heartbeat=20,
                 autoping=True,
