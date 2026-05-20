@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import time
 import uuid
@@ -26,12 +25,12 @@ from ai_sdr_agent.db.repositories import (
     PgSessionStore,
 )
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
-from ai_sdr_agent.text.greek_number_words import expand_for_greek_elevenlabs_tts
 from ai_sdr_agent.transcriber_factory import (
     normalize_deepgram_language_code,
     prefer_nova3_for_greek_browser_stt,
     resolve_web_voice_deepgram_model,
 )
+from ai_sdr_agent.voice.elevenlabs_tts import stream_elevenlabs_text_to_ws
 from ai_sdr_agent.voice.turn_orchestrator import run_voice_graph_turn
 
 router = APIRouter(prefix="/api/bots", tags=["voice"])
@@ -66,33 +65,6 @@ def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> 
     if not out.get("openai_realtime_instructions") and settings.openai_realtime_instructions:
         out["openai_realtime_instructions"] = settings.openai_realtime_instructions
     return out
-
-
-def _elevenlabs_stream_url_and_json(
-    voice_id: str,
-    model_id: str,
-    spoken_plain_text: str,
-    *,
-    optimize_streaming_latency: int,
-    output_format: str = "mp3_22050_32",
-) -> tuple[str, dict[str, Any]]:
-    """ElevenLabs streaming TTS URL + JSON tuned for time-to-first-byte."""
-    lat = max(0, min(4, int(optimize_streaming_latency)))
-    q = urlencode(
-        {
-            "optimize_streaming_latency": str(lat),
-            "output_format": output_format,
-        }
-    )
-    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?{q}"
-    tts_body_text = expand_for_greek_elevenlabs_tts(spoken_plain_text.strip())
-    body: dict[str, Any] = {
-        "text": tts_body_text,
-        "model_id": model_id,
-        # use_speaker_boost adds latency per ElevenLabs docs; style>0 adds compute.
-        "voice_settings": {"use_speaker_boost": False, "style": 0.0},
-    }
-    return url, body
 
 
 def _deepgram_listen_url(*, model: str, language: str, endpointing_ms: int) -> str:
@@ -211,54 +183,19 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         voice_id = bot_cfg_merged.get("elevenlabs_voice_id") or ""
         model_id = str(bot_cfg_merged.get("elevenlabs_model_id") or "eleven_turbo_v2")
         tts_latency_opt = int(get_settings().elevenlabs_optimize_streaming_latency)
-        e_headers = {
-            "xi-api-key": eleven_key,
-            "Accept": "audio/mpeg",
-            "Content-Type": "application/json",
-        }
 
         async def _stream_elevenlabs_text(spoken_text: str, mark_first_audio: Any) -> bool:
-            stripped = spoken_text.strip()
-            if not stripped or my_gen != generation:
-                return True
-            if not eleven_key or not voice_id:
-                return True
-            e_url, tts_json = _elevenlabs_stream_url_and_json(
-                voice_id,
-                model_id,
-                stripped,
+            return await stream_elevenlabs_text_to_ws(
+                spoken_text,
+                httpx_client=httpx_client,
+                elevenlabs_api_key=eleven_key,
+                voice_id=voice_id,
+                model_id=model_id,
                 optimize_streaming_latency=tts_latency_opt,
+                send_json=lambda payload: _send_json(websocket, payload),
+                should_continue=lambda: my_gen == generation,
+                mark_first_audio=mark_first_audio,
             )
-            try:
-                async with httpx_client.stream(
-                    "POST",
-                    e_url,
-                    headers=e_headers,
-                    json=tts_json,
-                    timeout=120.0,
-                ) as response:
-                    response.raise_for_status()
-                    async for chunk in response.aiter_bytes(4096):
-                        if my_gen != generation:
-                            return False
-                        if chunk:
-                            mark_first_audio()
-                            await _send_json(
-                                websocket,
-                                {
-                                    "type": "agent.audio",
-                                    "chunk": base64.b64encode(chunk).decode("ascii"),
-                                },
-                            )
-            except (httpx.HTTPError, asyncio.CancelledError) as exc:
-                if isinstance(exc, asyncio.CancelledError):
-                    raise
-                logger.exception("ElevenLabs streaming failed")
-                await _send_json(websocket, {"type": "error", "message": "TTS request failed"})
-                return False
-            if my_gen == generation:
-                await _send_json(websocket, {"type": "agent.audio_segment_end"})
-            return True
 
         await run_voice_graph_turn(
             bot_id=bot_id,
@@ -576,38 +513,17 @@ async def _send_initial_greeting_tts(
             await _send_json(websocket, {"type": "agent.done"})
             return
         tts_latency_opt = int(get_settings().elevenlabs_optimize_streaming_latency)
-        e_url, tts_json = _elevenlabs_stream_url_and_json(
-            voice_id,
-            model_id,
+        await stream_elevenlabs_text_to_ws(
             reply,
+            httpx_client=httpx_client,
+            elevenlabs_api_key=eleven_key,
+            voice_id=voice_id,
+            model_id=model_id,
             optimize_streaming_latency=tts_latency_opt,
+            send_json=lambda payload: _send_json(websocket, payload),
+            should_continue=lambda: my_gen == current_generation(),
         )
-        e_headers = {
-            "xi-api-key": eleven_key,
-            "Accept": "audio/mpeg",
-            "Content-Type": "application/json",
-        }
-        async with httpx_client.stream(
-            "POST",
-            e_url,
-            headers=e_headers,
-            json=tts_json,
-            timeout=120.0,
-        ) as response:
-            response.raise_for_status()
-            async for chunk in response.aiter_bytes(4096):
-                if my_gen != current_generation():
-                    break
-                if chunk:
-                    await _send_json(
-                        websocket,
-                        {
-                            "type": "agent.audio",
-                            "chunk": base64.b64encode(chunk).decode("ascii"),
-                        },
-                    )
         if my_gen == current_generation():
-            await _send_json(websocket, {"type": "agent.audio_segment_end"})
             await _send_json(websocket, {"type": "agent.done"})
     except httpx.HTTPError:
         logger.exception("Initial greeting TTS failed")

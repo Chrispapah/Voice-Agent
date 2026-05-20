@@ -65,7 +65,7 @@ class SDRSettings(BaseSettings):
     elevenlabs_use_websocket: bool = False
     elevenlabs_optimize_streaming_latency: int = 4
 
-    voice_provider: Literal["builtin", "openai_realtime"] = "builtin"
+    voice_provider: Literal["builtin", "openai_realtime", "openai_realtime_elevenlabs"] = "builtin"
     openai_realtime_model: str = "gpt-realtime"
     openai_realtime_voice: str = "alloy"
     openai_realtime_instructions: str | None = None

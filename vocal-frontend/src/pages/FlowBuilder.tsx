@@ -56,6 +56,7 @@ import {
   setNodeKnowledgeBaseAssignments,
   type KnowledgeBase,
 } from "@/lib/api";
+import { OpenAIRealtimeElevenLabsVoiceSession } from "@/lib/openAIRealtimeElevenLabsVoiceSession";
 import { OpenAIRealtimeVoiceSession } from "@/lib/openAIRealtimeVoiceSession";
 import { VoiceSession, type VoiceSessionCallbacks } from "@/lib/voiceSession";
 import {
@@ -73,7 +74,7 @@ import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentG
 
 type BuilderMode = "single" | "graph";
 type ChatMessage = { role: "human" | "agent"; content: string };
-type BrowserVoiceSession = VoiceSession | OpenAIRealtimeVoiceSession;
+type BrowserVoiceSession = VoiceSession | OpenAIRealtimeVoiceSession | OpenAIRealtimeElevenLabsVoiceSession;
 const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime";
 
 function normalizeOpenAIRealtimeModel(model: string | null | undefined): string {
@@ -990,7 +991,9 @@ export default function FlowBuilderPage() {
       const vs: BrowserVoiceSession =
         voiceProvider === "openai_realtime"
           ? new OpenAIRealtimeVoiceSession(callbacks)
-          : new VoiceSession(callbacks);
+          : voiceProvider === "openai_realtime_elevenlabs"
+            ? new OpenAIRealtimeElevenLabsVoiceSession(callbacks)
+            : new VoiceSession(callbacks);
       voiceRef.current = vs;
       await vs.start(botId, leadId, sessionId);
       setVoiceActive(true);
@@ -1075,6 +1078,7 @@ export default function FlowBuilderPage() {
                   >
                     <option value="builtin">Builtin: Deepgram + ElevenLabs</option>
                     <option value="openai_realtime">OpenAI Realtime addon</option>
+                    <option value="openai_realtime_elevenlabs">OpenAI Realtime + ElevenLabs</option>
                   </select>
                 </div>
                 <div>
@@ -1115,7 +1119,7 @@ export default function FlowBuilderPage() {
                     />
                   </div>
                 </div>
-                {voiceProvider === "openai_realtime" && (
+                {(voiceProvider === "openai_realtime" || voiceProvider === "openai_realtime_elevenlabs") && (
                   <div>
                     <label className="flex items-center gap-1.5 text-xs font-medium">
                       <Sparkles className="h-3.5 w-3.5" /> OpenAI Realtime
@@ -1127,12 +1131,18 @@ export default function FlowBuilderPage() {
                         placeholder="gpt-realtime"
                         className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
                       />
-                      <input
-                        value={openAIRealtimeVoice}
-                        onChange={(e) => setOpenAIRealtimeVoice(e.target.value)}
-                        placeholder="alloy"
-                        className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
-                      />
+                      {voiceProvider === "openai_realtime" ? (
+                        <input
+                          value={openAIRealtimeVoice}
+                          onChange={(e) => setOpenAIRealtimeVoice(e.target.value)}
+                          placeholder="alloy"
+                          className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                        />
+                      ) : (
+                        <div className="rounded-lg border border-border bg-secondary px-2 py-1.5 text-xs text-muted-foreground">
+                          ElevenLabs controls output voice
+                        </div>
+                      )}
                     </div>
                     <textarea
                       value={openAIRealtimeInstructions}

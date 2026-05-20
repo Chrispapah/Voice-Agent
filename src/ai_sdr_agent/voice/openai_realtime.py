@@ -42,12 +42,14 @@ class OpenAIRealtimeVoiceBridge:
         send_json: SendJson,
         on_transcript_final: OnTranscriptFinal,
         on_speech_started: OnSpeechStarted,
+        enable_audio_output: bool = True,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.voice = voice
         self.transcription_model = transcription_model
         self.instructions = instructions
+        self.enable_audio_output = enable_audio_output
         self.send_json = send_json
         self.on_transcript_final = on_transcript_final
         self.on_speech_started = on_speech_started
@@ -85,7 +87,7 @@ class OpenAIRealtimeVoiceBridge:
                 "type": "session.update",
                 "session": {
                     "type": "realtime",
-                    "output_modalities": ["audio"],
+                    "output_modalities": ["audio"] if self.enable_audio_output else ["text"],
                     "instructions": instructions,
                     "audio": {
                         "input": {
@@ -97,10 +99,16 @@ class OpenAIRealtimeVoiceBridge:
                                 "interrupt_response": True,
                             },
                         },
-                        "output": {
-                            "format": {"type": "audio/pcm", "rate": 24000},
-                            "voice": self.voice,
-                        },
+                        **(
+                            {
+                                "output": {
+                                    "format": {"type": "audio/pcm", "rate": 24000},
+                                    "voice": self.voice,
+                                }
+                            }
+                            if self.enable_audio_output
+                            else {}
+                        ),
                     },
                 },
             }
@@ -138,6 +146,8 @@ class OpenAIRealtimeVoiceBridge:
 
     async def speak_text(self, text: str) -> bool:
         stripped = text.strip()
+        if not self.enable_audio_output:
+            return False
         if not stripped or not self._ws or self._ws.closed:
             return True
         loop = asyncio.get_running_loop()

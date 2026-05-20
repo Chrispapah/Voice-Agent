@@ -37,7 +37,7 @@ export interface BotConfig {
   deepgram_api_key: string | null;
   deepgram_model: string;
   deepgram_language: string;
-  voice_provider: "builtin" | "openai_realtime";
+  voice_provider: "builtin" | "openai_realtime" | "openai_realtime_elevenlabs";
   openai_realtime_model: string;
   openai_realtime_voice: string;
   openai_realtime_instructions: string | null;
@@ -303,6 +303,17 @@ export function getOpenAIRealtimeVoiceSessionWebSocketUrl(botId: string): string
       ? `ws://${trimmed.slice("http://".length)}`
       : trimmed;
   return `${wsBase}/api/bots/${botId}/voice-session/openai-realtime`;
+}
+
+/** `wss://` / `ws://` URL for the hybrid OpenAI Realtime STT + ElevenLabs TTS WebSocket. */
+export function getOpenAIRealtimeElevenLabsVoiceSessionWebSocketUrl(botId: string): string {
+  const trimmed = API_BASE.trim().replace(/\/$/, "");
+  const wsBase = trimmed.startsWith("https://")
+    ? `wss://${trimmed.slice("https://".length)}`
+    : trimmed.startsWith("http://")
+      ? `ws://${trimmed.slice("http://".length)}`
+      : trimmed;
+  return `${wsBase}/api/bots/${botId}/voice-session/openai-realtime-elevenlabs`;
 }
 
 async function requireCurrentUserId(): Promise<string> {
