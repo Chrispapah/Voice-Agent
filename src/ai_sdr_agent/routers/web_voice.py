@@ -28,6 +28,7 @@ from ai_sdr_agent.db.repositories import (
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
 from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
 from ai_sdr_agent.text.greek_number_words import expand_for_greek_elevenlabs_tts
+from ai_sdr_agent.text.tts_sentence_buffer import SentenceStreamBuffer
 from ai_sdr_agent.transcriber_factory import (
     normalize_deepgram_language_code,
     prefer_nova3_for_greek_browser_stt,
@@ -36,62 +37,7 @@ from ai_sdr_agent.transcriber_factory import (
 
 router = APIRouter(prefix="/api/bots", tags=["voice"])
 
-# Phrase boundaries for streaming LLM → TTS in the browser.
-# Tighter than before: perceived latency is dominated by time-to-first-TTS-byte;
-# slightly more phrase segments is an acceptable trade for faster first audio.
-_STREAM_PUNCTUATION = ".?,!;:\n"
-_STREAM_HARD_FLUSH_CHARS = 52
-# First phrase only: allow shorter clause boundaries so ElevenLabs starts sooner.
-_STREAM_FIRST_PHRASE_MIN_CHARS = 8
-
-
-class _TelephonyStylePhraseBuffer:
-    """Accumulates LLM token chunks and emits phrase-sized strings for TTS."""
-
-    def __init__(self, *, hard_flush_chars: int = _STREAM_HARD_FLUSH_CHARS) -> None:
-        self.buffer = ""
-        self._hard_flush = hard_flush_chars
-        self._phrase_count = 0
-
-    async def feed(self, on_phrase, chunk: str) -> None:
-        if not chunk:
-            return
-        self.buffer += chunk
-        while self.buffer:
-            boundary_index = next(
-                (idx for idx, char in enumerate(self.buffer) if char in _STREAM_PUNCTUATION),
-                -1,
-            )
-            min_boundary = 1 if self._phrase_count == 0 else 2
-            if boundary_index >= min_boundary and boundary_index + 1 >= _STREAM_FIRST_PHRASE_MIN_CHARS:
-                output = self.buffer[: boundary_index + 1].strip()
-                self.buffer = self.buffer[boundary_index + 1 :].lstrip()
-                if output:
-                    text = output if output.endswith(" ") else output + " "
-                    await on_phrase(text)
-                    self._phrase_count += 1
-                continue
-            if len(self.buffer) >= self._hard_flush:
-                space_index = self.buffer.rfind(" ")
-                if space_index > 0:
-                    output = self.buffer[:space_index].strip()
-                    self.buffer = self.buffer[space_index + 1 :].lstrip()
-                    if output:
-                        text = output if output.endswith(" ") else output + " "
-                        await on_phrase(text)
-                        self._phrase_count += 1
-                    continue
-            break
-
-    async def flush(self, on_phrase) -> None:
-        if not self.buffer:
-            return
-        buffered = self.buffer
-        self.buffer = ""
-        text = buffered if buffered.endswith(" ") else buffered + " "
-        await on_phrase(text)
-        self._phrase_count += 1
-
+# Streamed LLM → ElevenLabs: one HTTP TTS stream per sentence (see ``SentenceStreamBuffer``).
 
 def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> dict[str, Any]:
     out = dict(bot_cfg)
@@ -394,7 +340,7 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                             return
 
                     streamed = await svc.start_streamed_turn(conversation_id, user_text)
-                    buf = _TelephonyStylePhraseBuffer()
+                    buf = SentenceStreamBuffer()
                     async for token in streamed.chunks:
                         if first_llm_pc[0] is None and token:
                             first_llm_pc[0] = time.perf_counter()
