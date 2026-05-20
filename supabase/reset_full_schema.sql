@@ -139,6 +139,12 @@ CREATE TABLE public.bot_configs (
   deepgram_model        varchar(50)  NOT NULL DEFAULT 'nova-2',
   deepgram_language     varchar(10)  NOT NULL DEFAULT 'el',
 
+  -- Browser voice provider
+  voice_provider        varchar(30)  NOT NULL DEFAULT 'builtin',
+  openai_realtime_model varchar(100) NOT NULL DEFAULT 'gpt-4o-realtime-preview',
+  openai_realtime_voice varchar(50)  NOT NULL DEFAULT 'alloy',
+  openai_realtime_instructions text,
+
   -- Telephony - Twilio
   twilio_account_sid    text,
   twilio_auth_token     text,
@@ -231,6 +237,7 @@ SELECT
        THEN left(deepgram_api_key, 4) || '****' || right(deepgram_api_key, 4)
   END AS deepgram_api_key,
   deepgram_model, deepgram_language,
+  voice_provider, openai_realtime_model, openai_realtime_voice, openai_realtime_instructions,
   CASE WHEN twilio_account_sid IS NOT NULL
        THEN left(twilio_account_sid, 4) || '****' || right(twilio_account_sid, 4)
   END AS twilio_account_sid,
@@ -392,6 +399,7 @@ SELECT
        THEN left(deepgram_api_key, 4) || '****' || right(deepgram_api_key, 4)
   END AS deepgram_api_key,
   deepgram_model, deepgram_language,
+  voice_provider, openai_realtime_model, openai_realtime_voice, openai_realtime_instructions,
   CASE WHEN twilio_account_sid IS NOT NULL
        THEN left(twilio_account_sid, 4) || '****' || right(twilio_account_sid, 4)
   END AS twilio_account_sid,

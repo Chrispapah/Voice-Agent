@@ -65,6 +65,12 @@ class SDRSettings(BaseSettings):
     elevenlabs_use_websocket: bool = False
     elevenlabs_optimize_streaming_latency: int = 4
 
+    voice_provider: Literal["builtin", "openai_realtime"] = "builtin"
+    openai_realtime_model: str = "gpt-4o-realtime-preview"
+    openai_realtime_voice: str = "alloy"
+    openai_realtime_instructions: str | None = None
+    openai_realtime_transcription_model: str = "gpt-4o-mini-transcribe"
+
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None
     azure_voice_name: str = "el-GR-AthinaNeural"
@@ -144,8 +150,9 @@ class SDRSettings(BaseSettings):
         return {
             "llm_provider": self.llm_provider,
             "stt_provider": self.stt_provider,
-            "tts_provider": "elevenlabs",
-            "tts_transport": "http_stream",
+            "voice_provider": self.voice_provider,
+            "tts_provider": "openai_realtime" if self.voice_provider == "openai_realtime" else "elevenlabs",
+            "tts_transport": "realtime_ws" if self.voice_provider == "openai_realtime" else "http_stream",
             "calendar": "stub",
             "email": "stub",
             "crm": "stub",

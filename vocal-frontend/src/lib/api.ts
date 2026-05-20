@@ -37,6 +37,10 @@ export interface BotConfig {
   deepgram_api_key: string | null;
   deepgram_model: string;
   deepgram_language: string;
+  voice_provider: "builtin" | "openai_realtime";
+  openai_realtime_model: string;
+  openai_realtime_voice: string;
+  openai_realtime_instructions: string | null;
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
   twilio_phone_number: string | null;
@@ -288,6 +292,17 @@ export function getVoiceSessionWebSocketUrl(botId: string): string {
       ? `ws://${trimmed.slice("http://".length)}`
       : trimmed;
   return `${wsBase}/api/bots/${botId}/voice-session`;
+}
+
+/** `wss://` / `ws://` URL for the OpenAI Realtime addon voice WebSocket. */
+export function getOpenAIRealtimeVoiceSessionWebSocketUrl(botId: string): string {
+  const trimmed = API_BASE.trim().replace(/\/$/, "");
+  const wsBase = trimmed.startsWith("https://")
+    ? `wss://${trimmed.slice("https://".length)}`
+    : trimmed.startsWith("http://")
+      ? `ws://${trimmed.slice("http://".length)}`
+      : trimmed;
+  return `${wsBase}/api/bots/${botId}/voice-session/openai-realtime`;
 }
 
 async function requireCurrentUserId(): Promise<string> {

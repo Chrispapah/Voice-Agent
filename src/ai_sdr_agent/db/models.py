@@ -59,6 +59,12 @@ class BotConfigRow(Base):
     deepgram_model: Mapped[str] = mapped_column(String(50), default="nova-2")
     deepgram_language: Mapped[str] = mapped_column(String(10), default="el")
 
+    # Browser voice provider
+    voice_provider: Mapped[str] = mapped_column(String(30), default="builtin")
+    openai_realtime_model: Mapped[str] = mapped_column(String(100), default="gpt-4o-realtime-preview")
+    openai_realtime_voice: Mapped[str] = mapped_column(String(50), default="alloy")
+    openai_realtime_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Telephony – Twilio
     twilio_account_sid: Mapped[str | None] = mapped_column(Text, nullable=True)
     twilio_auth_token: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -104,6 +110,10 @@ class BotConfigRow(Base):
             "deepgram_api_key": self.deepgram_api_key,
             "deepgram_model": self.deepgram_model,
             "deepgram_language": self.deepgram_language,
+            "voice_provider": self.voice_provider,
+            "openai_realtime_model": self.openai_realtime_model,
+            "openai_realtime_voice": self.openai_realtime_voice,
+            "openai_realtime_instructions": self.openai_realtime_instructions,
             "twilio_account_sid": self.twilio_account_sid,
             "twilio_auth_token": self.twilio_auth_token,
             "twilio_phone_number": self.twilio_phone_number,

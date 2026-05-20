@@ -56,7 +56,8 @@ import {
   setNodeKnowledgeBaseAssignments,
   type KnowledgeBase,
 } from "@/lib/api";
-import { VoiceSession } from "@/lib/voiceSession";
+import { OpenAIRealtimeVoiceSession } from "@/lib/openAIRealtimeVoiceSession";
+import { VoiceSession, type VoiceSessionCallbacks } from "@/lib/voiceSession";
 import {
   SINGLE_AGENT_NODE_ID,
   defaultGraphConversationSpec,
@@ -72,6 +73,7 @@ import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentG
 
 type BuilderMode = "single" | "graph";
 type ChatMessage = { role: "human" | "agent"; content: string };
+type BrowserVoiceSession = VoiceSession | OpenAIRealtimeVoiceSession;
 
 /** WebSocket sends cumulative `agent.text` while streaming; update one bubble per assistant turn. */
 function upsertStreamingAgentBubble(prev: ChatMessage[], text: string): ChatMessage[] {
@@ -380,6 +382,10 @@ export default function FlowBuilderPage() {
   const [elevenlabsModelId, setElevenlabsModelId] = useState("");
   const [deepgramModel, setDeepgramModel] = useState("");
   const [deepgramLanguage, setDeepgramLanguage] = useState("");
+  const [voiceProvider, setVoiceProvider] = useState<BotConfig["voice_provider"]>("builtin");
+  const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState("gpt-4o-realtime-preview");
+  const [openAIRealtimeVoice, setOpenAIRealtimeVoice] = useState("alloy");
+  const [openAIRealtimeInstructions, setOpenAIRealtimeInstructions] = useState("");
   const [spec, setSpec] = useState<ConversationSpecV1>(defaultGraphConversationSpec());
   const [mode, setMode] = useState<BuilderMode>("graph");
   const [entryNodeId, setEntryNodeId] = useState("welcome");
@@ -406,7 +412,7 @@ export default function FlowBuilderPage() {
   const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceConnecting, setVoiceConnecting] = useState(false);
-  const voiceRef = useRef<VoiceSession | null>(null);
+  const voiceRef = useRef<BrowserVoiceSession | null>(null);
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
@@ -500,6 +506,10 @@ export default function FlowBuilderPage() {
         setElevenlabsModelId(loadedBot.elevenlabs_model_id || "");
         setDeepgramModel(loadedBot.deepgram_model || "");
         setDeepgramLanguage(loadedBot.deepgram_language || DEFAULT_SPEECH_LANGUAGE_CODE);
+        setVoiceProvider(loadedBot.voice_provider || "builtin");
+        setOpenAIRealtimeModel(loadedBot.openai_realtime_model || "gpt-4o-realtime-preview");
+        setOpenAIRealtimeVoice(loadedBot.openai_realtime_voice || "alloy");
+        setOpenAIRealtimeInstructions(loadedBot.openai_realtime_instructions || "");
         setSpec(loadedSpec);
         setMode(inferMode(loadedSpec));
         setEntryNodeId(loadedSpec.entry_node_id || loadedSpec.nodes?.[0]?.id || "welcome");
@@ -825,6 +835,10 @@ export default function FlowBuilderPage() {
         elevenlabs_model_id: elevenlabsModelId || "eleven_turbo_v2",
         deepgram_model: deepgramModel || "nova-2",
         deepgram_language: deepgramLanguage.trim() || DEFAULT_SPEECH_LANGUAGE_CODE,
+        voice_provider: voiceProvider,
+        openai_realtime_model: openAIRealtimeModel.trim() || "gpt-4o-realtime-preview",
+        openai_realtime_voice: openAIRealtimeVoice.trim() || "alloy",
+        openai_realtime_instructions: openAIRealtimeInstructions.trim() || null,
         conversation_spec: spec,
       });
       await Promise.all([
@@ -956,7 +970,7 @@ export default function FlowBuilderPage() {
     try {
       await handleSave();
       const leadId = await ensureLead();
-      const vs = new VoiceSession({
+      const callbacks: VoiceSessionCallbacks = {
         onReady: (cid) => setSessionId(cid),
         onTranscriptFinal: (t) => setMessages((m) => [...m, { role: "human", content: t }]),
         onAgentText: (t) => setMessages((m) => upsertStreamingAgentBubble(m, t)),
@@ -965,7 +979,11 @@ export default function FlowBuilderPage() {
           voiceRef.current = null;
           setVoiceActive(false);
         },
-      });
+      };
+      const vs: BrowserVoiceSession =
+        voiceProvider === "openai_realtime"
+          ? new OpenAIRealtimeVoiceSession(callbacks)
+          : new VoiceSession(callbacks);
       voiceRef.current = vs;
       await vs.start(botId, leadId, sessionId);
       setVoiceActive(true);
@@ -1041,6 +1059,19 @@ export default function FlowBuilderPage() {
               <div className="space-y-3">
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-medium">
+                    <Sparkles className="h-3.5 w-3.5" /> Voice Provider
+                  </label>
+                  <select
+                    value={voiceProvider}
+                    onChange={(e) => setVoiceProvider(e.target.value as BotConfig["voice_provider"])}
+                    className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                  >
+                    <option value="builtin">Builtin: Deepgram + ElevenLabs</option>
+                    <option value="openai_realtime">OpenAI Realtime addon</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="flex items-center gap-1.5 text-xs font-medium">
                     <Volume2 className="h-3.5 w-3.5" /> Text to Speech
                   </label>
                   <div className="mt-2 grid grid-cols-2 gap-2">
@@ -1077,8 +1108,35 @@ export default function FlowBuilderPage() {
                     />
                   </div>
                 </div>
+                {voiceProvider === "openai_realtime" && (
+                  <div>
+                    <label className="flex items-center gap-1.5 text-xs font-medium">
+                      <Sparkles className="h-3.5 w-3.5" /> OpenAI Realtime
+                    </label>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <input
+                        value={openAIRealtimeModel}
+                        onChange={(e) => setOpenAIRealtimeModel(e.target.value)}
+                        placeholder="gpt-4o-realtime-preview"
+                        className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                      />
+                      <input
+                        value={openAIRealtimeVoice}
+                        onChange={(e) => setOpenAIRealtimeVoice(e.target.value)}
+                        placeholder="alloy"
+                        className="min-w-0 rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                      />
+                    </div>
+                    <textarea
+                      value={openAIRealtimeInstructions}
+                      onChange={(e) => setOpenAIRealtimeInstructions(e.target.value)}
+                      placeholder="Optional speech style instructions"
+                      className="mt-2 min-h-16 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                    />
+                  </div>
+                )}
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  Provider keys stay in Settings; this placeholder captures the agent-level voice defaults.
+                  Provider keys stay in Settings; OpenAI Realtime keeps graph prompts, tools, and KB logic on the server.
                 </p>
               </div>
             </div>
