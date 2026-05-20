@@ -74,6 +74,13 @@ import { AgentGraphNode, AgentGraphEntryContext } from "@/components/flow/AgentG
 type BuilderMode = "single" | "graph";
 type ChatMessage = { role: "human" | "agent"; content: string };
 type BrowserVoiceSession = VoiceSession | OpenAIRealtimeVoiceSession;
+const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime";
+
+function normalizeOpenAIRealtimeModel(model: string | null | undefined): string {
+  const trimmed = (model || "").trim();
+  if (!trimmed || trimmed === "gpt-4o-realtime-preview") return DEFAULT_OPENAI_REALTIME_MODEL;
+  return trimmed;
+}
 
 /** WebSocket sends cumulative `agent.text` while streaming; update one bubble per assistant turn. */
 function upsertStreamingAgentBubble(prev: ChatMessage[], text: string): ChatMessage[] {
@@ -383,7 +390,7 @@ export default function FlowBuilderPage() {
   const [deepgramModel, setDeepgramModel] = useState("");
   const [deepgramLanguage, setDeepgramLanguage] = useState("");
   const [voiceProvider, setVoiceProvider] = useState<BotConfig["voice_provider"]>("builtin");
-  const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState("gpt-realtime");
+  const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState(DEFAULT_OPENAI_REALTIME_MODEL);
   const [openAIRealtimeVoice, setOpenAIRealtimeVoice] = useState("alloy");
   const [openAIRealtimeInstructions, setOpenAIRealtimeInstructions] = useState("");
   const [spec, setSpec] = useState<ConversationSpecV1>(defaultGraphConversationSpec());
@@ -507,7 +514,7 @@ export default function FlowBuilderPage() {
         setDeepgramModel(loadedBot.deepgram_model || "");
         setDeepgramLanguage(loadedBot.deepgram_language || DEFAULT_SPEECH_LANGUAGE_CODE);
         setVoiceProvider(loadedBot.voice_provider || "builtin");
-        setOpenAIRealtimeModel(loadedBot.openai_realtime_model || "gpt-realtime");
+        setOpenAIRealtimeModel(normalizeOpenAIRealtimeModel(loadedBot.openai_realtime_model));
         setOpenAIRealtimeVoice(loadedBot.openai_realtime_voice || "alloy");
         setOpenAIRealtimeInstructions(loadedBot.openai_realtime_instructions || "");
         setSpec(loadedSpec);
@@ -836,7 +843,7 @@ export default function FlowBuilderPage() {
         deepgram_model: deepgramModel || "nova-2",
         deepgram_language: deepgramLanguage.trim() || DEFAULT_SPEECH_LANGUAGE_CODE,
         voice_provider: voiceProvider,
-        openai_realtime_model: openAIRealtimeModel.trim() || "gpt-realtime",
+        openai_realtime_model: normalizeOpenAIRealtimeModel(openAIRealtimeModel),
         openai_realtime_voice: openAIRealtimeVoice.trim() || "alloy",
         openai_realtime_instructions: openAIRealtimeInstructions.trim() || null,
         conversation_spec: spec,

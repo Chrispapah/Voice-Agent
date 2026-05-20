@@ -69,18 +69,25 @@ class OpenAIRealtimeVoiceBridge:
             {
                 "type": "session.update",
                 "session": {
-                    "modalities": ["text", "audio"],
+                    "type": "realtime",
+                    "output_modalities": ["audio"],
                     "instructions": self.instructions
                     or "You are a voice renderer. Transcribe user speech and speak provided assistant text naturally.",
-                    "voice": self.voice,
-                    "input_audio_format": "pcm16",
-                    "output_audio_format": "pcm16",
-                    "turn_detection": {
-                        "type": "server_vad",
-                        "create_response": False,
-                        "interrupt_response": True,
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "transcription": {"model": self.transcription_model},
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "create_response": False,
+                                "interrupt_response": True,
+                            },
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "voice": self.voice,
+                        },
                     },
-                    "input_audio_transcription": {"model": self.transcription_model},
                 },
             }
         )
@@ -138,8 +145,13 @@ class OpenAIRealtimeVoiceBridge:
             {
                 "type": "response.create",
                 "response": {
-                    "modalities": ["audio"],
-                    "voice": self.voice,
+                    "output_modalities": ["audio"],
+                    "audio": {
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": 24000},
+                            "voice": self.voice,
+                        },
+                    },
                     "instructions": "Speak only the exact text from the latest message. Do not add commentary.",
                 },
             }

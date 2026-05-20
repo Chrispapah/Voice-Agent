@@ -38,6 +38,14 @@ router = APIRouter(prefix="/api/bots", tags=["voice"])
 
 # Streamed LLM → ElevenLabs: one HTTP TTS stream per sentence (see ``SentenceStreamBuffer``).
 
+
+def _normalize_openai_realtime_model(model: Any, settings: SDRSettings) -> str:
+    value = str(model or "").strip()
+    if not value or value == "gpt-4o-realtime-preview":
+        return settings.openai_realtime_model
+    return value
+
+
 def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> dict[str, Any]:
     out = dict(bot_cfg)
     out["voice_provider"] = out.get("voice_provider") or settings.voice_provider
@@ -49,8 +57,10 @@ def _merge_voice_credentials(bot_cfg: dict[str, Any], settings: SDRSettings) -> 
         out["elevenlabs_voice_id"] = settings.elevenlabs_voice_id
     if not out.get("openai_api_key") and settings.openai_api_key:
         out["openai_api_key"] = settings.openai_api_key
-    if not out.get("openai_realtime_model"):
-        out["openai_realtime_model"] = settings.openai_realtime_model
+    out["openai_realtime_model"] = _normalize_openai_realtime_model(
+        out.get("openai_realtime_model"),
+        settings,
+    )
     if not out.get("openai_realtime_voice"):
         out["openai_realtime_voice"] = settings.openai_realtime_voice
     if not out.get("openai_realtime_instructions") and settings.openai_realtime_instructions:
