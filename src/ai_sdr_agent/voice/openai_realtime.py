@@ -13,6 +13,12 @@ SendJson = Callable[[dict[str, Any]], Awaitable[None]]
 OnTranscriptFinal = Callable[[str], Awaitable[None]]
 OnSpeechStarted = Callable[[], Awaitable[None]]
 
+GREEK_ONLY_INSTRUCTIONS = (
+    "This voice session is Greek-only. Treat Greek speech as valid input. "
+    "Do not interpret, answer, translate, or infer intent from non-Greek speech. "
+    "When speaking, preserve the exact Greek assistant text supplied by the backend."
+)
+
 
 def _realtime_url(model: str) -> str:
     return "wss://api.openai.com/v1/realtime?" + urlencode({"model": model})
@@ -48,6 +54,7 @@ class OpenAIRealtimeVoiceBridge:
         self._ws: aiohttp.ClientWebSocketResponse | None = None
         self._receive_task: asyncio.Task[None] | None = None
         self._response_done: asyncio.Future[None] | None = None
+        self._response_active = False
 
     async def connect(self) -> None:
         timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=None)
@@ -65,18 +72,25 @@ class OpenAIRealtimeVoiceBridge:
             await session.close()
             raise
         self._receive_task = asyncio.create_task(self._receive_loop(session))
+        instructions = " ".join(
+            part.strip()
+            for part in (
+                self.instructions,
+                GREEK_ONLY_INSTRUCTIONS,
+            )
+            if part and part.strip()
+        )
         await self._send_openai(
             {
                 "type": "session.update",
                 "session": {
                     "type": "realtime",
                     "output_modalities": ["audio"],
-                    "instructions": self.instructions
-                    or "You are a voice renderer. Transcribe user speech and speak provided assistant text naturally.",
+                    "instructions": instructions,
                     "audio": {
                         "input": {
                             "format": {"type": "audio/pcm", "rate": 24000},
-                            "transcription": {"model": self.transcription_model},
+                            "transcription": {"model": self.transcription_model, "language": "el"},
                             "turn_detection": {
                                 "type": "server_vad",
                                 "create_response": False,
@@ -115,9 +129,12 @@ class OpenAIRealtimeVoiceBridge:
     async def cancel_response(self) -> None:
         if not self._ws or self._ws.closed:
             return
+        if not self._response_active:
+            return
         await self._send_openai({"type": "response.cancel"})
         if self._response_done and not self._response_done.done():
             self._response_done.set_result(None)
+        self._response_active = False
 
     async def speak_text(self, text: str) -> bool:
         stripped = text.strip()
@@ -126,6 +143,7 @@ class OpenAIRealtimeVoiceBridge:
         loop = asyncio.get_running_loop()
         done = loop.create_future()
         self._response_done = done
+        self._response_active = True
         await self._send_openai(
             {
                 "type": "conversation.item.create",
@@ -152,7 +170,10 @@ class OpenAIRealtimeVoiceBridge:
                             "voice": self.voice,
                         },
                     },
-                    "instructions": "Speak only the exact text from the latest message. Do not add commentary.",
+                    "instructions": (
+                        "Speak only the exact Greek text from the latest message. "
+                        "Do not add commentary, translate, or respond in any non-Greek language."
+                    ),
                 },
             }
         )
@@ -195,9 +216,13 @@ class OpenAIRealtimeVoiceBridge:
         if event_type == "error":
             error = event.get("error") if isinstance(event.get("error"), dict) else {}
             message = error.get("message") or "OpenAI Realtime returned an error"
+            code = str(error.get("code") or "")
+            if code == "response_cancel_not_active" or "no active response" in str(message).lower():
+                return
             await self.send_json({"type": "error", "message": str(message)})
             if self._response_done and not self._response_done.done():
                 self._response_done.set_result(None)
+            self._response_active = False
             return
         if event_type == "input_audio_buffer.speech_started":
             await self.on_speech_started()
@@ -216,14 +241,15 @@ class OpenAIRealtimeVoiceBridge:
                 await self.send_json({"type": "transcript.final", "text": transcript})
                 await self.on_transcript_final(transcript)
             return
-        if event_type == "response.audio.delta":
+        if event_type in {"response.output_audio.delta", "response.audio.delta"}:
             delta = str(event.get("delta") or "")
             if delta:
                 await self.send_json({"type": "agent.audio", "chunk": delta, "format": "pcm16", "sample_rate": 24000})
             return
-        if event_type == "response.audio.done":
+        if event_type in {"response.output_audio.done", "response.audio.done"}:
             await self.send_json({"type": "agent.audio_segment_end", "format": "pcm16", "sample_rate": 24000})
             return
         if event_type in {"response.done", "response.cancelled"}:
             if self._response_done and not self._response_done.done():
                 self._response_done.set_result(None)
+            self._response_active = False
