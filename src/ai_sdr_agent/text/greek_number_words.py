@@ -1,7 +1,8 @@
-"""Expand Arabic numerals to Greek cardinal phrases before ElevenLabs TTS.
+"""Greek-friendly text normalization before ElevenLabs TTS.
 
-``num2words`` does not implement Greek (`lang='el'` raises NotImplementedError), so this
-module uses a small handwritten cardinal formatter suitable for conversational SDR prompts.
+- Arabic numerals → spoken Greek cardinals (`expand_digit_runs_for_greek_tts`).
+- Common domain tails (``.com``, ``.gr``) → spelled-out Greek so a Greek voice reads
+  them intelligibly (``τελεία κομ``, ``τελεία τζι αρ``).
 """
 
 from __future__ import annotations
@@ -140,3 +141,24 @@ def expand_digit_runs_for_greek_tts(text: str) -> str:
             return raw
 
     return _digit_run_re.sub(replace_run, text)
+
+
+# Dot as “τελεία” + Latin letter names — improves Greek voice pronunciation of TLDs.
+_re_tld_com = re.compile(r"\.com\b", re.IGNORECASE)
+_re_tld_gr = re.compile(r"\.gr\b", re.IGNORECASE)
+
+
+def expand_common_domain_tlds_for_greek_tts(text: str) -> str:
+    """Rewrite ``.com`` / ``.gr`` for Greek TTS (does not alter on-screen/UI copy)."""
+    if not text:
+        return text
+    out = _re_tld_com.sub(" τελεία κομ", text)
+    out = _re_tld_gr.sub(" τελεία τζι αρ", out)
+    return out
+
+
+def expand_for_greek_elevenlabs_tts(text: str) -> str:
+    """Full ElevenLabs preprocessing for Greek sessions: TLDs first, then number words."""
+    if not text:
+        return text
+    return expand_digit_runs_for_greek_tts(expand_common_domain_tlds_for_greek_tts(text))

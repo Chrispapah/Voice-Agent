@@ -27,7 +27,7 @@ from ai_sdr_agent.db.repositories import (
 )
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
 from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
-from ai_sdr_agent.text.greek_number_words import expand_digit_runs_for_greek_tts
+from ai_sdr_agent.text.greek_number_words import expand_for_greek_elevenlabs_tts
 from ai_sdr_agent.transcriber_factory import (
     normalize_deepgram_language_code,
     prefer_nova3_for_greek_browser_stt,
@@ -121,7 +121,7 @@ def _elevenlabs_stream_url_and_json(
         }
     )
     url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream?{q}"
-    tts_body_text = expand_digit_runs_for_greek_tts(spoken_plain_text.strip())
+    tts_body_text = expand_for_greek_elevenlabs_tts(spoken_plain_text.strip())
     body: dict[str, Any] = {
         "text": tts_body_text,
         "model_id": model_id,
