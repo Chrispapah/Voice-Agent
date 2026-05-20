@@ -1,11 +1,22 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { BookOpen, FileText, Plus } from "lucide-react";
+import { BookOpen, FileText, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   answerKnowledgeQuestion,
   AuthRequiredError,
   createKnowledgeBase,
+  deleteKnowledgeBase,
   ingestKnowledgeDocument,
   listKnowledgeBases,
   listKnowledgeDocuments,
@@ -22,6 +33,7 @@ export default function KnowledgeBasePage() {
   const [loadingDocuments, setLoadingDocuments] = useState(false);
   const [creating, setCreating] = useState(false);
   const [ingesting, setIngesting] = useState(false);
+  const [deletingKb, setDeletingKb] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showDocumentForm, setShowDocumentForm] = useState(false);
   const [name, setName] = useState("");
@@ -35,13 +47,14 @@ export default function KnowledgeBasePage() {
   const [wholeKbMaxChunks, setWholeKbMaxChunks] = useState(80);
   const [wholeKbMaxContextChars, setWholeKbMaxContextChars] = useState(90000);
   const [hybridMaxMatches, setHybridMaxMatches] = useState(18);
-  const [llmProvider, setLlmProvider] = useState("groq");
+  const [llmProvider, setLlmProvider] = useState("openai");
   const [answerModel, setAnswerModel] = useState("gpt-4.1-nano");
   const [embeddingModel, setEmbeddingModel] = useState("text-embedding-3-small");
   const [openAiApiKey, setOpenAiApiKey] = useState("");
   const [answer, setAnswer] = useState("");
   const [asking, setAsking] = useState(false);
   const [error, setError] = useState("");
+  const [kbPendingDelete, setKbPendingDelete] = useState<KnowledgeBase | null>(null);
 
   const selectedKnowledgeBase = useMemo(
     () => knowledgeBases.find((kb) => kb.id === selectedKnowledgeBaseId) ?? null,
@@ -186,12 +199,37 @@ export default function KnowledgeBasePage() {
     }
   }
 
+  async function confirmDeleteKnowledgeBase() {
+    if (!kbPendingDelete) return;
+    setDeletingKb(true);
+    setError("");
+    try {
+      await deleteKnowledgeBase(kbPendingDelete.id);
+      setKnowledgeBases((current) => {
+        const next = current.filter((kb) => kb.id !== kbPendingDelete.id);
+        if (selectedKnowledgeBaseId === kbPendingDelete.id) {
+          setSelectedKnowledgeBaseId(next[0]?.id ?? null);
+        }
+        return next;
+      });
+      setKbPendingDelete(null);
+    } catch (err: unknown) {
+      if (err instanceof AuthRequiredError) {
+        navigate("/auth");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to delete knowledge base");
+    } finally {
+      setDeletingKb(false);
+    }
+  }
+
   return (
     <div className="flex flex-1 min-h-0">
       <aside className="hidden lg:flex flex-col w-72 border-r border-border bg-surface-muted/40">
         <div className="flex items-center justify-between px-4 py-4 border-b border-border">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <BookOpen className="w-4 h-4" /> Knowledge Base
+            <BookOpen className="w-4 h-4" /> Knowledge bases
           </div>
           <button
             type="button"
@@ -238,35 +276,101 @@ export default function KnowledgeBasePage() {
             </div>
           )}
           {knowledgeBases.map((kb) => (
-            <button
+            <div
               key={kb.id}
-              type="button"
-              onClick={() => setSelectedKnowledgeBaseId(kb.id)}
-              className={`w-full rounded-lg border px-3 py-2 text-left transition hover:border-primary/50 hover:bg-primary/5 ${
+              className={`flex gap-1 rounded-lg border p-1 transition ${
                 selectedKnowledgeBaseId === kb.id ? "border-primary bg-primary/10" : "border-border bg-card"
               }`}
             >
-              <div className="text-sm font-medium">{kb.name}</div>
-              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{kb.description || "No description"}</div>
-            </button>
+              <button
+                type="button"
+                onClick={() => setSelectedKnowledgeBaseId(kb.id)}
+                className="min-w-0 flex-1 rounded-md px-2 py-2 text-left hover:bg-primary/5"
+              >
+                <div className="text-sm font-medium truncate">{kb.name}</div>
+                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{kb.description || "No description"}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setKbPendingDelete(kb)}
+                className="shrink-0 self-center rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                aria-label={`Delete ${kb.name}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           ))}
         </div>
       </aside>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-4 py-5 sm:px-8 sm:py-6">
         <div className="mx-auto max-w-4xl">
           {error && (
             <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">
               {error}
             </div>
           )}
+
+          <div className="lg:hidden mb-4 space-y-2">
+            <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">KNOWLEDGE BASE</label>
+            <div className="flex gap-2">
+              <select
+                value={selectedKnowledgeBaseId ?? ""}
+                onChange={(e) => setSelectedKnowledgeBaseId(e.target.value || null)}
+                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                disabled={loading || knowledgeBases.length === 0}
+              >
+                {knowledgeBases.length === 0 ? <option value="">None yet</option> : null}
+                {knowledgeBases.map((kb) => (
+                  <option key={kb.id} value={kb.id}>
+                    {kb.name}
+                  </option>
+                ))}
+              </select>
+              <Button type="button" size="icon" variant="outline" onClick={() => setShowCreateForm(true)} aria-label="Create knowledge base">
+                <Plus className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+
+          {showCreateForm && (
+            <div className="lg:hidden mb-4">
+              <form onSubmit={handleCreateKnowledgeBase} className="rounded-lg border border-border bg-card p-3">
+                <label className="text-[11px] font-semibold tracking-wide text-muted-foreground">NAME</label>
+                <input
+                  autoFocus
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Product docs"
+                  className="mt-2 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                />
+                <label className="mt-3 block text-[11px] font-semibold tracking-wide text-muted-foreground">DESCRIPTION</label>
+                <textarea
+                  rows={3}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="What this knowledge base contains"
+                  className="mt-2 w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm"
+                />
+                <div className="mt-3 flex gap-2">
+                  <Button type="submit" size="sm" disabled={creating || !name.trim()}>
+                    {creating ? "Creating..." : "Create"}
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setShowCreateForm(false)} disabled={creating}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </div>
+          )}
+
           {!selectedKnowledgeBase ? (
             <div className="grid min-h-[420px] place-items-center rounded-xl border border-border bg-card">
-              <div className="text-center">
+              <div className="text-center px-4">
                 <div className="w-12 h-12 mx-auto rounded-xl bg-surface-muted border border-border flex items-center justify-center">
                   <BookOpen className="w-5 h-5 text-muted-foreground" />
                 </div>
-                <p className="mt-4 text-sm text-muted-foreground">You don't have any knowledge base</p>
+                <p className="mt-4 text-sm text-muted-foreground">You have no knowledge bases yet.</p>
                 <Button
                   size="sm"
                   className="mt-4 gap-1.5 bg-gradient-primary text-primary-foreground shadow-elegant"
@@ -277,17 +381,29 @@ export default function KnowledgeBasePage() {
               </div>
             </div>
           ) : (
-            <div className="rounded-xl border border-border bg-card p-6 shadow-soft">
-              <div className="mb-6 flex items-start gap-3">
-                <div className="rounded-xl bg-gradient-soft p-3">
-                  <BookOpen className="h-5 w-5 text-primary" />
+            <div className="rounded-xl border border-border bg-card p-5 sm:p-6 shadow-soft">
+              <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="rounded-xl bg-gradient-soft p-3 shrink-0">
+                    <BookOpen className="h-5 w-5 text-primary" />
+                  </div>
+                  <div className="min-w-0">
+                    <h1 className="text-xl font-semibold tracking-tight">{selectedKnowledgeBase.name}</h1>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {selectedKnowledgeBase.description ||
+                        "Attach this knowledge base to agents or flow nodes from the Flow Builder."}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-xl font-semibold tracking-tight">{selectedKnowledgeBase.name}</h1>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {selectedKnowledgeBase.description || "Attach this knowledge base to agents or flow nodes from the Flow Builder."}
-                  </p>
-                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive shrink-0"
+                  onClick={() => setKbPendingDelete(selectedKnowledgeBase)}
+                >
+                  <Trash2 className="w-4 h-4" /> Delete
+                </Button>
               </div>
               <div className="rounded-lg border border-dashed border-border bg-surface-muted/30 p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -295,7 +411,7 @@ export default function KnowledgeBasePage() {
                     <FileText className="h-4 w-4" /> Documents
                   </div>
                   <Button type="button" size="sm" variant="outline" onClick={() => setShowDocumentForm((visible) => !visible)}>
-                    <Plus className="h-4 w-4" /> Add text
+                    <Plus className="h-4 w-4" /> Add document
                   </Button>
                 </div>
                 {showDocumentForm && (
@@ -315,7 +431,7 @@ export default function KnowledgeBasePage() {
                       className="mt-2 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                     />
                     <p className="mt-1 text-[11px] text-muted-foreground">
-                      PDFs are parsed in the Supabase Edge Function. Text files are previewed below before ingestion.
+                      PDFs are processed automatically. For text files, you can review the content below before saving.
                     </p>
                     <label className="mt-3 block text-[11px] font-semibold tracking-wide text-muted-foreground">SOURCE URL</label>
                     <input
@@ -329,12 +445,16 @@ export default function KnowledgeBasePage() {
                       rows={10}
                       value={documentContent}
                       onChange={(e) => setDocumentContent(e.target.value)}
-                      placeholder={documentFile ? "PDF content will be extracted by the Edge Function." : "Paste document text here..."}
+                      placeholder={
+                        documentFile?.type === "application/pdf" || documentFile?.name.toLowerCase().endsWith(".pdf")
+                          ? "Text is extracted from the PDF when you save."
+                          : "Paste document text here…"
+                      }
                       className="mt-2 w-full resize-none rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                     />
                     <div className="mt-3 flex gap-2">
                       <Button type="submit" size="sm" disabled={ingesting || !documentTitle.trim() || (!documentContent.trim() && !documentFile)}>
-                        {ingesting ? "Ingesting..." : "Ingest document"}
+                        {ingesting ? "Saving…" : "Save document"}
                       </Button>
                       <Button type="button" size="sm" variant="outline" onClick={() => setShowDocumentForm(false)} disabled={ingesting}>
                         Cancel
@@ -346,7 +466,7 @@ export default function KnowledgeBasePage() {
                   <p className="mt-3 text-sm text-muted-foreground">Loading documents...</p>
                 ) : documents.length === 0 ? (
                   <p className="mt-3 text-sm text-muted-foreground">
-                    No documents indexed yet. Click Add text to ingest your first document.
+                    No documents yet. Use Add document to upload or paste your first one.
                   </p>
                 ) : (
                   <div className="mt-3 divide-y divide-border rounded-lg border border-border bg-card">
@@ -421,8 +541,7 @@ export default function KnowledgeBasePage() {
                   </div>
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  Whole-KB mode is used only when the selected KB is below both whole-KB limits. Larger KBs use vector,
-                  keyword, neighbor expansion, and final weighted scoring.
+                  Small knowledge bases can be read in full; larger ones use vector search and ranking to pick the best excerpts.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <div>
@@ -441,7 +560,7 @@ export default function KnowledgeBasePage() {
                       type="password"
                       value={openAiApiKey}
                       onChange={(e) => setOpenAiApiKey(e.target.value)}
-                      placeholder="Optional; uses Supabase secret when blank"
+                      placeholder="Optional — uses your workspace default when blank"
                       className="mt-1 w-full rounded-md border border-border bg-background px-2 py-1.5 text-sm"
                     />
                   </div>
@@ -465,11 +584,11 @@ export default function KnowledgeBasePage() {
                   </div>
                 </div>
                 <p className="mt-2 text-[11px] text-muted-foreground">
-                  The embedding model must return 1536 dimensions and should match the model used when the documents were indexed.
-                  The API key is sent only with this request and is not stored.
+                  Use an embedding model with 1536 dimensions that matches how documents were indexed. Keys are sent only with this
+                  request and are not stored in the app.
                 </p>
                 {documents.length === 0 && (
-                  <p className="mt-2 text-xs text-muted-foreground">Ingest at least one document before asking questions.</p>
+                  <p className="mt-2 text-xs text-muted-foreground">Add at least one document before asking questions.</p>
                 )}
                 {answer && (
                   <div className="mt-3 rounded-lg border border-border bg-card p-3 text-sm">
@@ -479,8 +598,34 @@ export default function KnowledgeBasePage() {
               </form>
             </div>
           )}
-          </div>
         </div>
+      </div>
+
+      <AlertDialog open={!!kbPendingDelete} onOpenChange={(open) => !open && setKbPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this knowledge base?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {kbPendingDelete
+                ? `“${kbPendingDelete.name}” and all of its documents and search index data will be permanently removed. Links from agents and flows will stop working.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingKb}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteKnowledgeBase();
+              }}
+              disabled={deletingKb}
+            >
+              {deletingKb ? "Deleting…" : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

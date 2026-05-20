@@ -385,12 +385,20 @@ export function updateTool(id: string, data: ToolDefinitionInput): Promise<ToolD
   return updateToolInSupabase(id, data);
 }
 
+export function deleteTool(id: string): Promise<void> {
+  return deleteToolFromSupabase(id);
+}
+
 export function listKnowledgeBases(): Promise<KnowledgeBase[]> {
   return listKnowledgeBasesFromSupabase();
 }
 
 export function createKnowledgeBase(data: Pick<KnowledgeBase, "name" | "description">): Promise<KnowledgeBase> {
   return createKnowledgeBaseInSupabase(data);
+}
+
+export function deleteKnowledgeBase(id: string): Promise<void> {
+  return deleteKnowledgeBaseFromSupabase(id);
 }
 
 export function listKnowledgeDocuments(knowledgeBaseId: string): Promise<KnowledgeDocument[]> {
@@ -587,6 +595,13 @@ async function updateToolInSupabase(id: string, data: ToolDefinitionInput): Prom
   return updated as ToolDefinition;
 }
 
+async function deleteToolFromSupabase(id: string): Promise<void> {
+  assertSupabaseConfigured();
+  const userId = await requireCurrentUserId();
+  const { error } = await supabase.from("agent_tools").delete().eq("id", id).eq("user_id", userId);
+  throwIfSupabaseError(error);
+}
+
 async function listKnowledgeBasesFromSupabase(): Promise<KnowledgeBase[]> {
   assertSupabaseConfigured();
   const userId = await requireCurrentUserId();
@@ -611,6 +626,13 @@ async function createKnowledgeBaseInSupabase(
     .single();
   throwIfSupabaseError(error);
   return created as KnowledgeBase;
+}
+
+async function deleteKnowledgeBaseFromSupabase(id: string): Promise<void> {
+  assertSupabaseConfigured();
+  await requireCurrentUserId();
+  const { error } = await supabase.rpc("delete_knowledge_base_for_user", { p_kb_id: id });
+  throwIfSupabaseError(error);
 }
 
 async function listKnowledgeDocumentsFromSupabase(knowledgeBaseId: string): Promise<KnowledgeDocument[]> {
@@ -653,7 +675,7 @@ async function ingestKnowledgeDocumentWithEdgeFunction(
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `Edge Function failed with ${response.status}`);
+    throw new Error(payload.error || `Document upload failed (${response.status}). Please try again.`);
   }
   if (payload?.error) {
     throw new Error(String(payload.error));
@@ -676,7 +698,7 @@ async function answerKnowledgeQuestionWithEdgeFunction(
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error || `Edge Function failed with ${response.status}`);
+    throw new Error(payload.error || `Could not get an answer (${response.status}). Please try again.`);
   }
   if (payload?.error) {
     throw new Error(String(payload.error));

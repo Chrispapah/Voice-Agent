@@ -156,7 +156,6 @@ export default function AgentsPage() {
 
   return (
     <div className="flex flex-1 min-h-0">
-      {/* Folders rail */}
       <aside className={`${isSidebarCollapsed ? "hidden" : "hidden lg:flex"} flex-col w-64 border-r border-border bg-surface-muted/40 p-4 gap-3`}>
         <div className="flex items-center justify-between">
           <button
@@ -263,7 +262,6 @@ export default function AgentsPage() {
       </aside>
 
       <div className="flex-1 min-w-0 flex flex-col">
-        {/* Header */}
         <header className="flex items-center justify-between gap-4 px-8 py-5 border-b border-border">
           <div className="flex items-center gap-2">
             {isSidebarCollapsed && (
@@ -302,7 +300,6 @@ export default function AgentsPage() {
           </div>
         </header>
 
-        {/* Table */}
         <div className="flex-1 overflow-auto px-8 py-6">
           {error && (
             <div className="mb-4 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive">

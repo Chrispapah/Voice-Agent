@@ -340,13 +340,13 @@ function KnowledgeBaseSelector({
     <div className="rounded-lg border border-border bg-surface-muted/30 p-3">
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold">
-          <BookOpen className="h-4 w-4" /> Knowledge Base
+          <BookOpen className="h-4 w-4" /> Knowledge bases
         </div>
         <Link to="/knowledge-base" className="text-xs text-primary hover:underline">Manage KBs</Link>
       </div>
       {knowledgeBases.length === 0 ? (
         <p className="text-xs text-muted-foreground">
-          No knowledge bases yet. Create one from the Knowledge Base menu, then attach it here.
+          No knowledge bases yet. Create one from the Knowledge bases page, then attach it here.
         </p>
       ) : (
         <div className="space-y-2">

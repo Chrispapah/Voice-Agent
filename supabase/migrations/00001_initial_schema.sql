@@ -55,7 +55,6 @@ CREATE TABLE public.bot_configs (
   twilio_account_sid text,
   twilio_auth_token text,
   twilio_phone_number character varying,
-  initial_greeting text NOT NULL DEFAULT 'Hi, this is John — I know I''m calling out of the blue. Do you have 30 seconds so I can tell you why I''m reaching out?'::text,
   max_call_turns integer NOT NULL DEFAULT 12,
   max_objection_attempts integer NOT NULL DEFAULT 2,
   max_qualify_attempts integer NOT NULL DEFAULT 3,

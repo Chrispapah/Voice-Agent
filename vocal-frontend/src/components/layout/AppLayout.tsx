@@ -12,7 +12,7 @@ const nav = [
     label: "BUILD",
     items: [
       { to: "/agents", label: "Agents", icon: Bot },
-      { to: "/knowledge-base", label: "Knowledge Base", icon: BookOpen },
+      { to: "/knowledge-base", label: "Knowledge bases", icon: BookOpen },
       { to: "/tools", label: "Tools", icon: Wrench },
     ],
   },

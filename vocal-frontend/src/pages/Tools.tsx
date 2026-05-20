@@ -1,10 +1,21 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ChevronLeft, Plus, Wrench } from "lucide-react";
+import { ChevronLeft, Plus, Trash2, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   AuthRequiredError,
   createTool,
+  deleteTool,
   listTools,
   updateTool,
   type ToolDefinition,
@@ -22,8 +33,10 @@ export default function ToolsPage() {
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
+  const [toolPendingDelete, setToolPendingDelete] = useState<ToolDefinition | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<ToolDefinitionKind>("http");
@@ -106,6 +119,28 @@ export default function ToolsPage() {
     }
   }
 
+  async function confirmDeleteTool() {
+    if (!toolPendingDelete) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await deleteTool(toolPendingDelete.id);
+      setTools((current) => current.filter((t) => t.id !== toolPendingDelete.id));
+      if (selectedToolId === toolPendingDelete.id) {
+        resetForm();
+      }
+      setToolPendingDelete(null);
+    } catch (err: unknown) {
+      if (err instanceof AuthRequiredError) {
+        navigate("/auth");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to delete tool");
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="flex flex-1 min-h-0">
       <aside className="hidden lg:flex flex-col w-72 border-r border-border bg-surface-muted/40">
@@ -130,22 +165,34 @@ export default function ToolsPage() {
             </div>
           )}
           {tools.map((tool) => (
-            <button
+            <div
               key={tool.id}
-              type="button"
-              onClick={() => selectTool(tool)}
-              className={`w-full rounded-lg border px-3 py-2 text-left transition hover:border-primary/50 hover:bg-primary/5 ${
+              className={`flex gap-1 rounded-lg border p-1 transition ${
                 selectedToolId === tool.id ? "border-primary bg-primary/10" : "border-border bg-card"
               }`}
             >
-              <div className="text-sm font-medium">{tool.name}</div>
-              <div className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">{tool.kind}</div>
-            </button>
+              <button
+                type="button"
+                onClick={() => selectTool(tool)}
+                className="min-w-0 flex-1 rounded-md px-2 py-2 text-left hover:bg-primary/5"
+              >
+                <div className="text-sm font-medium truncate">{tool.name}</div>
+                <div className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">{tool.kind}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolPendingDelete(tool)}
+                className="shrink-0 self-center rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                aria-label={`Delete ${tool.name}`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
           ))}
         </div>
       </aside>
 
-      <div className="flex-1 overflow-auto px-8 py-6">
+      <div className="flex-1 overflow-auto px-4 py-5 sm:px-8 sm:py-6">
         <div className="mx-auto max-w-3xl">
           <button
             type="button"
@@ -155,20 +202,68 @@ export default function ToolsPage() {
             <ChevronLeft className="w-4 h-4" /> Back to agents
           </button>
 
-          <div className="rounded-xl border border-border bg-card p-6 shadow-soft">
+          <div className="lg:hidden mb-4 space-y-2">
+            <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">SELECT TOOL</label>
+            <div className="flex gap-2">
+              <select
+                value={selectedToolId ?? ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) {
+                    resetForm();
+                    return;
+                  }
+                  const tool = tools.find((t) => t.id === id);
+                  if (tool) selectTool(tool);
+                }}
+                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                disabled={loading || tools.length === 0}
+              >
+                <option value="">New tool</option>
+                {tools.map((tool) => (
+                  <option key={tool.id} value={tool.id}>
+                    {tool.name}
+                  </option>
+                ))}
+              </select>
+              <Button type="button" size="icon" variant="outline" className="shrink-0" onClick={resetForm} aria-label="New tool">
+                <Plus className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card p-5 sm:p-6 shadow-soft">
             <div className="mb-5 flex items-start gap-3">
               <div className="rounded-xl bg-gradient-soft p-3">
                 <Wrench className="h-5 w-5 text-primary" />
               </div>
-              <div>
-                <h1 className="text-xl font-semibold tracking-tight">
-                  {selectedToolId ? "Edit tool" : "Tools"}
-                </h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {selectedToolId
-                    ? "Update this reusable tool, then attach it to a single prompt agent or individual flow nodes."
-                    : "Define reusable tools here, then attach them to a single prompt agent or individual flow nodes."}
-                </p>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h1 className="text-xl font-semibold tracking-tight">
+                      {selectedToolId ? "Edit tool" : "Create tool"}
+                    </h1>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {selectedToolId
+                        ? "Update this tool, then attach it to a single-prompt agent or flow nodes."
+                        : "Define reusable tools, then attach them to agents or flow nodes."}
+                    </p>
+                  </div>
+                  {selectedToolId && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => {
+                        const tool = tools.find((t) => t.id === selectedToolId);
+                        if (tool) setToolPendingDelete(tool);
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4" /> Delete
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -212,7 +307,7 @@ export default function ToolsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">ENDPOINT PLACEHOLDER</label>
+                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">ENDPOINT URL</label>
                   <input
                     value={endpoint}
                     onChange={(e) => setEndpoint(e.target.value)}
@@ -221,7 +316,7 @@ export default function ToolsPage() {
                   />
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button
                   type="submit"
                   size="sm"
@@ -247,6 +342,32 @@ export default function ToolsPage() {
           </div>
         </div>
       </div>
+
+      <AlertDialog open={!!toolPendingDelete} onOpenChange={(open) => !open && setToolPendingDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this tool?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {toolPendingDelete
+                ? `“${toolPendingDelete.name}” will be removed. Agents or flows that still reference this tool ID may need to be updated.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDeleteTool();
+              }}
+              disabled={deleting}
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
