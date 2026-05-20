@@ -77,14 +77,16 @@ def _elevenlabs_stream_url_and_json(
     return url, body
 
 
-def _deepgram_listen_url(*, model: str, language: str) -> str:
+def _deepgram_listen_url(*, model: str, language: str, endpointing_ms: int) -> str:
+    # Deepgram accepts ~10–5000 ms; clamp so env mistakes cannot break the socket.
+    ep = max(10, min(2000, int(endpointing_ms)))
     params = {
         "model": model,
         "language": language,
         "smart_format": "true",
         "interim_results": "true",
         # ms of silence before Deepgram finalizes; lower = faster end-of-utterance (more false cuts).
-        "endpointing": "200",
+        "endpointing": str(ep),
         "vad_events": "true",
     }
     return "wss://api.deepgram.com/v1/listen?" + urlencode(params)
@@ -438,7 +440,12 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
         language = normalize_deepgram_language_code(str(bot_cfg_merged.get("deepgram_language") or "el"))
         model = resolve_web_voice_deepgram_model(str(bot_cfg_merged.get("deepgram_model") or "nova-2"))
         model = prefer_nova3_for_greek_browser_stt(model, language)
-        uri = _deepgram_listen_url(model=model, language=language)
+        voice_settings = get_settings()
+        uri = _deepgram_listen_url(
+            model=model,
+            language=language,
+            endpointing_ms=voice_settings.deepgram_vad_threshold_ms,
+        )
         dg_timeout = aiohttp.ClientTimeout(total=None, connect=30, sock_connect=30, sock_read=None)
         try:
             # aiohttp WebSocket: avoids fragile interactions between the `websockets` package,

@@ -47,13 +47,14 @@ class SDRSettings(BaseSettings):
     deepgram_language: str = "el"
     deepgram_model: str = "nova-2"
     # Endpointing: lower = final transcript sooner after a pause (more false end-of-turn / mid-sentence cuts).
-    # Deepgram URL "endpointing" = vad_threshold_ms; time/punctuation = Vocode fallbacks when speech_final lags.
+    # This value drives (1) Vocode vad_threshold_ms on Twilio and (2) Deepgram Live ``endpointing`` (ms) for browser voice.
+    # time/punctuation = Vocode fallbacks when speech_final lags.
     # utterance_cutoff_ms → Deepgram utterance_end_ms (Vocode enforces ≥1000). Higher = more tolerance for
-    # pauses within a thought; 2000ms has been a better default than 900ms on live calls.
-    deepgram_vad_threshold_ms: int = 80
-    deepgram_utterance_cutoff_ms: int = 2000
-    deepgram_time_cutoff_seconds: float = 0.08
-    deepgram_post_punctuation_time_seconds: float = 0.035
+    # pauses within a thought; lower = snappier turns at the cost of mid-phrase cuts.
+    deepgram_vad_threshold_ms: int = 55
+    deepgram_utterance_cutoff_ms: int = 1500
+    deepgram_time_cutoff_seconds: float = 0.05
+    deepgram_post_punctuation_time_seconds: float = 0.02
     deepgram_single_utterance_for_first_response: bool = True
     deepgram_mute_during_speech: bool = True
 
