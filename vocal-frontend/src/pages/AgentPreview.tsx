@@ -95,9 +95,7 @@ export default function AgentPreviewPage() {
       <main className="mx-auto flex min-h-screen max-w-4xl flex-col px-6 py-10">
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10">
-              <img src="/akoi-logo-no-back.png" alt="Akoi" className="h-7 w-7 object-contain" />
-            </div>
+            <img src="/akoi-logo-no-back.png" alt="Akoi" className="h-14 w-auto object-contain" />
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live AI Preview</div>
               <h1 className="text-2xl font-semibold">{preview?.title || "Agent preview"}</h1>
