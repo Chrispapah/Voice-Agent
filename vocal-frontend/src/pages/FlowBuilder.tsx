@@ -281,6 +281,29 @@ function speechRecognitionConstructor(): (new () => SpeechRecognitionLike) | nul
   return speechWindow.SpeechRecognition || speechWindow.webkitSpeechRecognition || null;
 }
 
+async function copyTextToClipboard(text: string): Promise<boolean> {
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      return document.execCommand("copy");
+    } catch {
+      return false;
+    } finally {
+      document.body.removeChild(textarea);
+    }
+  }
+}
+
 function ToolSelector({
   tools,
   selectedToolIds,
@@ -408,6 +431,7 @@ export default function FlowBuilderPage() {
   const [loading, setLoading] = useState(true);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [previewShareUrl, setPreviewShareUrl] = useState("");
   const [leads, setLeads] = useState<Lead[]>([]);
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
@@ -1015,13 +1039,22 @@ export default function FlowBuilderPage() {
   async function handleCopyLivePreview() {
     if (!botId) return;
     setError("");
+    setPreviewShareUrl("");
     try {
       await handleSave();
       const share = await createAgentPreviewShare(botId);
-      await navigator.clipboard.writeText(share.preview_url);
-      toast.success("Live preview link copied", {
-        description: "Send this link to a client so they can speak with the agent.",
-      });
+      setPreviewShareUrl(share.preview_url);
+      const copied = await copyTextToClipboard(share.preview_url);
+      if (copied) {
+        toast.success("Live preview link copied", {
+          description: "Send this link to a client so they can speak with the agent.",
+        });
+      } else {
+        setError("Live preview link created, but your browser blocked automatic copying. Copy the link below.");
+        toast.success("Live preview link created", {
+          description: "Copy the link shown on the page.",
+        });
+      }
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
         navigate("/auth");
@@ -1080,6 +1113,20 @@ export default function FlowBuilderPage() {
       {error && (
         <div className="border-b border-destructive/20 bg-destructive/10 px-5 py-2 text-sm text-destructive">
           {error}
+        </div>
+      )}
+      {previewShareUrl && (
+        <div className="flex items-center gap-2 border-b border-border bg-card px-5 py-2 text-sm">
+          <span className="shrink-0 text-muted-foreground">Live preview:</span>
+          <input
+            readOnly
+            value={previewShareUrl}
+            onFocus={(event) => event.currentTarget.select()}
+            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 font-mono text-xs outline-none"
+          />
+          <a href={previewShareUrl} target="_blank" rel="noreferrer" className="shrink-0 text-primary hover:underline">
+            Open
+          </a>
         </div>
       )}
 
