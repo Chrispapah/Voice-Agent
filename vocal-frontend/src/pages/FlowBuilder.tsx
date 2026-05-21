@@ -856,6 +856,11 @@ export default function FlowBuilderPage() {
 
   async function handleSave() {
     if (!bot) return;
+    const trimmedName = draftName.trim();
+    if (!trimmedName) {
+      setError("Agent name cannot be empty.");
+      return;
+    }
     setSaving(true);
     setStatus("");
     setError("");
@@ -865,7 +870,7 @@ export default function FlowBuilderPage() {
         Object.entries(nodeKnowledgeBaseIds).filter(([nodeId]) => activeNodeIds.has(nodeId)),
       );
       const saved = await updateBot(bot.id, {
-        name: draftName,
+        name: trimmedName,
         elevenlabs_voice_id: elevenlabsVoiceId.trim() || DEFAULT_ELEVENLABS_VOICE_ID,
         elevenlabs_model_id: elevenlabsModelId || "eleven_turbo_v2",
         deepgram_model: deepgramModel || "nova-2",
@@ -881,6 +886,7 @@ export default function FlowBuilderPage() {
         setNodeKnowledgeBaseAssignments(bot.id, activeNodeAssignments),
       ]);
       setBot(saved);
+      setDraftName(saved.name);
       setNodeKnowledgeBaseIds(activeNodeAssignments);
       setStatus("Published");
       setTimeout(() => setStatus(""), 2500);
@@ -1077,6 +1083,9 @@ export default function FlowBuilderPage() {
             <input
               value={draftName}
               onChange={(e) => setDraftName(e.target.value)}
+              aria-label="Agent name"
+              placeholder="Agent name"
+              maxLength={200}
               className="bg-transparent text-sm font-semibold outline-none"
             />
             <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
@@ -1133,6 +1142,21 @@ export default function FlowBuilderPage() {
       <div className="flex-1 flex min-h-0">
         <aside className="w-72 border-r border-border bg-surface flex flex-col">
           <div className="p-4 space-y-4 border-b border-border">
+            <div className="rounded-lg border border-border bg-card p-3">
+              <label className="flex items-center gap-1.5 text-xs font-medium">
+                <Bot className="h-3.5 w-3.5" /> Agent Name
+              </label>
+              <input
+                value={draftName}
+                onChange={(e) => setDraftName(e.target.value)}
+                placeholder="Agent name"
+                maxLength={200}
+                className="mt-2 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm"
+              />
+              <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                Rename the agent here, then publish to update the agents list and preview pages.
+              </p>
+            </div>
             <div className="rounded-lg border border-border bg-card p-3">
               <div className="mb-3 text-[11px] font-semibold text-muted-foreground tracking-wide">VOICE I/O PLACEHOLDERS</div>
               <div className="space-y-3">
