@@ -153,6 +153,8 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
             "http://127.0.0.1:8080",
             "http://localhost:3001",
             "http://localhost:3000",
+            "https://akoi.ai",
+            "https://www.akoi.ai",
             "https://voice-agent-zeta-tawny.vercel.app",
         ],
         allow_origin_regex=r"https://.*\.vercel\.app",
