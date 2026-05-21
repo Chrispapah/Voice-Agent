@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Bot, Mic, Square } from "lucide-react";
+import { Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   getPublicAgentPreview,
@@ -95,8 +95,8 @@ export default function AgentPreviewPage() {
       <main className="mx-auto flex min-h-screen max-w-4xl flex-col px-6 py-10">
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
-              <Bot className="h-5 w-5" />
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10">
+              <img src="/akoi-logo-no-back.png" alt="Akoi" className="h-7 w-7 object-contain" />
             </div>
             <div>
               <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Live AI Preview</div>
