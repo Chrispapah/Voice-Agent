@@ -1,4 +1,5 @@
 import { getOpenAIRealtimeVoiceSessionWebSocketUrl, resolveAccessToken } from "./api";
+import { formatMicrophoneError } from "./micErrors";
 import type { VoiceSessionCallbacks, VoiceSessionStartOptions } from "./voiceSession";
 
 type ServerJson =
@@ -251,7 +252,7 @@ export class OpenAIRealtimeVoiceSession {
       this.processor.connect(this.mutedGain);
       this.mutedGain.connect(ctx.destination);
     } catch (e) {
-      this.callbacks.onError?.(e instanceof Error ? e.message : "Microphone permission denied");
+      this.callbacks.onError?.(formatMicrophoneError(e));
     }
   }
 

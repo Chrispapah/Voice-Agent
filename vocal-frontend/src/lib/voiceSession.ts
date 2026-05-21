@@ -1,4 +1,5 @@
 import { getVoiceSessionWebSocketUrl, resolveAccessToken } from "./api";
+import { formatMicrophoneError } from "./micErrors";
 
 export type VoiceSessionCallbacks = {
   onReady?: (conversationId: string) => void;
@@ -259,7 +260,7 @@ export class VoiceSession {
       };
       this.recorder.start(250);
     } catch (e) {
-      this.callbacks.onError?.(e instanceof Error ? e.message : "Microphone permission denied");
+      this.callbacks.onError?.(formatMicrophoneError(e));
     }
   }
 
