@@ -12,6 +12,13 @@ export type VoiceSessionCallbacks = {
   onClose?: () => void;
 };
 
+export type VoiceSessionStartOptions = {
+  wsUrl: string;
+  authMessage?: Record<string, unknown> | null;
+  leadId: string;
+  conversationId?: string | null;
+};
+
 type ServerJson =
   | { type: "ready"; conversation_id: string }
   | { type: "transcript.partial"; text: string }
@@ -113,22 +120,32 @@ export class VoiceSession {
   }
 
   async start(botId: string, leadId: string, conversationId?: string | null): Promise<void> {
-    await this.stop();
     const token = await resolveAccessToken();
-    const url = getVoiceSessionWebSocketUrl(botId);
-    const ws = new WebSocket(url);
+    await this.startWithOptions({
+      wsUrl: getVoiceSessionWebSocketUrl(botId),
+      authMessage: { type: "auth", access_token: token },
+      leadId,
+      conversationId,
+    });
+  }
+
+  async startWithOptions(options: VoiceSessionStartOptions): Promise<void> {
+    await this.stop();
+    const ws = new WebSocket(options.wsUrl);
     this.ws = ws;
 
     await new Promise<void>((resolve, reject) => {
       const t = window.setTimeout(() => reject(new Error("WebSocket connect timeout")), 15000);
       ws.onopen = () => {
         window.clearTimeout(t);
-        ws.send(JSON.stringify({ type: "auth", access_token: token }));
+        if (options.authMessage) {
+          ws.send(JSON.stringify(options.authMessage));
+        }
         ws.send(
           JSON.stringify({
             type: "session.start",
-            lead_id: leadId,
-            conversation_id: conversationId ?? null,
+            lead_id: options.leadId,
+            conversation_id: options.conversationId ?? null,
           }),
         );
         resolve();

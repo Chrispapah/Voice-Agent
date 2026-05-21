@@ -92,6 +92,9 @@ class BotConfigRow(Base):
 
     leads: Mapped[list[LeadRow]] = relationship(back_populates="bot", cascade="all, delete-orphan")
     call_logs: Mapped[list[CallLogRow]] = relationship(back_populates="bot", cascade="all, delete-orphan")
+    preview_shares: Mapped[list[AgentPreviewShareRow]] = relationship(
+        back_populates="bot", cascade="all, delete-orphan"
+    )
 
     def to_config_dict(self) -> dict:
         """Return a plain dict suitable for embedding in ConversationState."""
@@ -190,6 +193,24 @@ class ConversationShareRow(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
 
     call_log: Mapped[CallLogRow] = relationship(back_populates="shares")
+
+
+class AgentPreviewShareRow(Base):
+    __tablename__ = "agent_preview_shares"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_new_uuid)
+    bot_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bot_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    max_sessions: Mapped[int] = mapped_column(Integer, default=100)
+    session_count: Mapped[int] = mapped_column(Integer, default=0)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
+    welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    bot: Mapped[BotConfigRow] = relationship(back_populates="preview_shares")
 
 
 class SessionRow(Base):

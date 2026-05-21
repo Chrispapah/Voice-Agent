@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { PhoneCall, Calendar, Filter, Upload, History, Share2 } from "lucide-react";
+import { PhoneCall, Calendar, Filter, Upload, History } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { toast } from "@/components/ui/sonner";
-import { AuthRequiredError, createConversationShare, listCalls, type CallLog } from "@/lib/api";
+import { AuthRequiredError, listCalls, type CallLog } from "@/lib/api";
 
 const dot = (color: string) => <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${color}`} />;
 
@@ -27,7 +26,6 @@ export default function CallHistoryPage() {
   const [calls, setCalls] = useState<CallLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [sharingCallId, setSharingCallId] = useState<string | null>(null);
 
   useEffect(() => {
     listCalls()
@@ -52,30 +50,6 @@ export default function CallHistoryPage() {
       })),
     [calls],
   );
-
-  const shareConversation = async (call: CallLog) => {
-    if (!call.transcript?.length) {
-      toast.info("No transcript yet", { description: "Only conversations with transcript turns can be shared." });
-      return;
-    }
-
-    setSharingCallId(call.id);
-    try {
-      const share = await createConversationShare(call.id);
-      await navigator.clipboard.writeText(share.preview_url);
-      toast.success("Preview link copied", { description: "You can send this read-only link to your client." });
-    } catch (err: unknown) {
-      if (err instanceof AuthRequiredError) {
-        navigate("/auth");
-        return;
-      }
-      toast.error("Could not create preview link", {
-        description: err instanceof Error ? err.message : "Please try again.",
-      });
-    } finally {
-      setSharingCallId(null);
-    }
-  };
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -104,7 +78,7 @@ export default function CallHistoryPage() {
         <table className="w-full text-sm">
           <thead className="bg-surface-muted/60 text-muted-foreground sticky top-0">
             <tr className="text-left">
-              {["Time","Duration","Conversation ID","Lead ID","Outcome","Meeting Booked","Proposed Slot","Follow-Up Action","Transcript Turns","Preview Link"].map(h => (
+              {["Time","Duration","Conversation ID","Lead ID","Outcome","Meeting Booked","Proposed Slot","Follow-Up Action","Transcript Turns"].map(h => (
                 <th key={h} className="px-4 py-3 font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -112,14 +86,14 @@ export default function CallHistoryPage() {
           <tbody>
             {loading && (
               <tr>
-                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={10}>
+                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={9}>
                   Loading call history...
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={10}>
+                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={9}>
                   No call logs yet. Test conversations and completed calls will appear here.
                 </td>
               </tr>
@@ -136,19 +110,6 @@ export default function CallHistoryPage() {
                   <td className="px-4 py-3">{r.proposed_slot || "-"}</td>
                   <td className="px-4 py-3">{r.follow_up_action || "-"}</td>
                   <td className="px-4 py-3">{r.transcriptCount}</td>
-                  <td className="px-4 py-3">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      disabled={sharingCallId === r.id || r.transcriptCount === 0}
-                      onClick={() => void shareConversation(r)}
-                    >
-                      <Share2 className="w-3.5 h-3.5" />
-                      {sharingCallId === r.id ? "Creating..." : "Copy"}
-                    </Button>
-                  </td>
                 </tr>
               ))}
           </tbody>

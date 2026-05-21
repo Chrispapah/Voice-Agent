@@ -229,6 +229,35 @@ export interface ConversationShare {
   preview_url: string;
 }
 
+export interface AgentPreviewShare {
+  id: string;
+  bot_id: string;
+  created_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  max_sessions: number;
+  session_count: number;
+  token: string;
+  preview_path: string;
+  preview_url: string;
+}
+
+export interface PublicAgentPreview {
+  id: string;
+  agent_name: string;
+  title: string;
+  welcome_message: string;
+  voice_provider: BotConfig["voice_provider"];
+  expires_at: string | null;
+  remaining_sessions: number;
+}
+
+export interface PublicAgentPreviewSession {
+  lead_id: string;
+  conversation_id: string | null;
+  voice_provider: BotConfig["voice_provider"];
+}
+
 export interface PublicConversationPreview {
   share: {
     id: string;
@@ -507,6 +536,34 @@ export function createConversationShare(callLogId: string): Promise<Conversation
   });
 }
 
+export function createAgentPreviewShare(botId: string): Promise<AgentPreviewShare> {
+  return apiRequest<AgentPreviewShare>(`/api/bots/${botId}/agent-preview-share`, {
+    method: "POST",
+    body: JSON.stringify({ expires_in_days: 30, max_sessions: 100 }),
+  });
+}
+
+export async function getPublicAgentPreview(token: string): Promise<PublicAgentPreview> {
+  const res = await fetch(`${API_BASE}/api/public/agent-previews/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Preview unavailable (${res.status})`);
+  }
+  return res.json();
+}
+
+export async function startPublicAgentPreviewSession(token: string): Promise<PublicAgentPreviewSession> {
+  const res = await fetch(`${API_BASE}/api/public/agent-previews/${encodeURIComponent(token)}/session`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Could not start preview (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function getPublicConversationPreview(token: string): Promise<PublicConversationPreview> {
   const res = await fetch(`${API_BASE}/api/public/conversation-previews/${encodeURIComponent(token)}`);
   if (!res.ok) {
@@ -514,6 +571,36 @@ export async function getPublicConversationPreview(token: string): Promise<Publi
     throw new Error(body.detail || `Preview unavailable (${res.status})`);
   }
   return res.json();
+}
+
+export function getPublicPreviewVoiceWebSocketUrl(token: string): string {
+  const trimmed = API_BASE.trim().replace(/\/$/, "");
+  const wsBase = trimmed.startsWith("https://")
+    ? `wss://${trimmed.slice("https://".length)}`
+    : trimmed.startsWith("http://")
+      ? `ws://${trimmed.slice("http://".length)}`
+      : trimmed;
+  return `${wsBase}/api/public/agent-previews/${encodeURIComponent(token)}/voice-session`;
+}
+
+export function getPublicPreviewOpenAIRealtimeVoiceWebSocketUrl(token: string): string {
+  const trimmed = API_BASE.trim().replace(/\/$/, "");
+  const wsBase = trimmed.startsWith("https://")
+    ? `wss://${trimmed.slice("https://".length)}`
+    : trimmed.startsWith("http://")
+      ? `ws://${trimmed.slice("http://".length)}`
+      : trimmed;
+  return `${wsBase}/api/public/agent-previews/${encodeURIComponent(token)}/voice-session/openai-realtime`;
+}
+
+export function getPublicPreviewOpenAIRealtimeElevenLabsVoiceWebSocketUrl(token: string): string {
+  const trimmed = API_BASE.trim().replace(/\/$/, "");
+  const wsBase = trimmed.startsWith("https://")
+    ? `wss://${trimmed.slice("https://".length)}`
+    : trimmed.startsWith("http://")
+      ? `ws://${trimmed.slice("http://".length)}`
+      : trimmed;
+  return `${wsBase}/api/public/agent-previews/${encodeURIComponent(token)}/voice-session/openai-realtime-elevenlabs`;
 }
 
 async function listBotsFromSupabase(): Promise<BotConfig[]> {

@@ -29,6 +29,7 @@ import {
   Plus,
   Save,
   Send,
+  Share2,
   Sparkles,
   Square,
   Trash2,
@@ -49,6 +50,7 @@ import {
   listTools,
   type ToolDefinition,
   AuthRequiredError,
+  createAgentPreviewShare,
   listKnowledgeBases,
   listBotKnowledgeBaseIds,
   listNodeKnowledgeBaseAssignments,
@@ -56,6 +58,7 @@ import {
   setNodeKnowledgeBaseAssignments,
   type KnowledgeBase,
 } from "@/lib/api";
+import { toast } from "@/components/ui/sonner";
 import { OpenAIRealtimeElevenLabsVoiceSession } from "@/lib/openAIRealtimeElevenLabsVoiceSession";
 import { OpenAIRealtimeVoiceSession } from "@/lib/openAIRealtimeVoiceSession";
 import { VoiceSession, type VoiceSessionCallbacks } from "@/lib/voiceSession";
@@ -1009,6 +1012,25 @@ export default function FlowBuilderPage() {
     }
   }
 
+  async function handleCopyLivePreview() {
+    if (!botId) return;
+    setError("");
+    try {
+      await handleSave();
+      const share = await createAgentPreviewShare(botId);
+      await navigator.clipboard.writeText(share.preview_url);
+      toast.success("Live preview link copied", {
+        description: "Send this link to a client so they can speak with the agent.",
+      });
+    } catch (err: unknown) {
+      if (err instanceof AuthRequiredError) {
+        navigate("/auth");
+        return;
+      }
+      setError(err instanceof Error ? err.message : "Failed to create live preview link");
+    }
+  }
+
   if (loading) {
     return <div className="flex h-screen items-center justify-center text-muted-foreground">Loading agent...</div>;
   }
@@ -1458,6 +1480,9 @@ export default function FlowBuilderPage() {
                   )}
                   <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing || voiceActive || voiceConnecting}>
                     {sessionId ? "Restart" : "Start"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => void handleCopyLivePreview()} disabled={voiceActive || voiceConnecting}>
+                    <Share2 className="w-3.5 h-3.5 mr-1" /> Share Live Preview
                   </Button>
                   {!voiceActive ? (
                     <Button variant="outline" size="sm" onClick={() => void handleStartVoice()} disabled={voiceConnecting || testing}>
