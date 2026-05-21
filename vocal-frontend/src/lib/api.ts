@@ -388,9 +388,19 @@ async function requireCurrentUserId(): Promise<string> {
   return user.id;
 }
 
+async function fetchApi(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(`${API_BASE}${path}`, init);
+  } catch {
+    throw new Error(
+      `Could not reach the backend at ${API_BASE}. Make sure the FastAPI server is running and VITE_API_URL points to it.`,
+    );
+  }
+}
+
 async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const accessToken = await requireAccessToken();
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetchApi(path, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -544,7 +554,7 @@ export function createAgentPreviewShare(botId: string): Promise<AgentPreviewShar
 }
 
 export async function getPublicAgentPreview(token: string): Promise<PublicAgentPreview> {
-  const res = await fetch(`${API_BASE}/api/public/agent-previews/${encodeURIComponent(token)}`);
+  const res = await fetchApi(`/api/public/agent-previews/${encodeURIComponent(token)}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Preview unavailable (${res.status})`);
@@ -553,7 +563,7 @@ export async function getPublicAgentPreview(token: string): Promise<PublicAgentP
 }
 
 export async function startPublicAgentPreviewSession(token: string): Promise<PublicAgentPreviewSession> {
-  const res = await fetch(`${API_BASE}/api/public/agent-previews/${encodeURIComponent(token)}/session`, {
+  const res = await fetchApi(`/api/public/agent-previews/${encodeURIComponent(token)}/session`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -565,7 +575,7 @@ export async function startPublicAgentPreviewSession(token: string): Promise<Pub
 }
 
 export async function getPublicConversationPreview(token: string): Promise<PublicConversationPreview> {
-  const res = await fetch(`${API_BASE}/api/public/conversation-previews/${encodeURIComponent(token)}`);
+  const res = await fetchApi(`/api/public/conversation-previews/${encodeURIComponent(token)}`);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Preview unavailable (${res.status})`);
