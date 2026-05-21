@@ -218,6 +218,36 @@ export interface CallLog {
   follow_up_action: string | null;
 }
 
+export interface ConversationShare {
+  id: string;
+  call_log_id: string;
+  created_at: string | null;
+  expires_at: string | null;
+  revoked_at: string | null;
+  token: string;
+  preview_path: string;
+  preview_url: string;
+}
+
+export interface PublicConversationPreview {
+  share: {
+    id: string;
+    created_at: string | null;
+    expires_at: string | null;
+  };
+  conversation: {
+    conversation_id: string;
+    agent_name: string;
+    started_at: string | null;
+    completed_at: string | null;
+    call_outcome: string;
+    transcript: { role: string; content: string }[];
+    meeting_booked: boolean;
+    proposed_slot: string | null;
+    follow_up_action: string | null;
+  };
+}
+
 export interface AgentsPageData {
   agents: AgentListItem[];
   folders: AgentFolder[];
@@ -468,6 +498,22 @@ export function createLead(botId: string, data: Omit<Lead, "id" | "bot_id" | "li
 
 export function listCalls(): Promise<CallLog[]> {
   return listCallsFromSupabase();
+}
+
+export function createConversationShare(callLogId: string): Promise<ConversationShare> {
+  return apiRequest<ConversationShare>(`/api/call-logs/${callLogId}/share`, {
+    method: "POST",
+    body: JSON.stringify({ expires_in_days: 30 }),
+  });
+}
+
+export async function getPublicConversationPreview(token: string): Promise<PublicConversationPreview> {
+  const res = await fetch(`${API_BASE}/api/public/conversation-previews/${encodeURIComponent(token)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || `Preview unavailable (${res.status})`);
+  }
+  return res.json();
 }
 
 async function listBotsFromSupabase(): Promise<BotConfig[]> {

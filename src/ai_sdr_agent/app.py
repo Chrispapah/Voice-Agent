@@ -22,6 +22,7 @@ from ai_sdr_agent.db.engine import init_db
 from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDependencies
 from ai_sdr_agent.routers import (
     bots_router,
+    conversation_shares_router,
     hybrid_voice_router,
     openai_realtime_voice_router,
     test_sessions_router,
@@ -170,6 +171,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
 
     # ── AI engine router (authenticated via Supabase JWT) ──────────
     app.include_router(bots_router)
+    app.include_router(conversation_shares_router)
     app.include_router(test_sessions_router)
     app.include_router(hybrid_voice_router)
     app.include_router(openai_realtime_voice_router)

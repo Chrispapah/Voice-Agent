@@ -173,6 +173,23 @@ class CallLogRow(Base):
     follow_up_action: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     bot: Mapped[BotConfigRow] = relationship(back_populates="call_logs")
+    shares: Mapped[list[ConversationShareRow]] = relationship(back_populates="call_log", cascade="all, delete-orphan")
+
+
+class ConversationShareRow(Base):
+    __tablename__ = "conversation_shares"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=_new_uuid)
+    call_log_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("call_logs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    call_log: Mapped[CallLogRow] = relationship(back_populates="shares")
 
 
 class SessionRow(Base):

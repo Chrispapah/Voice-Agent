@@ -19,6 +19,7 @@ import ChatHistoryPage from "./pages/ChatHistory.tsx";
 import QualityPage from "./pages/Quality.tsx";
 import AlertingPage from "./pages/Alerting.tsx";
 import SettingsPage from "./pages/Settings.tsx";
+import ConversationPreviewPage from "./pages/ConversationPreview.tsx";
 import AppLayout from "./components/layout/AppLayout.tsx";
 
 const queryClient = new QueryClient();
@@ -31,6 +32,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/auth" element={<AuthPage />} />
+          <Route path="/preview/conversation/:token" element={<ConversationPreviewPage />} />
           <Route element={<AppLayout />}>
             <Route path="/" element={<AgentsPage />} />
             <Route path="/agents" element={<AgentsPage />} />
