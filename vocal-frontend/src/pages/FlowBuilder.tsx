@@ -420,6 +420,11 @@ export default function FlowBuilderPage() {
   const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState(DEFAULT_OPENAI_REALTIME_MODEL);
   const [openAIRealtimeVoice, setOpenAIRealtimeVoice] = useState("alloy");
   const [openAIRealtimeInstructions, setOpenAIRealtimeInstructions] = useState("");
+  const [kbMatchCount, setKbMatchCount] = useState(5);
+  const [kbMinSimilarity, setKbMinSimilarity] = useState(0.2);
+  const [kbEmbeddingModel, setKbEmbeddingModel] = useState("text-embedding-3-small");
+  const [kbMaxContextChars, setKbMaxContextChars] = useState(6000);
+  const [kbMaxToolIterations, setKbMaxToolIterations] = useState(2);
   const [spec, setSpec] = useState<ConversationSpecV1>(defaultGraphConversationSpec());
   const [mode, setMode] = useState<BuilderMode>("graph");
   const [entryNodeId, setEntryNodeId] = useState("welcome");
@@ -548,6 +553,11 @@ export default function FlowBuilderPage() {
         setOpenAIRealtimeModel(normalizeOpenAIRealtimeModel(loadedBot.openai_realtime_model));
         setOpenAIRealtimeVoice(loadedBot.openai_realtime_voice || "alloy");
         setOpenAIRealtimeInstructions(loadedBot.openai_realtime_instructions || "");
+        setKbMatchCount(loadedBot.kb_match_count ?? 5);
+        setKbMinSimilarity(loadedBot.kb_min_similarity ?? 0.2);
+        setKbEmbeddingModel(loadedBot.kb_embedding_model || "text-embedding-3-small");
+        setKbMaxContextChars(loadedBot.kb_max_context_chars ?? 6000);
+        setKbMaxToolIterations(loadedBot.kb_max_tool_iterations ?? 2);
         setSpec(loadedSpec);
         setMode(inferMode(loadedSpec));
         setEntryNodeId(loadedSpec.entry_node_id || loadedSpec.nodes?.[0]?.id || "welcome");
@@ -882,6 +892,11 @@ export default function FlowBuilderPage() {
         openai_realtime_model: normalizeOpenAIRealtimeModel(openAIRealtimeModel),
         openai_realtime_voice: openAIRealtimeVoice.trim() || "alloy",
         openai_realtime_instructions: openAIRealtimeInstructions.trim() || null,
+        kb_match_count: Math.min(20, Math.max(1, Math.round(kbMatchCount || 5))),
+        kb_min_similarity: Math.min(1, Math.max(0, Number(kbMinSimilarity ?? 0.2))),
+        kb_embedding_model: kbEmbeddingModel.trim() || "text-embedding-3-small",
+        kb_max_context_chars: Math.min(20000, Math.max(500, Math.round(kbMaxContextChars || 6000))),
+        kb_max_tool_iterations: Math.min(4, Math.max(1, Math.round(kbMaxToolIterations || 2))),
         conversation_spec: spec,
       });
       await Promise.all([
@@ -1256,6 +1271,74 @@ export default function FlowBuilderPage() {
                   Provider keys stay in Settings; OpenAI Realtime keeps graph prompts, tools, and KB logic on the server.
                 </p>
               </div>
+            </div>
+            <div className="rounded-lg border border-border bg-card p-3">
+              <div className="mb-3 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground tracking-wide">
+                <BookOpen className="h-3.5 w-3.5" /> KNOWLEDGE BASE SETTINGS
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-medium text-muted-foreground">VECTOR MATCHES</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    step={1}
+                    value={kbMatchCount}
+                    onChange={(e) => setKbMatchCount(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-muted-foreground">MIN SIMILARITY</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={kbMinSimilarity}
+                    onChange={(e) => setKbMinSimilarity(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-muted-foreground">MAX CONTEXT CHARS</label>
+                  <input
+                    type="number"
+                    min={500}
+                    max={20000}
+                    step={500}
+                    value={kbMaxContextChars}
+                    onChange={(e) => setKbMaxContextChars(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-medium text-muted-foreground">MAX TOOL CALLS / TURN</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={4}
+                    step={1}
+                    value={kbMaxToolIterations}
+                    onChange={(e) => setKbMaxToolIterations(Number(e.target.value))}
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-[10px] font-medium text-muted-foreground">EMBEDDING MODEL</label>
+                  <input
+                    value={kbEmbeddingModel}
+                    onChange={(e) => setKbEmbeddingModel(e.target.value)}
+                    placeholder="text-embedding-3-small"
+                    className="mt-1 w-full rounded-lg border border-border bg-background px-2 py-1.5 text-xs"
+                  />
+                </div>
+              </div>
+              <p className="mt-2 text-[10px] leading-snug text-muted-foreground">
+                Tunes the LLM tool-call retrieval at turn time. The embedding model must be 1536-dim and
+                match how your documents were ingested — changing it without re-ingestion will return no matches.
+              </p>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button

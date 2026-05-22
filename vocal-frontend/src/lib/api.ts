@@ -56,6 +56,11 @@ export interface BotConfig {
   prompt_booking: string | null;
   prompt_wrapup: string | null;
   conversation_spec?: ConversationSpecV1 | null;
+  kb_match_count: number;
+  kb_min_similarity: number;
+  kb_embedding_model: string;
+  kb_max_context_chars: number;
+  kb_max_tool_iterations: number;
   created_at: string | null;
   updated_at: string | null;
 }

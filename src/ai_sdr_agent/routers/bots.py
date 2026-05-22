@@ -65,6 +65,11 @@ _BOT_UPDATE_FIELDS = {
     "prompt_booking",
     "prompt_wrapup",
     "conversation_spec",
+    "kb_match_count",
+    "kb_min_similarity",
+    "kb_embedding_model",
+    "kb_max_context_chars",
+    "kb_max_tool_iterations",
 }
 
 
@@ -109,6 +114,11 @@ class BotUpdateRequest(BaseModel):
     prompt_booking: str | None = None
     prompt_wrapup: str | None = None
     conversation_spec: dict[str, Any] | None = None
+    kb_match_count: int | None = Field(default=None, ge=1, le=20)
+    kb_min_similarity: float | None = Field(default=None, ge=0, le=1)
+    kb_embedding_model: str | None = Field(default=None, min_length=1, max_length=100)
+    kb_max_context_chars: int | None = Field(default=None, ge=500, le=20000)
+    kb_max_tool_iterations: int | None = Field(default=None, ge=1, le=4)
 
 
 class LeadCreateRequest(BaseModel):
@@ -167,6 +177,11 @@ def _public_bot(row: BotConfigRow) -> dict[str, Any]:
         "prompt_booking": row.prompt_booking,
         "prompt_wrapup": row.prompt_wrapup,
         "conversation_spec": row.conversation_spec,
+        "kb_match_count": row.kb_match_count,
+        "kb_min_similarity": row.kb_min_similarity,
+        "kb_embedding_model": row.kb_embedding_model,
+        "kb_max_context_chars": row.kb_max_context_chars,
+        "kb_max_tool_iterations": row.kb_max_tool_iterations,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }

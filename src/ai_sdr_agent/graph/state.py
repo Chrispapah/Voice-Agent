@@ -62,6 +62,11 @@ class BotConfigDict(TypedDict, total=False):
     prompt_booking: str | None
     prompt_wrapup: str | None
     conversation_spec: dict[str, Any] | None
+    kb_match_count: int
+    kb_min_similarity: float
+    kb_embedding_model: str
+    kb_max_context_chars: int
+    kb_max_tool_iterations: int
 
 
 class ConversationState(TypedDict):
@@ -132,6 +137,11 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "prompt_booking": None,
     "prompt_wrapup": None,
     "conversation_spec": None,
+    "kb_match_count": 5,
+    "kb_min_similarity": 0.2,
+    "kb_embedding_model": "text-embedding-3-small",
+    "kb_max_context_chars": 6000,
+    "kb_max_tool_iterations": 2,
 }
 
 

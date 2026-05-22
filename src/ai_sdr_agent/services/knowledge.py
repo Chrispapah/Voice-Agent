@@ -26,17 +26,60 @@ from sqlalchemy import text
 from ai_sdr_agent.config import get_settings
 from ai_sdr_agent.db.engine import get_async_session_factory
 
-EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_MODEL = DEFAULT_EMBEDDING_MODEL  # back-compat alias
 EMBEDDING_DIM = 1536
 DEFAULT_MATCH_COUNT = 5
 DEFAULT_MIN_SIMILARITY = 0.2
-MAX_CONTEXT_CHARS = 6000
+DEFAULT_MAX_CONTEXT_CHARS = 6000
+MAX_CONTEXT_CHARS = DEFAULT_MAX_CONTEXT_CHARS  # back-compat alias
 CACHE_TTL_SECONDS = 300
 KB_IDS_CACHE_TTL_SECONDS = 60
 EMBEDDING_TIMEOUT_SECONDS = 6.0
 RPC_TIMEOUT_SECONDS = 4.0
 _MIN_TOKEN_LEN = 3
 _MIN_ALPHA_TOKENS = 1
+
+
+def resolve_kb_settings(bot_config: dict[str, Any] | None) -> dict[str, Any]:
+    """Pull KB retrieval settings from a bot_config dict with hard defaults.
+
+    Any field that's missing or out of range falls back to the module default.
+    Returned dict is safe to splat into ``lookup_knowledge_chunks(**settings)``.
+    """
+    cfg = bot_config or {}
+
+    def _clamp_int(value: Any, default: int, lo: int, hi: int) -> int:
+        try:
+            v = int(value) if value is not None else default
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, min(v, hi))
+
+    def _clamp_float(value: Any, default: float, lo: float, hi: float) -> float:
+        try:
+            v = float(value) if value is not None else default
+        except (TypeError, ValueError):
+            v = default
+        return max(lo, min(v, hi))
+
+    def _coerce_str(value: Any, default: str) -> str:
+        if not isinstance(value, str):
+            return default
+        cleaned = value.strip()
+        return cleaned or default
+
+    return {
+        "match_count": _clamp_int(cfg.get("kb_match_count"), DEFAULT_MATCH_COUNT, 1, 20),
+        "min_similarity": _clamp_float(
+            cfg.get("kb_min_similarity"), DEFAULT_MIN_SIMILARITY, 0.0, 1.0
+        ),
+        "embedding_model": _coerce_str(cfg.get("kb_embedding_model"), DEFAULT_EMBEDDING_MODEL),
+        "max_context_chars": _clamp_int(
+            cfg.get("kb_max_context_chars"), DEFAULT_MAX_CONTEXT_CHARS, 500, 20000
+        ),
+        "max_tool_iterations": _clamp_int(cfg.get("kb_max_tool_iterations"), 2, 1, 4),
+    }
 
 
 @dataclass
@@ -151,12 +194,17 @@ def invalidate_kb_ids_cache(*, bot_id: str | None = None) -> None:
             _kb_ids_cache.pop(key, None)
 
 
-async def _embed_question(question: str, *, openai_api_key: str) -> list[float] | None:
+async def _embed_question(
+    question: str,
+    *,
+    openai_api_key: str,
+    model: str = DEFAULT_EMBEDDING_MODEL,
+) -> list[float] | None:
     headers = {
         "Authorization": f"Bearer {openai_api_key}",
         "Content-Type": "application/json",
     }
-    payload = {"model": EMBEDDING_MODEL, "input": question}
+    payload = {"model": model, "input": question}
 
     async with httpx.AsyncClient(timeout=EMBEDDING_TIMEOUT_SECONDS) as client:
         resp = await client.post(
@@ -221,7 +269,11 @@ async def _match_chunks(
         return [dict(row) for row in result.mappings()]
 
 
-def _format_context(matches: list[dict[str, Any]]) -> str:
+def _format_context(
+    matches: list[dict[str, Any]],
+    *,
+    max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+) -> str:
     if not matches:
         return ""
 
@@ -232,7 +284,7 @@ def _format_context(matches: list[dict[str, Any]]) -> str:
         if not content:
             continue
         block = f"[{i}] {content}"
-        if total + len(block) > MAX_CONTEXT_CHARS:
+        if total + len(block) > max_context_chars:
             break
         parts.append(block)
         total += len(block)
@@ -246,7 +298,11 @@ def _format_context(matches: list[dict[str, Any]]) -> str:
     )
 
 
-def _format_tool_result(matches: list[dict[str, Any]]) -> str:
+def _format_tool_result(
+    matches: list[dict[str, Any]],
+    *,
+    max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
+) -> str:
     """Compact, header-less rendering for use as an LLM tool result string."""
     if not matches:
         return "NO_RESULTS"
@@ -263,7 +319,7 @@ def _format_tool_result(matches: list[dict[str, Any]]) -> str:
         except (TypeError, ValueError):
             sim_str = ""
         block = f"[{i}]{sim_str} {content}"
-        if total + len(block) > MAX_CONTEXT_CHARS:
+        if total + len(block) > max_context_chars:
             break
         parts.append(block)
         total += len(block)
@@ -283,12 +339,18 @@ async def lookup_knowledge_chunks(
     kb_ids: list[str] | None = None,
     match_count: int = DEFAULT_MATCH_COUNT,
     min_similarity: float = DEFAULT_MIN_SIMILARITY,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    max_context_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
 ) -> str:
     """Tool-style retrieval that returns just the formatted chunks (or NO_RESULTS).
 
     Used by ``ConversationBrain.respond_with_tools`` as the executor for the
     ``lookup_knowledge`` function. Best-effort: errors/timeouts return a short
     error sentinel so the model can recover gracefully.
+
+    Settings ``match_count``, ``min_similarity``, ``embedding_model`` and
+    ``max_context_chars`` are normally derived per-bot from
+    ``bot_configs.kb_*`` via :func:`resolve_kb_settings`.
     """
     q = (question or "").strip()
     if not q:
@@ -313,7 +375,7 @@ async def lookup_knowledge_chunks(
             return "NO_KNOWLEDGE_BACKEND_CONFIGURED"
 
         t0 = time.perf_counter()
-        embedding = await _embed_question(q, openai_api_key=key)
+        embedding = await _embed_question(q, openai_api_key=key, model=embedding_model)
         if embedding is None:
             return "NO_RESULTS"
 
@@ -324,11 +386,11 @@ async def lookup_knowledge_chunks(
             match_count=match_count,
         )
         usable = [m for m in matches if (m.get("similarity") or 0) >= min_similarity]
-        rendered = _format_tool_result(usable)
+        rendered = _format_tool_result(usable, max_context_chars=max_context_chars)
 
         logger.info(
             "kb_tool:executed bot={} node={} kb_count={} q_chars={} matches={} usable={} "
-            "top_sim={} result_chars={} latency_ms={:.0f}",
+            "top_sim={} result_chars={} model={} min_sim={:.2f} latency_ms={:.0f}",
             bot_id,
             node_id or "-",
             len(resolved_kb_ids),
@@ -337,6 +399,8 @@ async def lookup_knowledge_chunks(
             len(usable),
             f"{matches[0]['similarity']:.3f}" if matches else "-",
             len(rendered),
+            embedding_model,
+            min_similarity,
             (time.perf_counter() - t0) * 1000,
         )
         return rendered

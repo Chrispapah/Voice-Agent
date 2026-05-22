@@ -18,7 +18,11 @@ from ai_sdr_agent.graph.spec import (
 )
 from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.services.brain import ToolDefinition
-from ai_sdr_agent.services.knowledge import list_kb_ids_for_node, lookup_knowledge_chunks
+from ai_sdr_agent.services.knowledge import (
+    list_kb_ids_for_node,
+    lookup_knowledge_chunks,
+    resolve_kb_settings,
+)
 
 if TYPE_CHECKING:
     from ai_sdr_agent.services.brain import ConversationBrain
@@ -164,6 +168,7 @@ async def _llm_speak(
 
     system = "\n\n".join([base_prompt.strip(), _KB_TOOL_USAGE_HINT, _VOICE_OUTPUT_RULES])
     openai_key = bot_cfg.get("openai_api_key")
+    kb_settings = resolve_kb_settings(dict(bot_cfg))
 
     async def tool_executor(name: str, args: dict[str, Any]) -> str:
         if name != _KB_TOOL_NAME:
@@ -176,6 +181,10 @@ async def _llm_speak(
             question=query,
             openai_api_key=openai_key,
             kb_ids=kb_ids,
+            match_count=kb_settings["match_count"],
+            min_similarity=kb_settings["min_similarity"],
+            embedding_model=kb_settings["embedding_model"],
+            max_context_chars=kb_settings["max_context_chars"],
         )
 
     return await brain.respond_with_tools(
@@ -185,6 +194,7 @@ async def _llm_speak(
         tool_executor=tool_executor,
         max_tokens=max_tokens,
         trace=trace,
+        max_tool_iterations=kb_settings["max_tool_iterations"],
     )
 
 

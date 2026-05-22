@@ -87,6 +87,15 @@ class BotConfigRow(Base):
 
     conversation_spec: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Per-bot knowledge base retrieval settings (see services/knowledge.py).
+    kb_match_count: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
+    kb_min_similarity: Mapped[float] = mapped_column(Float, default=0.2, nullable=False)
+    kb_embedding_model: Mapped[str] = mapped_column(
+        String(100), default="text-embedding-3-small", nullable=False
+    )
+    kb_max_context_chars: Mapped[int] = mapped_column(Integer, default=6000, nullable=False)
+    kb_max_tool_iterations: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
@@ -133,6 +142,11 @@ class BotConfigRow(Base):
             "prompt_booking": self.prompt_booking,
             "prompt_wrapup": self.prompt_wrapup,
             "conversation_spec": self.conversation_spec,
+            "kb_match_count": self.kb_match_count,
+            "kb_min_similarity": self.kb_min_similarity,
+            "kb_embedding_model": self.kb_embedding_model,
+            "kb_max_context_chars": self.kb_max_context_chars,
+            "kb_max_tool_iterations": self.kb_max_tool_iterations,
         }
 
 
