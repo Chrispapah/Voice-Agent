@@ -100,6 +100,7 @@ class BotConfigRow(Base):
         """Return a plain dict suitable for embedding in ConversationState."""
         return {
             "bot_id": str(self.id),
+            "user_id": str(self.user_id),
             "llm_provider": self.llm_provider,
             "llm_model_name": self.llm_model_name,
             "llm_temperature": self.llm_temperature,

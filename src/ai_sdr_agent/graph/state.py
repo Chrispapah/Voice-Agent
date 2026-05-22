@@ -33,6 +33,7 @@ class SlotPayload(TypedDict):
 
 class BotConfigDict(TypedDict, total=False):
     bot_id: str
+    user_id: str
     llm_provider: str
     llm_model_name: str
     llm_temperature: float
@@ -102,6 +103,7 @@ class ConversationState(TypedDict):
 
 _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "bot_id": "",
+    "user_id": "",
     "llm_provider": "groq",
     "llm_model_name": "llama-3.3-70b-versatile",
     "llm_temperature": 0.4,

@@ -17,6 +17,8 @@ from ai_sdr_agent.graph.spec import (
     static_message_for_node,
 )
 from ai_sdr_agent.graph.state import ConversationState
+from ai_sdr_agent.services.brain import ToolDefinition
+from ai_sdr_agent.services.knowledge import list_kb_ids_for_node, lookup_knowledge_chunks
 
 if TYPE_CHECKING:
     from ai_sdr_agent.services.brain import ConversationBrain
@@ -86,6 +88,104 @@ def _interpolate_placeholders(template: str, state: ConversationState) -> str:
         return template.format(**ctx)
     except (KeyError, ValueError):
         return template
+
+
+_KB_TOOL_NAME = "lookup_knowledge"
+
+_KB_TOOL_DEFINITION = ToolDefinition(
+    name=_KB_TOOL_NAME,
+    description=(
+        "Search the assigned knowledge base for grounded information about the "
+        "company's products, pricing, policies, features, FAQs, documents, or any "
+        "specific facts the user might ask about. Use a focused query phrased as "
+        "you would search a search engine. If the result is NO_RESULTS, tell the "
+        "user you do not have that information rather than guessing."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "A focused search query, ideally a paraphrase of the user's question "
+                    "with the most relevant entities and keywords."
+                ),
+            }
+        },
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+)
+
+_KB_TOOL_USAGE_HINT = (
+    "You have a `lookup_knowledge` tool that searches the user's knowledge base. "
+    "Call it before answering any factual question about products, pricing, policies, "
+    "features, FAQs, hours, or other company specifics. Always pass the user's question "
+    "(rephrased as a search query) as the `query` argument. If the tool returns NO_RESULTS, "
+    "say you do not have that information; never invent facts."
+)
+
+
+async def _llm_speak(
+    *,
+    brain: ConversationBrain,
+    state: ConversationState,
+    node_id: str,
+    base_prompt: str,
+    transcript: list[dict[str, str]],
+    max_tokens: int,
+    trace: dict[str, Any],
+) -> str:
+    """Single LLM speak step that opts into tool-calling when the node has KBs attached.
+
+    Selection rule:
+      * If the user has already spoken AND at least one knowledge base is attached
+        to (bot, node) (or bot-level fallback), call the LLM with the
+        ``lookup_knowledge`` tool so it can decide when to consult the KB.
+      * Otherwise call the streaming ``respond`` path unchanged.
+    """
+    bot_cfg = state.get("bot_config") or {}
+    bot_id = str(bot_cfg.get("bot_id") or "") or None
+    user_id = str(bot_cfg.get("user_id") or "") or None
+    has_human = any(m.get("role") == "human" for m in transcript)
+
+    kb_ids: list[str] = []
+    if has_human and bot_id and user_id:
+        kb_ids = await list_kb_ids_for_node(bot_id=bot_id, node_id=node_id, user_id=user_id)
+
+    if not kb_ids:
+        system = f"{base_prompt.strip()}\n\n{_VOICE_OUTPUT_RULES}"
+        return await brain.respond(
+            system_prompt=system,
+            transcript=transcript,
+            max_tokens=max_tokens,
+            trace=trace,
+        )
+
+    system = "\n\n".join([base_prompt.strip(), _KB_TOOL_USAGE_HINT, _VOICE_OUTPUT_RULES])
+    openai_key = bot_cfg.get("openai_api_key")
+
+    async def tool_executor(name: str, args: dict[str, Any]) -> str:
+        if name != _KB_TOOL_NAME:
+            return f"ERROR: unknown tool {name!r}"
+        query = (args.get("query") or state.get("last_human_message") or "").strip()
+        return await lookup_knowledge_chunks(
+            bot_id=bot_id,
+            node_id=node_id,
+            user_id=user_id,
+            question=query,
+            openai_api_key=openai_key,
+            kb_ids=kb_ids,
+        )
+
+    return await brain.respond_with_tools(
+        system_prompt=system,
+        transcript=transcript,
+        tools=[_KB_TOOL_DEFINITION],
+        tool_executor=tool_executor,
+        max_tokens=max_tokens,
+        trace=trace,
+    )
 
 
 def _trace(state: ConversationState) -> dict[str, Any]:
@@ -245,12 +345,14 @@ def make_single_agent_node(
                 (time.perf_counter() - t0) * 1000,
             )
         else:
-            system = _interpolate_placeholders(spec.system_prompt or "", state)
-            system = f"{system.strip()}\n{_VOICE_OUTPUT_RULES}"
+            base_prompt = _interpolate_placeholders(spec.system_prompt or "", state)
             max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
             text = format_reply_for_tts(
-                await brain.respond(
-                    system_prompt=system,
+                await _llm_speak(
+                    brain=brain,
+                    state=state,
+                    node_id=SINGLE_AGENT_NODE_ID,
+                    base_prompt=base_prompt,
                     transcript=state["transcript"],
                     max_tokens=max_out,
                     trace=trace,
@@ -310,11 +412,13 @@ def make_graph_agent_node(
                 )
             else:
                 base_prompt = _interpolate_placeholders(prompt_for_node(spec, node_id), state)
-                system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
                 max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
                 response = format_reply_for_tts(
-                    await brain.respond(
-                        system_prompt=system,
+                    await _llm_speak(
+                        brain=brain,
+                        state=state,
+                        node_id=node_id,
+                        base_prompt=base_prompt,
                         transcript=state["transcript"],
                         max_tokens=max_out,
                         trace=trace,
@@ -406,11 +510,13 @@ def make_graph_agent_node(
             )
         else:
             base_prompt = _interpolate_placeholders(prompt_for_node(spec, speak_node), state)
-            system = f"{base_prompt.strip()}\n{_VOICE_OUTPUT_RULES}"
             max_out = min(int(state.get("bot_config", {}).get("llm_max_tokens", 220) or 220), 400)
             response = format_reply_for_tts(
-                await brain.respond(
-                    system_prompt=system,
+                await _llm_speak(
+                    brain=brain,
+                    state=state,
+                    node_id=speak_node,
+                    base_prompt=base_prompt,
                     transcript=state["transcript"],
                     max_tokens=max_out,
                     trace=trace_reply,

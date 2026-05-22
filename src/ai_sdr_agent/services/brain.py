@@ -5,7 +5,7 @@ import json
 import time
 import uuid
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator, Awaitable, Callable, Protocol, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -120,6 +120,32 @@ def _groq_messages_from_transcript(
     return messages
 
 
+@dataclass(frozen=True)
+class ToolDefinition:
+    """LLM-facing tool description (OpenAI/Groq function-calling schema).
+
+    ``parameters`` is a JSON Schema object describing the tool arguments.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any] = field(default_factory=lambda: {"type": "object", "properties": {}})
+
+    def to_openai_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
+
+
+# Async callable: (tool_name, arguments_dict) -> tool_result_string.
+ToolExecutor = Callable[[str, dict[str, Any]], Awaitable[str]]
+
+
 class ConversationBrain(Protocol):
     def supports_response_token_stream(self) -> bool:
         ...
@@ -142,6 +168,19 @@ class ConversationBrain(Protocol):
         max_tokens: int | None = None,
         trace: dict[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
+        ...
+
+    async def respond_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        tools: Sequence[ToolDefinition],
+        tool_executor: ToolExecutor,
+        max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
+        max_tool_iterations: int = 2,
+    ) -> str:
         ...
 
     async def classify(
@@ -229,6 +268,26 @@ class StubConversationBrain:
         )
         if response:
             yield response
+
+    async def respond_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        tools: Sequence[ToolDefinition],
+        tool_executor: ToolExecutor,
+        max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
+        max_tool_iterations: int = 2,
+    ) -> str:
+        # The stub brain has no real model, so it cannot decide to invoke tools.
+        # Tests and offline runs get deterministic behaviour by delegating to respond().
+        return await self.respond(
+            system_prompt=system_prompt,
+            transcript=transcript,
+            max_tokens=max_tokens,
+            trace=trace,
+        )
 
     _EXIT_PHRASES = (
         "not interested", "stop calling", "remove me", "do not call",
@@ -651,6 +710,219 @@ class LangChainConversationBrain:
             len(output_text),
             _preview_text(output_text),
         )
+
+    async def respond_with_tools(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        tools: Sequence[ToolDefinition],
+        tool_executor: ToolExecutor,
+        max_tokens: int | None = None,
+        trace: dict[str, Any] | None = None,
+        max_tool_iterations: int = 2,
+    ) -> str:
+        """Single-turn answer that may invoke ``tools`` zero or more times.
+
+        Streams text deltas to the active chunk sink (so TTS streaming still works
+        when the model is just answering). Tool calls are buffered, executed via
+        ``tool_executor``, and the loop continues. After ``max_tool_iterations``
+        we force a final tool-less call to guarantee the model produces speech.
+        """
+        if not tools or self._groq_async_client is None:
+            return await self.respond(
+                system_prompt=system_prompt,
+                transcript=transcript,
+                max_tokens=max_tokens,
+                trace=trace,
+            )
+
+        trimmed = _slice_transcript(transcript, max_messages=self._RESPOND_TRANSCRIPT_LIMIT)
+        limit = self._max_tokens if max_tokens is None else min(max_tokens, self._max_tokens)
+        messages = _groq_messages_from_transcript(
+            system_prompt=system_prompt,
+            transcript=trimmed,
+        )
+        tool_schema = [t.to_openai_schema() for t in tools]
+        sink = get_response_chunk_sink()
+        call_id = uuid.uuid4().hex[:8]
+        started_at = time.perf_counter()
+        logger.info(
+            "LLM tools start call_id={} conversation_id={} turn_id={} turn_count={} "
+            "node={} step={} provider={} model={} tool_count={} max_iterations={} "
+            "max_tokens={} message_count={}",
+            call_id,
+            _trace_value(trace, "conversation_id"),
+            _trace_value(trace, "turn_id"),
+            _trace_value(trace, "turn_count"),
+            _trace_value(trace, "node"),
+            _trace_value(trace, "step"),
+            self._provider,
+            self._model_name,
+            len(tools),
+            max_tool_iterations,
+            limit,
+            len(messages),
+        )
+
+        executed_tool_calls = 0
+        last_content = ""
+
+        for iteration in range(max_tool_iterations + 1):
+            is_last_iteration = iteration == max_tool_iterations
+            stream = None
+            content_parts: list[str] = []
+            tool_calls_acc: dict[int, dict[str, str]] = {}
+            finish_reason: str | None = None
+            iter_started_at = time.perf_counter()
+
+            try:
+                create_kwargs: dict[str, Any] = {
+                    "messages": messages,
+                    "model": self._model_name,
+                    "temperature": self._temperature,
+                    "max_tokens": limit,
+                    "stream": True,
+                }
+                if not is_last_iteration:
+                    create_kwargs["tools"] = tool_schema
+                    create_kwargs["tool_choice"] = "auto"
+
+                stream = await self._groq_async_client.chat.completions.create(**create_kwargs)
+                async for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    if delta is not None:
+                        content_delta = getattr(delta, "content", None)
+                        if content_delta:
+                            content_parts.append(content_delta)
+                            if sink is not None:
+                                await sink(content_delta)
+                        tool_call_deltas = getattr(delta, "tool_calls", None) or []
+                        for tc_delta in tool_call_deltas:
+                            idx = getattr(tc_delta, "index", 0) or 0
+                            bucket = tool_calls_acc.setdefault(
+                                idx, {"id": "", "name": "", "args": ""}
+                            )
+                            tc_id = getattr(tc_delta, "id", None)
+                            if tc_id:
+                                bucket["id"] = tc_id
+                            fn = getattr(tc_delta, "function", None)
+                            if fn is not None:
+                                fn_name = getattr(fn, "name", None)
+                                if fn_name:
+                                    bucket["name"] = fn_name
+                                fn_args = getattr(fn, "arguments", None)
+                                if fn_args:
+                                    bucket["args"] += fn_args
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+            except asyncio.CancelledError:
+                logger.warning(
+                    "LLM tools cancelled call_id={} iteration={} latency_ms={:.0f}",
+                    call_id,
+                    iteration,
+                    (time.perf_counter() - iter_started_at) * 1000,
+                )
+                raise
+            except Exception:
+                logger.exception(
+                    "LLM tools iteration failed call_id={} iteration={}",
+                    call_id,
+                    iteration,
+                )
+                raise
+            finally:
+                aclose = getattr(stream, "aclose", None)
+                if aclose is not None:
+                    try:
+                        await aclose()
+                    except Exception:
+                        pass
+
+            last_content = "".join(content_parts)
+
+            if not tool_calls_acc:
+                logger.info(
+                    "LLM tools done call_id={} iterations={} tool_calls_executed={} "
+                    "finish_reason={} output_chars={} total_latency_ms={:.0f}",
+                    call_id,
+                    iteration + 1,
+                    executed_tool_calls,
+                    finish_reason or "-",
+                    len(last_content),
+                    (time.perf_counter() - started_at) * 1000,
+                )
+                return last_content
+
+            tool_calls_payload = [
+                {
+                    "id": tc["id"] or f"call_{call_id}_{idx}",
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": tc["args"] or "{}",
+                    },
+                }
+                for idx, tc in sorted(tool_calls_acc.items())
+            ]
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": last_content or None,
+                    "tool_calls": tool_calls_payload,
+                }
+            )
+
+            for tc_payload in tool_calls_payload:
+                name = tc_payload["function"]["name"]
+                raw_args = tc_payload["function"]["arguments"]
+                try:
+                    args = json.loads(raw_args) if raw_args else {}
+                except json.JSONDecodeError:
+                    args = {}
+                tool_started_at = time.perf_counter()
+                try:
+                    result = await tool_executor(name, args)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.exception(
+                        "Tool executor failed call_id={} tool={} args={!r}",
+                        call_id,
+                        name,
+                        raw_args,
+                    )
+                    result = f"[tool error: {exc.__class__.__name__}]"
+                executed_tool_calls += 1
+                logger.info(
+                    "LLM tool exec call_id={} iteration={} tool={} args_chars={} "
+                    "result_chars={} latency_ms={:.0f}",
+                    call_id,
+                    iteration,
+                    name,
+                    len(raw_args or ""),
+                    len(result or ""),
+                    (time.perf_counter() - tool_started_at) * 1000,
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc_payload["id"],
+                        "name": name,
+                        "content": result or "",
+                    }
+                )
+
+        logger.warning(
+            "LLM tools exhausted iterations call_id={} executed={} latency_ms={:.0f}",
+            call_id,
+            executed_tool_calls,
+            (time.perf_counter() - started_at) * 1000,
+        )
+        return last_content
 
     async def classify(
         self,
