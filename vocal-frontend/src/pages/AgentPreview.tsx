@@ -4,13 +4,18 @@ import { Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   getPublicAgentPreview,
+  getPublicPreviewOpenAIRealtimeElevenLabsVoiceWebSocketUrl,
+  getPublicPreviewOpenAIRealtimeVoiceWebSocketUrl,
   getPublicPreviewVoiceWebSocketUrl,
   startPublicAgentPreviewSession,
   type PublicAgentPreview,
 } from "@/lib/api";
+import { OpenAIRealtimeElevenLabsVoiceSession } from "@/lib/openAIRealtimeElevenLabsVoiceSession";
+import { OpenAIRealtimeVoiceSession } from "@/lib/openAIRealtimeVoiceSession";
 import { VoiceSession, type VoiceSessionCallbacks } from "@/lib/voiceSession";
 
 type ChatMessage = { role: "human" | "agent"; content: string };
+type PreviewVoiceSession = VoiceSession | OpenAIRealtimeVoiceSession | OpenAIRealtimeElevenLabsVoiceSession;
 
 function upsertAgentBubble(messages: ChatMessage[], text: string): ChatMessage[] {
   const last = messages[messages.length - 1];
@@ -29,7 +34,7 @@ export default function AgentPreviewPage() {
   const [active, setActive] = useState(false);
   const [error, setError] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
-  const voiceRef = useRef<VoiceSession | null>(null);
+  const voiceRef = useRef<PreviewVoiceSession | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -67,10 +72,22 @@ export default function AgentPreviewPage() {
           setActive(false);
         },
       };
-      const voice = new VoiceSession(callbacks);
+      const provider = session.voice_provider || preview.voice_provider;
+      const voice: PreviewVoiceSession =
+        provider === "openai_realtime"
+          ? new OpenAIRealtimeVoiceSession(callbacks)
+          : provider === "openai_realtime_elevenlabs"
+            ? new OpenAIRealtimeElevenLabsVoiceSession(callbacks)
+            : new VoiceSession(callbacks);
+      const wsUrl =
+        provider === "openai_realtime"
+          ? getPublicPreviewOpenAIRealtimeVoiceWebSocketUrl(token)
+          : provider === "openai_realtime_elevenlabs"
+            ? getPublicPreviewOpenAIRealtimeElevenLabsVoiceWebSocketUrl(token)
+            : getPublicPreviewVoiceWebSocketUrl(token);
       voiceRef.current = voice;
       await voice.startWithOptions({
-        wsUrl: getPublicPreviewVoiceWebSocketUrl(token),
+        wsUrl,
         authMessage: null,
         leadId: session.lead_id,
         conversationId: session.conversation_id,

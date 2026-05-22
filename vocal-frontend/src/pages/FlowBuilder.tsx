@@ -457,6 +457,9 @@ export default function FlowBuilderPage() {
   edgesRef.current = edges;
   sessionIdRef.current = sessionId;
   botIdRef.current = botId;
+  const usesElevenLabsTts = voiceProvider === "builtin" || voiceProvider === "openai_realtime_elevenlabs";
+  const usesDeepgramStt = voiceProvider === "builtin";
+  const usesOpenAIRealtime = voiceProvider === "openai_realtime" || voiceProvider === "openai_realtime_elevenlabs";
 
   useEffect(() => {
     return () => {
@@ -1174,9 +1177,10 @@ export default function FlowBuilderPage() {
                     <option value="openai_realtime_elevenlabs">OpenAI Realtime + ElevenLabs</option>
                   </select>
                 </div>
+                {usesElevenLabsTts && (
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-medium">
-                    <Volume2 className="h-3.5 w-3.5" /> Text to Speech
+                    <Volume2 className="h-3.5 w-3.5" /> ElevenLabs Text to Speech
                   </label>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <input
@@ -1193,9 +1197,11 @@ export default function FlowBuilderPage() {
                     />
                   </div>
                 </div>
+                )}
+                {usesDeepgramStt && (
                 <div>
                   <label className="flex items-center gap-1.5 text-xs font-medium">
-                    <Mic className="h-3.5 w-3.5" /> Speech to Text
+                    <Mic className="h-3.5 w-3.5" /> Deepgram Speech to Text
                   </label>
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <input
@@ -1212,10 +1218,11 @@ export default function FlowBuilderPage() {
                     />
                   </div>
                 </div>
-                {(voiceProvider === "openai_realtime" || voiceProvider === "openai_realtime_elevenlabs") && (
+                )}
+                {usesOpenAIRealtime && (
                   <div>
                     <label className="flex items-center gap-1.5 text-xs font-medium">
-                      <Sparkles className="h-3.5 w-3.5" /> OpenAI Realtime
+                      <Sparkles className="h-3.5 w-3.5" /> OpenAI Realtime STT/TTS
                     </label>
                     <div className="mt-2 grid grid-cols-2 gap-2">
                       <input
