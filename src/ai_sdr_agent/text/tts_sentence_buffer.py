@@ -1,7 +1,7 @@
-"""Buffer streamed LLM tokens and emit whole sentences for TTS (browser voice).
+"""Buffer streamed LLM tokens and emit sentence-sized chunks for TTS (browser voice).
 
-Sentence end: ``.`` ``!`` ``?`` (runs like ``...`` allowed), Unicode Greek question mark
-(U+037E), optional closing quotes/brackets, then whitespace. Remainder is flushed on ``flush()``.
+Chunk end: ``,`` ``.`` ``!`` ``?`` (runs like ``...`` allowed), Unicode Greek question
+mark (U+037E), optional closing quotes/brackets, then whitespace. Remainder is flushed on ``flush()``.
 If the buffer grows past ``max_buffer_chars`` without a sentence break, flush at the last
 space in the tail window (or the whole buffer if there is no space) so streaming cannot stall.
 """
@@ -21,7 +21,7 @@ def find_first_sentence_end(s: str) -> int | None:
     i = 0
     while i < n:
         c = s[i]
-        if c in "!?" or c == _GREEK_QUESTION_MARK:
+        if c in ",!?" or c == _GREEK_QUESTION_MARK:
             j = i + 1
             while j < n and s[j] in "!?":
                 j += 1

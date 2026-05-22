@@ -19,6 +19,11 @@ def test_find_first_sentence_end_question_exclamation():
     assert find_first_sentence_end("Go! Now") == 4
 
 
+def test_find_first_sentence_end_comma():
+    assert find_first_sentence_end("Hello, there") == 7
+    assert find_first_sentence_end("Price is 1,000 today") is None
+
+
 def test_find_first_sentence_end_greek_question_mark():
     s = f"Πώς είσαι{chr(0x037E)} Καλά"
     end = find_first_sentence_end(s)
