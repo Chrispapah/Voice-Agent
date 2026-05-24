@@ -186,6 +186,7 @@ class CallLogRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     call_outcome: Mapped[str] = mapped_column(String(30), default="follow_up_needed")
+    call_quality: Mapped[str] = mapped_column(String(30), default="needs_attention")
     transcript: Mapped[list] = mapped_column(JSON, default=list)
     qualification_notes: Mapped[dict] = mapped_column(JSON, default=dict)
     meeting_booked: Mapped[bool] = mapped_column(Boolean, default=False)

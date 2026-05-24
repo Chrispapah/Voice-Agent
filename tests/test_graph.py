@@ -92,6 +92,25 @@ class SlowStubConversationBrain(StubConversationBrain):
             trace=trace,
         )
 
+
+class QualityStubConversationBrain(StubConversationBrain):
+    async def respond(
+        self,
+        *,
+        system_prompt: str,
+        transcript: list[dict[str, str]],
+        max_tokens: int | None = None,
+        trace: dict | None = None,
+    ) -> str:
+        if "call qa reviewer" in system_prompt.lower():
+            return "satisfactory"
+        return await super().respond(
+            system_prompt=system_prompt,
+            transcript=transcript,
+            max_tokens=max_tokens,
+            trace=trace,
+        )
+
     async def extract_qualification(
         self,
         *,
@@ -145,6 +164,19 @@ async def test_booking_path_updates_state_and_side_effects(conversation_service)
     assert state["call_outcome"] == "meeting_booked"
     assert len(email_gateway.sent_messages) == 1
     assert len(crm_gateway.updates) == 1
+
+
+@pytest.mark.asyncio
+async def test_call_quality_is_saved_from_llm_classification():
+    service, _, _, _ = _build_conversation_service(brain=QualityStubConversationBrain())
+    conversation_id = await service.start_session("lead-001")
+
+    await service.handle_turn(conversation_id, "")
+    await service.handle_turn(conversation_id, "Yes, I run sales operations.")
+
+    call_log = await service.dependencies.call_log_repository.get_call_log(conversation_id)
+    assert call_log is not None
+    assert call_log.call_quality == "satisfactory"
 
 
 @pytest.mark.asyncio

@@ -218,6 +218,7 @@ def _public_call(row: CallLogRow) -> dict[str, Any]:
         "started_at": row.started_at.isoformat() if row.started_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "call_outcome": row.call_outcome,
+        "call_quality": row.call_quality or "needs_attention",
         "transcript": row.transcript or [],
         "qualification_notes": row.qualification_notes or {},
         "meeting_booked": row.meeting_booked,

@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/dialog";
 import { AuthRequiredError, listCalls, type CallLog } from "@/lib/api";
 
-const dot = (color: string) => <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${color}`} />;
+type CallQuality = NonNullable<CallLog["call_quality"]>;
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -34,6 +34,20 @@ function roleLabel(role: string): string {
   if (["human", "user", "lead", "caller"].includes(normalized)) return "Client";
   if (["assistant", "agent", "ai"].includes(normalized)) return "Voicebot";
   return role;
+}
+
+function callQuality(call: CallLog): CallQuality {
+  return call.call_quality ?? "needs_attention";
+}
+
+function qualityLabel(value: CallQuality): string {
+  return value.replace(/_/g, " ");
+}
+
+function qualityBadgeVariant(value: CallQuality): "default" | "secondary" | "destructive" | "outline" {
+  if (value === "satisfactory") return "default";
+  if (value === "unsatisfactory") return "destructive";
+  return "secondary";
 }
 
 export default function CallHistoryPage() {
@@ -94,7 +108,7 @@ export default function CallHistoryPage() {
         <table className="w-full text-sm">
           <thead className="bg-surface-muted/60 text-muted-foreground sticky top-0">
             <tr className="text-left">
-              {["Time","Duration","Conversation ID","Lead ID","Outcome","Meeting Booked","Proposed Slot","Follow-Up Action","Transcript Turns"].map(h => (
+              {["Time","Duration","Conversation ID","Lead ID","Call Quality","Transcript Turns"].map(h => (
                 <th key={h} className="px-4 py-3 font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -102,14 +116,14 @@ export default function CallHistoryPage() {
           <tbody>
             {loading && (
               <tr>
-                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={9}>
+                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={6}>
                   Loading call history...
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={9}>
+                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={6}>
                   No call logs yet. Test conversations and completed calls will appear here.
                 </td>
               </tr>
@@ -121,10 +135,11 @@ export default function CallHistoryPage() {
                   <td className="px-4 py-3">{r.displayDuration}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{r.conversation_id}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{r.lead_id}</td>
-                  <td className="px-4 py-3">{dot(r.call_outcome === "meeting_booked" ? "bg-success" : "bg-muted-foreground")}{r.call_outcome}</td>
-                  <td className="px-4 py-3">{r.meeting_booked ? "Yes" : "No"}</td>
-                  <td className="px-4 py-3">{r.proposed_slot || "-"}</td>
-                  <td className="px-4 py-3">{r.follow_up_action || "-"}</td>
+                  <td className="px-4 py-3">
+                    <Badge variant={qualityBadgeVariant(callQuality(r))} className="capitalize">
+                      {qualityLabel(callQuality(r))}
+                    </Badge>
+                  </td>
                   <td className="px-4 py-3">
                     <Button
                       type="button"
@@ -171,8 +186,8 @@ export default function CallHistoryPage() {
                   <div className="mt-1">{duration(selectedCall.started_at, selectedCall.completed_at)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-muted-foreground">Outcome</div>
-                  <div className="mt-1 capitalize">{selectedCall.call_outcome.replace(/_/g, " ")}</div>
+                  <div className="text-xs text-muted-foreground">Call Quality</div>
+                  <div className="mt-1 capitalize">{qualityLabel(callQuality(selectedCall))}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Turns</div>

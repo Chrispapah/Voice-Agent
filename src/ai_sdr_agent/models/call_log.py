@@ -14,6 +14,12 @@ CallOutcome = Literal[
     "voicemail",
 ]
 
+CallQuality = Literal[
+    "satisfactory",
+    "unsatisfactory",
+    "needs_attention",
+]
+
 
 class CallLogRecord(BaseModel):
     conversation_id: str
@@ -21,6 +27,7 @@ class CallLogRecord(BaseModel):
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
     call_outcome: CallOutcome = "follow_up_needed"
+    call_quality: CallQuality = "needs_attention"
     transcript: list[dict[str, str]] = Field(default_factory=list)
     qualification_notes: dict[str, str | bool | None] = Field(default_factory=dict)
     meeting_booked: bool = False

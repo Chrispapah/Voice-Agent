@@ -37,6 +37,17 @@ _EXIT_PATTERNS = re.compile(
 )
 
 _DEFAULT_MAX_CALL_TURNS = 12
+_CALL_QUALITY_VALUES = {"satisfactory", "unsatisfactory", "needs_attention"}
+_CALL_QUALITY_PROMPT = """You are a call QA reviewer.
+
+Read the full voicebot conversation transcript and classify the overall call quality.
+
+Return exactly one lowercase value:
+- satisfactory: the conversation is understandable, the voicebot stayed on task, and the user experience looks acceptable.
+- unsatisfactory: the call clearly failed, was unusable, had severe misunderstanding, or the voicebot behaved poorly.
+- needs_attention: the call is mixed, incomplete, ambiguous, or should be manually reviewed.
+
+Do not include explanations, punctuation, JSON, or any extra words."""
 
 
 def _format_details(**details: object) -> str:
@@ -385,6 +396,10 @@ class SDRConversationService:
         updated_metadata["conversation_id"] = conversation_id
         updated_metadata["turn_id"] = turn_id
         updated_state["metadata"] = updated_metadata
+        call_quality = await self._classify_call_quality(
+            updated_state["transcript"],
+            trace={**updated_metadata, "step": "call_quality"},
+        )
 
         persist_start = time.perf_counter()
         if self._can_parallelize_persistence():
@@ -400,6 +415,7 @@ class SDRConversationService:
                         conversation_id=conversation_id,
                         lead_id=updated_state["lead_id"],
                         call_outcome=updated_state["call_outcome"],
+                        call_quality=call_quality,
                         transcript=updated_state["transcript"],
                         qualification_notes=updated_state["qualification_notes"],
                         meeting_booked=updated_state["meeting_booked"],
@@ -423,6 +439,7 @@ class SDRConversationService:
                     conversation_id=conversation_id,
                     lead_id=updated_state["lead_id"],
                     call_outcome=updated_state["call_outcome"],
+                    call_quality=call_quality,
                     transcript=updated_state["transcript"],
                     qualification_notes=updated_state["qualification_notes"],
                     meeting_booked=updated_state["meeting_booked"],
@@ -480,6 +497,32 @@ class SDRConversationService:
                 record_analytics_ms,
             )
         return updated_state
+
+    async def _classify_call_quality(
+        self,
+        transcript: list[dict[str, str]],
+        *,
+        trace: dict[str, object],
+    ) -> str:
+        has_human = any(message.get("role") == "human" and message.get("content") for message in transcript)
+        has_agent = any(message.get("role") == "agent" and message.get("content") for message in transcript)
+        if not has_human or not has_agent:
+            return "needs_attention"
+        try:
+            raw = await self.dependencies.brain.respond(
+                system_prompt=_CALL_QUALITY_PROMPT,
+                transcript=transcript,
+                max_tokens=12,
+                trace=trace,
+            )
+        except Exception:
+            logger.exception("Call quality classification failed")
+            return "needs_attention"
+        normalized = re.sub(r"[^a-z_]", "", raw.strip().lower())
+        if normalized in _CALL_QUALITY_VALUES:
+            return normalized
+        logger.warning("Unexpected call quality classification output: {!r}", raw)
+        return "needs_attention"
 
     async def _invoke_graph_for_turn(
         self,

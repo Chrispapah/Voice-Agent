@@ -140,6 +140,7 @@ class PgCallLogRepository:
                 conversation_id=call_log.conversation_id,
                 lead_id=call_log.lead_id,
                 call_outcome=call_log.call_outcome,
+                call_quality=call_log.call_quality,
                 transcript=call_log.transcript,
                 qualification_notes=call_log.qualification_notes,
                 meeting_booked=call_log.meeting_booked,
@@ -149,6 +150,7 @@ class PgCallLogRepository:
             self.session.add(row)
         else:
             row.call_outcome = call_log.call_outcome
+            row.call_quality = call_log.call_quality
             row.transcript = call_log.transcript
             row.qualification_notes = call_log.qualification_notes
             row.meeting_booked = call_log.meeting_booked
@@ -170,6 +172,7 @@ class PgCallLogRepository:
             started_at=row.started_at,
             completed_at=row.completed_at,
             call_outcome=row.call_outcome,
+            call_quality=row.call_quality or "needs_attention",
             transcript=row.transcript or [],
             qualification_notes=row.qualification_notes or {},
             meeting_booked=row.meeting_booked,

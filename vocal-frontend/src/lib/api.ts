@@ -216,6 +216,7 @@ export interface CallLog {
   started_at: string | null;
   completed_at: string | null;
   call_outcome: string;
+  call_quality?: "satisfactory" | "unsatisfactory" | "needs_attention";
   transcript: { role: string; content: string }[];
   qualification_notes: Record<string, unknown>;
   meeting_booked: boolean;
