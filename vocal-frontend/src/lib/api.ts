@@ -211,6 +211,7 @@ export interface TestSessionResponse {
 export interface CallLog {
   id: string;
   bot_id: string;
+  agent_name?: string;
   conversation_id: string;
   lead_id: string;
   started_at: string | null;
@@ -968,6 +969,7 @@ async function listCallsFromSupabase(): Promise<CallLog[]> {
   const bots = await listBotsFromSupabase();
   const botIds = bots.map((bot) => bot.id);
   if (botIds.length === 0) return [];
+  const botNamesById = new Map(bots.map((bot) => [bot.id, bot.name]));
 
   const { data, error } = await supabase
     .from("call_logs")
@@ -975,7 +977,10 @@ async function listCallsFromSupabase(): Promise<CallLog[]> {
     .in("bot_id", botIds)
     .order("started_at", { ascending: false });
   throwIfSupabaseError(error);
-  return data as CallLog[];
+  return (data as CallLog[]).map((call) => ({
+    ...call,
+    agent_name: botNamesById.get(call.bot_id) ?? "Unknown agent",
+  }));
 }
 
 export function startTestSession(botId: string, leadId: string): Promise<TestSessionResponse> {

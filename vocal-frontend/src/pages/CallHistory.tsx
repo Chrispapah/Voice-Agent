@@ -108,7 +108,7 @@ export default function CallHistoryPage() {
         <table className="w-full text-sm">
           <thead className="bg-surface-muted/60 text-muted-foreground sticky top-0">
             <tr className="text-left">
-              {["Time","Duration","Conversation ID","Lead ID","Call Quality","Transcript Turns"].map(h => (
+              {["Time","Duration","Agent","Conversation ID","Lead ID","Call Quality","Transcript Turns"].map(h => (
                 <th key={h} className="px-4 py-3 font-medium whitespace-nowrap">{h}</th>
               ))}
             </tr>
@@ -116,14 +116,14 @@ export default function CallHistoryPage() {
           <tbody>
             {loading && (
               <tr>
-                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={6}>
+                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={7}>
                   Loading call history...
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && (
               <tr>
-                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={6}>
+                <td className="px-4 py-8 text-center text-muted-foreground" colSpan={7}>
                   No call logs yet. Test conversations and completed calls will appear here.
                 </td>
               </tr>
@@ -133,6 +133,7 @@ export default function CallHistoryPage() {
                 <tr key={r.id} className="border-t border-border hover:bg-surface-muted/40">
                   <td className="px-4 py-3 whitespace-nowrap">{r.displayStartedAt}</td>
                   <td className="px-4 py-3">{r.displayDuration}</td>
+                  <td className="px-4 py-3 font-medium">{r.agent_name || "Unknown agent"}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{r.conversation_id}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{r.lead_id}</td>
                   <td className="px-4 py-3">
@@ -176,7 +177,7 @@ export default function CallHistoryPage() {
 
           {selectedCall && (
             <div className="space-y-4">
-              <div className="grid gap-3 rounded-lg border border-border bg-surface-muted/40 p-3 text-sm md:grid-cols-4">
+              <div className="grid gap-3 rounded-lg border border-border bg-surface-muted/40 p-3 text-sm md:grid-cols-5">
                 <div>
                   <div className="text-xs text-muted-foreground">Started</div>
                   <div className="mt-1">{formatDate(selectedCall.started_at)}</div>
@@ -184,6 +185,10 @@ export default function CallHistoryPage() {
                 <div>
                   <div className="text-xs text-muted-foreground">Duration</div>
                   <div className="mt-1">{duration(selectedCall.started_at, selectedCall.completed_at)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Agent</div>
+                  <div className="mt-1">{selectedCall.agent_name || "Unknown agent"}</div>
                 </div>
                 <div>
                   <div className="text-xs text-muted-foreground">Call Quality</div>
