@@ -19,6 +19,7 @@ from ai_sdr_agent.db.repositories import PgCallLogRepository, PgLeadRepository, 
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
 from ai_sdr_agent.routers.web_voice import _merge_voice_credentials, _send_json
 from ai_sdr_agent.voice.elevenlabs_tts import stream_elevenlabs_text_to_ws
+from ai_sdr_agent.voice.echo_filter import RealtimeEchoGuard
 from ai_sdr_agent.voice.openai_realtime import OpenAIRealtimeVoiceBridge
 from ai_sdr_agent.voice.turn_orchestrator import run_voice_graph_turn
 
@@ -37,7 +38,11 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
     active_pipeline: asyncio.Task[None] | None = None
     active_greeting: asyncio.Task[None] | None = None
     bridge: OpenAIRealtimeVoiceBridge | None = None
+    echo_guard = RealtimeEchoGuard()
     httpx_client = httpx.AsyncClient()
+
+    def allow_voice_interruptions() -> bool:
+        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
 
     def invalidate_turns() -> int:
         nonlocal generation
@@ -72,6 +77,7 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
         active_generation: int,
     ) -> bool:
         eleven_key, voice_id, model_id, tts_latency_opt = elevenlabs_config()
+        echo_guard.record_agent_speech(spoken_text)
         return await stream_elevenlabs_text_to_ws(
             spoken_text,
             httpx_client=httpx_client,
@@ -112,6 +118,21 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
         active_pipeline = asyncio.create_task(pipeline(user_text, active_generation, stt_final_pc=stt_final_pc))
 
     async def on_realtime_transcript_final(text: str) -> None:
+        echo_match = echo_guard.check(text)
+        if echo_match is not None:
+            logger.info(
+                "Dropping likely OpenAI Realtime hybrid echo transcript reason={} score={:.2f} transcript={!r} agent_text={!r}",
+                echo_match.reason,
+                echo_match.score,
+                echo_match.transcript,
+                echo_match.agent_text,
+            )
+            return
+        if not allow_voice_interruptions() and (
+            (active_pipeline and not active_pipeline.done()) or (active_greeting and not active_greeting.done())
+        ):
+            logger.info("Ignoring OpenAI Realtime hybrid transcript while interruptions are disabled: {!r}", text)
+            return
         await schedule_pipeline(text, stt_final_pc=time.perf_counter())
 
     async def on_realtime_speech_started() -> None:
@@ -227,6 +248,7 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
             on_transcript_final=on_realtime_transcript_final,
             on_speech_started=on_realtime_speech_started,
             enable_audio_output=False,
+            allow_interruptions=allow_voice_interruptions(),
         )
         await bridge.connect()
 
@@ -234,7 +256,14 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
             active_generation = invalidate_turns()
             active_greeting = asyncio.create_task(send_initial_greeting(state0, active_generation))
 
-        await _send_json(websocket, {"type": "ready", "conversation_id": conversation_id})
+        await _send_json(
+            websocket,
+            {
+                "type": "ready",
+                "conversation_id": conversation_id,
+                "allow_interruptions": allow_voice_interruptions(),
+            },
+        )
 
         while True:
             message = await websocket.receive()
@@ -252,7 +281,8 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
                     continue
                 ctype = ctrl.get("type")
                 if ctype == "interrupt":
-                    await cancel_active_turn(notify_client=True)
+                    if allow_voice_interruptions():
+                        await cancel_active_turn(notify_client=True)
                 elif ctype == "ping":
                     await _send_json(websocket, {"type": "pong"})
     except WebSocketDisconnect:

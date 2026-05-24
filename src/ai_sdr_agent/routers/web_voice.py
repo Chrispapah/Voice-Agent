@@ -159,6 +159,9 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
     dg_tasks: list[asyncio.Task[None]] = []
     httpx_client = httpx.AsyncClient()
 
+    def allow_voice_interruptions() -> bool:
+        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+
     def invalidate_turns() -> int:
         nonlocal generation
         generation += 1
@@ -296,6 +299,12 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                                 if is_final:
                                     stt_pc = time.perf_counter()
                                     await _send_json(websocket, {"type": "transcript.final", "text": transcript})
+                                    if not allow_voice_interruptions() and active_pipeline and not active_pipeline.done():
+                                        logger.info(
+                                            "Ignoring browser voice transcript while interruptions are disabled: {!r}",
+                                            transcript,
+                                        )
+                                        continue
                                     asyncio.create_task(schedule_pipeline(transcript, stt_final_pc=stt_pc))
                                 else:
                                     await _send_json(websocket, {"type": "transcript.partial", "text": transcript})
@@ -430,7 +439,14 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                     )
                 )
 
-        await _send_json(websocket, {"type": "ready", "conversation_id": conversation_id})
+        await _send_json(
+            websocket,
+            {
+                "type": "ready",
+                "conversation_id": conversation_id,
+                "allow_interruptions": allow_voice_interruptions(),
+            },
+        )
 
         dg_task = asyncio.create_task(run_deepgram())
         dg_tasks.append(dg_task)
@@ -451,6 +467,8 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                     continue
                 ctype = ctrl.get("type")
                 if ctype == "interrupt":
+                    if not allow_voice_interruptions():
+                        continue
                     invalidate_turns()
                     if active_pipeline and not active_pipeline.done():
                         active_pipeline.cancel()

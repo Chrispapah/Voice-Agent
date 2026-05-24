@@ -90,6 +90,7 @@ CREATE TABLE public.bot_configs (
   openai_realtime_model character varying NOT NULL DEFAULT 'gpt-realtime'::character varying,
   openai_realtime_voice character varying NOT NULL DEFAULT 'alloy'::character varying,
   openai_realtime_instructions text,
+  allow_voice_interruptions boolean NOT NULL DEFAULT true,
   kb_match_count integer NOT NULL DEFAULT 5,
   kb_min_similarity double precision NOT NULL DEFAULT 0.2,
   kb_embedding_model character varying NOT NULL DEFAULT 'text-embedding-3-small'::character varying,

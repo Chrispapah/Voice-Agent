@@ -64,6 +64,7 @@ class BotConfigRow(Base):
     openai_realtime_model: Mapped[str] = mapped_column(String(100), default="gpt-realtime")
     openai_realtime_voice: Mapped[str] = mapped_column(String(50), default="alloy")
     openai_realtime_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    allow_voice_interruptions: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Telephony – Twilio
     twilio_account_sid: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -127,6 +128,7 @@ class BotConfigRow(Base):
             "openai_realtime_model": self.openai_realtime_model,
             "openai_realtime_voice": self.openai_realtime_voice,
             "openai_realtime_instructions": self.openai_realtime_instructions,
+            "allow_voice_interruptions": self.allow_voice_interruptions,
             "twilio_account_sid": self.twilio_account_sid,
             "twilio_auth_token": self.twilio_auth_token,
             "twilio_phone_number": self.twilio_phone_number,

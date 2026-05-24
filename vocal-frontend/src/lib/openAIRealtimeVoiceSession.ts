@@ -3,7 +3,7 @@ import { formatMicrophoneError } from "./micErrors";
 import type { VoiceSessionCallbacks, VoiceSessionStartOptions } from "./voiceSession";
 
 type ServerJson =
-  | { type: "ready"; conversation_id: string }
+  | { type: "ready"; conversation_id: string; allow_interruptions?: boolean }
   | { type: "transcript.partial"; text: string }
   | { type: "transcript.final"; text: string }
   | { type: "agent.text"; text: string }
@@ -64,6 +64,9 @@ export class OpenAIRealtimeVoiceSession {
   private source: MediaStreamAudioSourceNode | null = null;
   private mutedGain: GainNode | null = null;
   private playbackChain: Promise<void> = Promise.resolve();
+  private queuedPlaybackSegments = 0;
+  private playbackGeneration = 0;
+  private allowInterruptions = true;
   private readonly activeSources: AudioBufferSourceNode[] = [];
   private readonly callbacks: VoiceSessionCallbacks;
 
@@ -122,18 +125,19 @@ export class OpenAIRealtimeVoiceSession {
       }
       switch (msg.type) {
         case "ready":
+          this.allowInterruptions = msg.allow_interruptions ?? true;
           this.callbacks.onReady?.(msg.conversation_id);
           void this.startMic();
           break;
         case "transcript.partial":
-          if (this.isPlaybackActive() && this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (this.allowInterruptions && this.isPlaybackActive() && this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ type: "interrupt" }));
             this.stopPlayback();
           }
           this.callbacks.onTranscriptPartial?.(msg.text);
           break;
         case "transcript.final":
-          this.stopPlayback();
+          if (this.allowInterruptions) this.stopPlayback();
           this.callbacks.onTranscriptFinal?.(msg.text);
           break;
         case "agent.text":
@@ -184,7 +188,7 @@ export class OpenAIRealtimeVoiceSession {
   }
 
   private isPlaybackActive(): boolean {
-    return this.activeSources.length > 0;
+    return this.activeSources.length > 0 || this.queuedPlaybackSegments > 0;
   }
 
   private async ensureAudioContext(): Promise<AudioContext> {
@@ -196,32 +200,40 @@ export class OpenAIRealtimeVoiceSession {
   }
 
   private queuePcmPlayback(samples: Int16Array, sampleRate: number): void {
+    if (samples.length === 0) return;
+    this.queuedPlaybackSegments += 1;
+    const playbackGeneration = this.playbackGeneration;
     const run = async (): Promise<void> => {
-      if (samples.length === 0) return;
-      const ctx = await this.ensureAudioContext();
-      const buffer = ctx.createBuffer(1, samples.length, sampleRate);
-      const channel = buffer.getChannelData(0);
-      for (let i = 0; i < samples.length; i += 1) {
-        channel[i] = Math.max(-1, Math.min(1, samples[i] / 0x8000));
-      }
-      await new Promise<void>((resolve) => {
-        const src = ctx.createBufferSource();
-        src.buffer = buffer;
-        src.connect(ctx.destination);
-        this.activeSources.push(src);
-        src.onended = () => {
-          const idx = this.activeSources.indexOf(src);
-          if (idx >= 0) this.activeSources.splice(idx, 1);
-          resolve();
-        };
-        try {
-          src.start();
-        } catch {
-          const idx = this.activeSources.indexOf(src);
-          if (idx >= 0) this.activeSources.splice(idx, 1);
-          resolve();
+      try {
+        if (playbackGeneration !== this.playbackGeneration) return;
+        const ctx = await this.ensureAudioContext();
+        if (playbackGeneration !== this.playbackGeneration) return;
+        const buffer = ctx.createBuffer(1, samples.length, sampleRate);
+        const channel = buffer.getChannelData(0);
+        for (let i = 0; i < samples.length; i += 1) {
+          channel[i] = Math.max(-1, Math.min(1, samples[i] / 0x8000));
         }
-      });
+        await new Promise<void>((resolve) => {
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(ctx.destination);
+          this.activeSources.push(src);
+          src.onended = () => {
+            const idx = this.activeSources.indexOf(src);
+            if (idx >= 0) this.activeSources.splice(idx, 1);
+            resolve();
+          };
+          try {
+            src.start();
+          } catch {
+            const idx = this.activeSources.indexOf(src);
+            if (idx >= 0) this.activeSources.splice(idx, 1);
+            resolve();
+          }
+        });
+      } finally {
+        this.queuedPlaybackSegments = Math.max(0, this.queuedPlaybackSegments - 1);
+      }
     };
     this.playbackChain = this.playbackChain.then(run).catch(() => undefined);
   }
@@ -284,6 +296,8 @@ export class OpenAIRealtimeVoiceSession {
       }
     }
     this.activeSources.length = 0;
+    this.queuedPlaybackSegments = 0;
+    this.playbackGeneration += 1;
     this.playbackChain = Promise.resolve();
   }
 }

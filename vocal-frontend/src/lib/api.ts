@@ -41,6 +41,7 @@ export interface BotConfig {
   openai_realtime_model: string;
   openai_realtime_voice: string;
   openai_realtime_instructions: string | null;
+  allow_voice_interruptions: boolean;
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
   twilio_phone_number: string | null;

@@ -43,6 +43,7 @@ class OpenAIRealtimeVoiceBridge:
         on_transcript_final: OnTranscriptFinal,
         on_speech_started: OnSpeechStarted,
         enable_audio_output: bool = True,
+        allow_interruptions: bool = True,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -50,6 +51,7 @@ class OpenAIRealtimeVoiceBridge:
         self.transcription_model = transcription_model
         self.instructions = instructions
         self.enable_audio_output = enable_audio_output
+        self.allow_interruptions = allow_interruptions
         self.send_json = send_json
         self.on_transcript_final = on_transcript_final
         self.on_speech_started = on_speech_started
@@ -96,7 +98,7 @@ class OpenAIRealtimeVoiceBridge:
                             "turn_detection": {
                                 "type": "server_vad",
                                 "create_response": False,
-                                "interrupt_response": True,
+                                "interrupt_response": self.allow_interruptions,
                             },
                         },
                         **(
@@ -235,7 +237,8 @@ class OpenAIRealtimeVoiceBridge:
             self._response_active = False
             return
         if event_type == "input_audio_buffer.speech_started":
-            await self.on_speech_started()
+            if self.allow_interruptions:
+                await self.on_speech_started()
             return
         if event_type == "conversation.item.input_audio_transcription.delta":
             delta = str(event.get("delta") or "")

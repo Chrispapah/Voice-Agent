@@ -420,6 +420,7 @@ export default function FlowBuilderPage() {
   const [openAIRealtimeModel, setOpenAIRealtimeModel] = useState(DEFAULT_OPENAI_REALTIME_MODEL);
   const [openAIRealtimeVoice, setOpenAIRealtimeVoice] = useState("alloy");
   const [openAIRealtimeInstructions, setOpenAIRealtimeInstructions] = useState("");
+  const [allowVoiceInterruptions, setAllowVoiceInterruptions] = useState(true);
   const [kbMatchCount, setKbMatchCount] = useState(5);
   const [kbMinSimilarity, setKbMinSimilarity] = useState(0.2);
   const [kbEmbeddingModel, setKbEmbeddingModel] = useState("text-embedding-3-small");
@@ -553,6 +554,7 @@ export default function FlowBuilderPage() {
         setOpenAIRealtimeModel(normalizeOpenAIRealtimeModel(loadedBot.openai_realtime_model));
         setOpenAIRealtimeVoice(loadedBot.openai_realtime_voice || "alloy");
         setOpenAIRealtimeInstructions(loadedBot.openai_realtime_instructions || "");
+        setAllowVoiceInterruptions(loadedBot.allow_voice_interruptions ?? true);
         setKbMatchCount(loadedBot.kb_match_count ?? 5);
         setKbMinSimilarity(loadedBot.kb_min_similarity ?? 0.2);
         setKbEmbeddingModel(loadedBot.kb_embedding_model || "text-embedding-3-small");
@@ -892,6 +894,7 @@ export default function FlowBuilderPage() {
         openai_realtime_model: normalizeOpenAIRealtimeModel(openAIRealtimeModel),
         openai_realtime_voice: openAIRealtimeVoice.trim() || "alloy",
         openai_realtime_instructions: openAIRealtimeInstructions.trim() || null,
+        allow_voice_interruptions: allowVoiceInterruptions,
         kb_match_count: Math.min(20, Math.max(1, Math.round(kbMatchCount || 5))),
         kb_min_similarity: Math.min(1, Math.max(0, Number(kbMinSimilarity ?? 0.2))),
         kb_embedding_model: kbEmbeddingModel.trim() || "text-embedding-3-small",
@@ -1267,6 +1270,20 @@ export default function FlowBuilderPage() {
                     />
                   </div>
                 )}
+                <label className="flex items-start gap-2 rounded-lg border border-border bg-background p-2 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={allowVoiceInterruptions}
+                    onChange={(e) => setAllowVoiceInterruptions(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="block font-medium">Allow voice interruptions</span>
+                    <span className="mt-0.5 block text-[11px] leading-relaxed text-muted-foreground">
+                      Let callers interrupt agent speech by talking. Turn off for stricter no-barge-in calls.
+                    </span>
+                  </span>
+                </label>
                 <p className="text-[11px] leading-relaxed text-muted-foreground">
                   Provider keys stay in Settings; OpenAI Realtime keeps graph prompts, tools, and KB logic on the server.
                 </p>

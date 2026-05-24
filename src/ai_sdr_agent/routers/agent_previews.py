@@ -14,6 +14,7 @@ import httpx
 from aiohttp import WSMsgType
 from aiohttp.client_exceptions import WSServerHandshakeError
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, status
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +40,7 @@ from ai_sdr_agent.transcriber_factory import (
     resolve_web_voice_deepgram_model,
 )
 from ai_sdr_agent.voice.elevenlabs_tts import stream_elevenlabs_text_to_ws
+from ai_sdr_agent.voice.echo_filter import RealtimeEchoGuard
 from ai_sdr_agent.voice.openai_realtime import OpenAIRealtimeVoiceBridge
 from ai_sdr_agent.voice.turn_orchestrator import run_voice_graph_turn
 
@@ -221,6 +223,9 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
     dg_tasks: list[asyncio.Task[None]] = []
     httpx_client = httpx.AsyncClient()
 
+    def allow_voice_interruptions() -> bool:
+        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+
     def invalidate_turns() -> int:
         nonlocal generation
         generation += 1
@@ -347,6 +352,8 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
                                 if is_final:
                                     stt_pc = time.perf_counter()
                                     await _send_json(websocket, {"type": "transcript.final", "text": transcript})
+                                    if not allow_voice_interruptions() and active_pipeline and not active_pipeline.done():
+                                        continue
                                     asyncio.create_task(schedule_pipeline(transcript, stt_final_pc=stt_pc))
                                 else:
                                     await _send_json(websocket, {"type": "transcript.partial", "text": transcript})
@@ -430,7 +437,14 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
                     )
                 )
 
-        await _send_json(websocket, {"type": "ready", "conversation_id": conversation_id})
+        await _send_json(
+            websocket,
+            {
+                "type": "ready",
+                "conversation_id": conversation_id,
+                "allow_interruptions": allow_voice_interruptions(),
+            },
+        )
         dg_task = asyncio.create_task(run_deepgram())
         dg_tasks.append(dg_task)
 
@@ -449,6 +463,8 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
                 except json.JSONDecodeError:
                     continue
                 if ctrl.get("type") == "interrupt":
+                    if not allow_voice_interruptions():
+                        continue
                     invalidate_turns()
                     if active_pipeline and not active_pipeline.done():
                         active_pipeline.cancel()
@@ -490,6 +506,10 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
     generation = 0
     active_pipeline: asyncio.Task[None] | None = None
     bridge: OpenAIRealtimeVoiceBridge | None = None
+    echo_guard = RealtimeEchoGuard()
+
+    def allow_voice_interruptions() -> bool:
+        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
 
     def invalidate_turns() -> int:
         nonlocal generation
@@ -512,6 +532,7 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
     async def synthesize_realtime_text(spoken_text: str, mark_first_audio: Any) -> bool:
         if bridge is None:
             return False
+        echo_guard.record_agent_speech(spoken_text)
         ok = await bridge.speak_text(spoken_text)
         if ok:
             mark_first_audio()
@@ -540,6 +561,19 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
         active_pipeline = asyncio.create_task(pipeline(user_text, my_gen, stt_final_pc=stt_final_pc))
 
     async def on_realtime_transcript_final(text: str) -> None:
+        echo_match = echo_guard.check(text)
+        if echo_match is not None:
+            logger.info(
+                "Dropping likely preview OpenAI Realtime echo transcript reason={} score={:.2f} transcript={!r} agent_text={!r}",
+                echo_match.reason,
+                echo_match.score,
+                echo_match.transcript,
+                echo_match.agent_text,
+            )
+            return
+        if not allow_voice_interruptions() and active_pipeline and not active_pipeline.done():
+            logger.info("Ignoring preview OpenAI Realtime transcript while interruptions are disabled: {!r}", text)
+            return
         await schedule_pipeline(text, stt_final_pc=time.perf_counter())
 
     async def on_realtime_speech_started() -> None:
@@ -607,6 +641,7 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
             send_json=lambda payload: _send_json(websocket, payload),
             on_transcript_final=on_realtime_transcript_final,
             on_speech_started=on_realtime_speech_started,
+            allow_interruptions=allow_voice_interruptions(),
         )
         await bridge.connect()
 
@@ -624,7 +659,14 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
             if reply:
                 active_pipeline = asyncio.create_task(synthesize_realtime_text(reply, lambda: None))
 
-        await _send_json(websocket, {"type": "ready", "conversation_id": conversation_id})
+        await _send_json(
+            websocket,
+            {
+                "type": "ready",
+                "conversation_id": conversation_id,
+                "allow_interruptions": allow_voice_interruptions(),
+            },
+        )
 
         while True:
             message = await websocket.receive()
@@ -642,7 +684,8 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
                     continue
                 ctype = ctrl.get("type")
                 if ctype == "interrupt":
-                    await cancel_active_turn(notify_client=True)
+                    if allow_voice_interruptions():
+                        await cancel_active_turn(notify_client=True)
                 elif ctype == "ping":
                     await _send_json(websocket, {"type": "pong"})
     except WebSocketDisconnect:
@@ -676,7 +719,11 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
     active_pipeline: asyncio.Task[None] | None = None
     active_greeting: asyncio.Task[None] | None = None
     bridge: OpenAIRealtimeVoiceBridge | None = None
+    echo_guard = RealtimeEchoGuard()
     httpx_client = httpx.AsyncClient()
+
+    def allow_voice_interruptions() -> bool:
+        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
 
     def invalidate_turns() -> int:
         nonlocal generation
@@ -711,6 +758,7 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
         active_generation: int,
     ) -> bool:
         eleven_key, voice_id, model_id, tts_latency_opt = elevenlabs_config()
+        echo_guard.record_agent_speech(spoken_text)
         return await stream_elevenlabs_text_to_ws(
             spoken_text,
             httpx_client=httpx_client,
@@ -751,6 +799,24 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
         active_pipeline = asyncio.create_task(pipeline(user_text, active_generation, stt_final_pc=stt_final_pc))
 
     async def on_realtime_transcript_final(text: str) -> None:
+        echo_match = echo_guard.check(text)
+        if echo_match is not None:
+            logger.info(
+                "Dropping likely preview OpenAI Realtime hybrid echo transcript reason={} score={:.2f} transcript={!r} agent_text={!r}",
+                echo_match.reason,
+                echo_match.score,
+                echo_match.transcript,
+                echo_match.agent_text,
+            )
+            return
+        if not allow_voice_interruptions() and (
+            (active_pipeline and not active_pipeline.done()) or (active_greeting and not active_greeting.done())
+        ):
+            logger.info(
+                "Ignoring preview OpenAI Realtime hybrid transcript while interruptions are disabled: {!r}",
+                text,
+            )
+            return
         await schedule_pipeline(text, stt_final_pc=time.perf_counter())
 
     async def on_realtime_speech_started() -> None:
@@ -847,6 +913,7 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
             on_transcript_final=on_realtime_transcript_final,
             on_speech_started=on_realtime_speech_started,
             enable_audio_output=False,
+            allow_interruptions=allow_voice_interruptions(),
         )
         await bridge.connect()
 
@@ -854,7 +921,14 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
             active_generation = invalidate_turns()
             active_greeting = asyncio.create_task(send_initial_greeting(state0, active_generation))
 
-        await _send_json(websocket, {"type": "ready", "conversation_id": conversation_id})
+        await _send_json(
+            websocket,
+            {
+                "type": "ready",
+                "conversation_id": conversation_id,
+                "allow_interruptions": allow_voice_interruptions(),
+            },
+        )
 
         while True:
             message = await websocket.receive()
@@ -872,7 +946,8 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
                     continue
                 ctype = ctrl.get("type")
                 if ctype == "interrupt":
-                    await cancel_active_turn(notify_client=True)
+                    if allow_voice_interruptions():
+                        await cancel_active_turn(notify_client=True)
                 elif ctype == "ping":
                     await _send_json(websocket, {"type": "pong"})
     except WebSocketDisconnect:

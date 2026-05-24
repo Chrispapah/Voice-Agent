@@ -21,7 +21,7 @@ export type VoiceSessionStartOptions = {
 };
 
 type ServerJson =
-  | { type: "ready"; conversation_id: string }
+  | { type: "ready"; conversation_id: string; allow_interruptions?: boolean }
   | { type: "transcript.partial"; text: string }
   | { type: "transcript.final"; text: string }
   | { type: "agent.text"; text: string }
@@ -56,6 +56,7 @@ export class VoiceSession {
   private phraseChunks: Uint8Array[] = [];
   private playbackChain: Promise<void> = Promise.resolve();
   private audioContext: AudioContext | null = null;
+  private allowInterruptions = true;
   private readonly activeSources: AudioBufferSourceNode[] = [];
   private readonly callbacks: VoiceSessionCallbacks;
 
@@ -167,19 +168,22 @@ export class VoiceSession {
       }
       switch (msg.type) {
         case "ready":
+          this.allowInterruptions = msg.allow_interruptions ?? true;
           this.callbacks.onReady?.(msg.conversation_id);
           void this.startMic();
           break;
         case "transcript.partial":
-          if (this.isPlaybackActive() && this.ws && this.ws.readyState === WebSocket.OPEN) {
+          if (this.allowInterruptions && this.isPlaybackActive() && this.ws && this.ws.readyState === WebSocket.OPEN) {
             this.ws.send(JSON.stringify({ type: "interrupt" }));
             this.stopPlayback();
           }
           this.callbacks.onTranscriptPartial?.(msg.text);
           break;
         case "transcript.final":
-          this.stopPlayback();
-          this.phraseChunks = [];
+          if (this.allowInterruptions) {
+            this.stopPlayback();
+            this.phraseChunks = [];
+          }
           this.callbacks.onTranscriptFinal?.(msg.text);
           break;
         case "agent.text":

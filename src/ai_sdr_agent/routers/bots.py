@@ -50,6 +50,7 @@ _BOT_UPDATE_FIELDS = {
     "openai_realtime_model",
     "openai_realtime_voice",
     "openai_realtime_instructions",
+    "allow_voice_interruptions",
     "twilio_account_sid",
     "twilio_auth_token",
     "twilio_phone_number",
@@ -99,6 +100,7 @@ class BotUpdateRequest(BaseModel):
     openai_realtime_model: str | None = None
     openai_realtime_voice: str | None = None
     openai_realtime_instructions: str | None = None
+    allow_voice_interruptions: bool | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_phone_number: str | None = None
@@ -162,6 +164,7 @@ def _public_bot(row: BotConfigRow) -> dict[str, Any]:
         "openai_realtime_model": row.openai_realtime_model,
         "openai_realtime_voice": row.openai_realtime_voice,
         "openai_realtime_instructions": row.openai_realtime_instructions,
+        "allow_voice_interruptions": row.allow_voice_interruptions,
         "twilio_account_sid": _mask_secret(row.twilio_account_sid),
         "twilio_auth_token": _mask_secret(row.twilio_auth_token),
         "twilio_phone_number": row.twilio_phone_number,
