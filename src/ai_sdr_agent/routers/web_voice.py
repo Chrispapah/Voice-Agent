@@ -298,6 +298,12 @@ async def voice_session(websocket: WebSocket, bot_id: str) -> None:
                                 is_final = bool(payload.get("is_final") or payload.get("speech_final"))
                                 if is_final:
                                     stt_pc = time.perf_counter()
+                                    logger.info(
+                                        "Deepgram transcript_final route=web_voice bot_id={} conversation_id={} text={!r}",
+                                        bot_id,
+                                        conversation_id,
+                                        transcript,
+                                    )
                                     await _send_json(websocket, {"type": "transcript.final", "text": transcript})
                                     if not allow_voice_interruptions() and active_pipeline and not active_pipeline.done():
                                         logger.info(

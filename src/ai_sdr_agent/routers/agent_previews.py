@@ -351,6 +351,12 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
                                 is_final = bool(payload.get("is_final") or payload.get("speech_final"))
                                 if is_final:
                                     stt_pc = time.perf_counter()
+                                    logger.info(
+                                        "Deepgram transcript_final route=agent_preview bot_id={} conversation_id={} text={!r}",
+                                        bid,
+                                        conversation_id,
+                                        transcript,
+                                    )
                                     await _send_json(websocket, {"type": "transcript.final", "text": transcript})
                                     if not allow_voice_interruptions() and active_pipeline and not active_pipeline.done():
                                         continue
