@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { PhoneCall, Calendar, Filter, Upload, History } from "lucide-react";
+import { PhoneCall, Calendar, Filter, Upload, History, MessageSquare } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AuthRequiredError, listCalls, type CallLog } from "@/lib/api";
 
 const dot = (color: string) => <span className={`inline-block w-1.5 h-1.5 rounded-full mr-1.5 ${color}`} />;
@@ -21,11 +29,19 @@ function duration(startedAt: string | null, completedAt: string | null): string 
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
+function roleLabel(role: string): string {
+  const normalized = role.toLowerCase();
+  if (["human", "user", "lead", "caller"].includes(normalized)) return "Client";
+  if (["assistant", "agent", "ai"].includes(normalized)) return "Voicebot";
+  return role;
+}
+
 export default function CallHistoryPage() {
   const navigate = useNavigate();
   const [calls, setCalls] = useState<CallLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selectedCall, setSelectedCall] = useState<CallLog | null>(null);
 
   useEffect(() => {
     listCalls()
@@ -109,7 +125,19 @@ export default function CallHistoryPage() {
                   <td className="px-4 py-3">{r.meeting_booked ? "Yes" : "No"}</td>
                   <td className="px-4 py-3">{r.proposed_slot || "-"}</td>
                   <td className="px-4 py-3">{r.follow_up_action || "-"}</td>
-                  <td className="px-4 py-3">{r.transcriptCount}</td>
+                  <td className="px-4 py-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 gap-1.5 px-2"
+                      disabled={r.transcriptCount === 0}
+                      onClick={() => setSelectedCall(r)}
+                    >
+                      <MessageSquare className="h-3.5 w-3.5" />
+                      {r.transcriptCount === 0 ? "No transcript" : `View (${r.transcriptCount})`}
+                    </Button>
+                  </td>
                 </tr>
               ))}
           </tbody>
@@ -118,6 +146,69 @@ export default function CallHistoryPage() {
       <footer className="px-8 py-3 border-t border-border text-xs text-muted-foreground">
         Page 1 of 1 · Total Sessions: {rows.length}
       </footer>
+      <Dialog open={selectedCall !== null} onOpenChange={(open) => !open && setSelectedCall(null)}>
+        <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Conversation Transcript</DialogTitle>
+            <DialogDescription>
+              {selectedCall ? (
+                <span className="font-mono text-xs">
+                  {selectedCall.conversation_id}
+                </span>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedCall && (
+            <div className="space-y-4">
+              <div className="grid gap-3 rounded-lg border border-border bg-surface-muted/40 p-3 text-sm md:grid-cols-4">
+                <div>
+                  <div className="text-xs text-muted-foreground">Started</div>
+                  <div className="mt-1">{formatDate(selectedCall.started_at)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Duration</div>
+                  <div className="mt-1">{duration(selectedCall.started_at, selectedCall.completed_at)}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Outcome</div>
+                  <div className="mt-1 capitalize">{selectedCall.call_outcome.replace(/_/g, " ")}</div>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground">Turns</div>
+                  <div className="mt-1">{selectedCall.transcript.length}</div>
+                </div>
+              </div>
+
+              <div className="max-h-[55vh] space-y-3 overflow-y-auto pr-2">
+                {selectedCall.transcript.length === 0 ? (
+                  <div className="rounded-lg border border-dashed border-border py-10 text-center text-sm text-muted-foreground">
+                    No transcript turns were captured for this conversation.
+                  </div>
+                ) : (
+                  selectedCall.transcript.map((turn, index) => {
+                    const label = roleLabel(turn.role);
+                    const isClient = label === "Client";
+                    return (
+                      <div
+                        key={`${turn.role}-${index}`}
+                        className={`rounded-xl border border-border p-4 ${
+                          isClient ? "bg-card" : "bg-primary/5"
+                        }`}
+                      >
+                        <div className="mb-2">
+                          <Badge variant={isClient ? "secondary" : "default"}>{label}</Badge>
+                        </div>
+                        <p className="whitespace-pre-wrap text-sm leading-6">{turn.content || "-"}</p>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
