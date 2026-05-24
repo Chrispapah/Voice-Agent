@@ -56,6 +56,11 @@ export default function CallHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedCall, setSelectedCall] = useState<CallLog | null>(null);
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [agentFilter, setAgentFilter] = useState("all");
+  const [qualityFilter, setQualityFilter] = useState<"all" | CallQuality>("all");
+  const [searchText, setSearchText] = useState("");
 
   useEffect(() => {
     listCalls()
@@ -70,7 +75,7 @@ export default function CallHistoryPage() {
       .finally(() => setLoading(false));
   }, [navigate]);
 
-  const rows = useMemo(
+  const allRows = useMemo(
     () =>
       calls.map((call) => ({
         ...call,
@@ -80,6 +85,44 @@ export default function CallHistoryPage() {
       })),
     [calls],
   );
+
+  const agentOptions = useMemo(
+    () =>
+      Array.from(new Set(allRows.map((call) => call.agent_name || "Unknown agent"))).sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    [allRows],
+  );
+
+  const rows = useMemo(() => {
+    const fromMs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
+    const toMs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+    const query = searchText.trim().toLowerCase();
+
+    return allRows.filter((call) => {
+      const startedMs = call.started_at ? new Date(call.started_at).getTime() : null;
+      if (fromMs !== null && (startedMs === null || startedMs < fromMs)) return false;
+      if (toMs !== null && (startedMs === null || startedMs > toMs)) return false;
+      if (agentFilter !== "all" && (call.agent_name || "Unknown agent") !== agentFilter) return false;
+      if (qualityFilter !== "all" && callQuality(call) !== qualityFilter) return false;
+      if (!query) return true;
+      return [
+        call.agent_name,
+        call.conversation_id,
+        call.lead_id,
+      ].some((value) => (value || "").toLowerCase().includes(query));
+    });
+  }, [agentFilter, allRows, dateFrom, dateTo, qualityFilter, searchText]);
+
+  const hasActiveFilters = Boolean(dateFrom || dateTo || agentFilter !== "all" || qualityFilter !== "all" || searchText);
+
+  function clearFilters(): void {
+    setDateFrom("");
+    setDateTo("");
+    setAgentFilter("all");
+    setQualityFilter("all");
+    setSearchText("");
+  }
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -95,9 +138,70 @@ export default function CallHistoryPage() {
           <Button variant="outline" size="sm">Custom Attributes</Button>
         </div>
       </header>
-      <div className="flex items-center gap-2 px-8 py-3 border-b border-border">
-        <Button variant="outline" size="sm" className="gap-1.5"><Calendar className="w-4 h-4" /> Date Range</Button>
-        <Button variant="outline" size="sm" className="gap-1.5"><Filter className="w-4 h-4" /> Filter</Button>
+      <div className="flex flex-wrap items-end gap-3 px-8 py-3 border-b border-border">
+        <div>
+          <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Calendar className="w-3.5 h-3.5" /> From
+          </label>
+          <input
+            type="date"
+            value={dateFrom}
+            onChange={(event) => setDateFrom(event.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">To</label>
+          <input
+            type="date"
+            value={dateTo}
+            onChange={(event) => setDateTo(event.target.value)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+            <Filter className="w-3.5 h-3.5" /> Agent
+          </label>
+          <select
+            value={agentFilter}
+            onChange={(event) => setAgentFilter(event.target.value)}
+            className="h-9 min-w-40 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All agents</option>
+            {agentOptions.map((agent) => (
+              <option key={agent} value={agent}>{agent}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Call Quality</label>
+          <select
+            value={qualityFilter}
+            onChange={(event) => setQualityFilter(event.target.value as "all" | CallQuality)}
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="all">All quality</option>
+            <option value="satisfactory">Satisfactory</option>
+            <option value="needs_attention">Needs attention</option>
+            <option value="unsatisfactory">Unsatisfactory</option>
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-muted-foreground">Search</label>
+          <input
+            type="search"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Agent, lead, conversation..."
+            className="h-9 w-56 rounded-md border border-input bg-background px-3 text-sm"
+          />
+        </div>
+        {hasActiveFilters && (
+          <Button variant="ghost" size="sm" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        )}
       </div>
       <div className="flex-1 overflow-auto">
         {error && (
@@ -124,7 +228,9 @@ export default function CallHistoryPage() {
             {!loading && rows.length === 0 && (
               <tr>
                 <td className="px-4 py-8 text-center text-muted-foreground" colSpan={7}>
-                  No call logs yet. Test conversations and completed calls will appear here.
+                  {hasActiveFilters
+                    ? "No call logs match the selected filters."
+                    : "No call logs yet. Test conversations and completed calls will appear here."}
                 </td>
               </tr>
             )}
@@ -160,7 +266,7 @@ export default function CallHistoryPage() {
         </table>
       </div>
       <footer className="px-8 py-3 border-t border-border text-xs text-muted-foreground">
-        Page 1 of 1 · Total Sessions: {rows.length}
+        Page 1 of 1 · Showing {rows.length} of {allRows.length} sessions
       </footer>
       <Dialog open={selectedCall !== null} onOpenChange={(open) => !open && setSelectedCall(null)}>
         <DialogContent className="max-h-[85vh] max-w-3xl overflow-hidden">
