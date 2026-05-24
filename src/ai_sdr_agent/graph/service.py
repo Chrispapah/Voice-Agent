@@ -5,6 +5,7 @@ import re
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator
 
@@ -400,6 +401,7 @@ class SDRConversationService:
             updated_state["transcript"],
             trace={**updated_metadata, "step": "call_quality"},
         )
+        completed_at = datetime.now(timezone.utc)
 
         persist_start = time.perf_counter()
         if self._can_parallelize_persistence():
@@ -414,6 +416,7 @@ class SDRConversationService:
                     CallLogRecord(
                         conversation_id=conversation_id,
                         lead_id=updated_state["lead_id"],
+                        completed_at=completed_at,
                         call_outcome=updated_state["call_outcome"],
                         call_quality=call_quality,
                         transcript=updated_state["transcript"],
@@ -438,6 +441,7 @@ class SDRConversationService:
                 CallLogRecord(
                     conversation_id=conversation_id,
                     lead_id=updated_state["lead_id"],
+                    completed_at=completed_at,
                     call_outcome=updated_state["call_outcome"],
                     call_quality=call_quality,
                     transcript=updated_state["transcript"],

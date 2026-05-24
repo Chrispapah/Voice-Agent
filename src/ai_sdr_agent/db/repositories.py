@@ -139,6 +139,7 @@ class PgCallLogRepository:
                 bot_id=self.bot_id,
                 conversation_id=call_log.conversation_id,
                 lead_id=call_log.lead_id,
+                completed_at=call_log.completed_at,
                 call_outcome=call_log.call_outcome,
                 call_quality=call_log.call_quality,
                 transcript=call_log.transcript,
@@ -149,6 +150,7 @@ class PgCallLogRepository:
             )
             self.session.add(row)
         else:
+            row.completed_at = call_log.completed_at
             row.call_outcome = call_log.call_outcome
             row.call_quality = call_log.call_quality
             row.transcript = call_log.transcript

@@ -177,6 +177,7 @@ async def test_call_quality_is_saved_from_llm_classification():
     call_log = await service.dependencies.call_log_repository.get_call_log(conversation_id)
     assert call_log is not None
     assert call_log.call_quality == "satisfactory"
+    assert call_log.completed_at is not None
 
 
 @pytest.mark.asyncio
