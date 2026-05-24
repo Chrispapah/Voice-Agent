@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "./pages/NotFound.tsx";
 import AuthPage from "./pages/Auth.tsx";
+import ForgotPasswordPage from "./pages/ForgotPassword.tsx";
+import ResetPasswordPage from "./pages/ResetPassword.tsx";
 import AgentsPage from "./pages/Agents.tsx";
 import FlowBuilderPage from "./pages/FlowBuilder.tsx";
 import KnowledgeBasePage from "./pages/KnowledgeBase.tsx";
@@ -33,6 +35,8 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/auth" element={<AuthPage />} />
+          <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/preview/conversation/:token" element={<ConversationPreviewPage />} />
           <Route path="/preview/agent/:token" element={<AgentPreviewPage />} />
           <Route element={<AppLayout />}>

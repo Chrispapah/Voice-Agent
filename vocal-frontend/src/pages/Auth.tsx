@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Bot, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { clearLocalBearerToken, saveLocalBearerToken } from "@/lib/api";
@@ -144,7 +144,14 @@ export default function AuthPage() {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold text-muted-foreground">Password</label>
+              <div className="mb-1 flex items-center justify-between gap-3">
+                <label className="block text-xs font-semibold text-muted-foreground">Password</label>
+                {mode === "sign-in" && (
+                  <Link to="/forgot-password" className="text-xs font-medium text-primary hover:underline">
+                    Forgot password?
+                  </Link>
+                )}
+              </div>
               <input
                 type="password"
                 value={password}
