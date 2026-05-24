@@ -1,8 +1,7 @@
 import { FormEvent, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bot, KeyRound } from "lucide-react";
+import { Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { clearLocalBearerToken, saveLocalBearerToken } from "@/lib/api";
 import { assertSupabaseConfigured, isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 type AuthMode = "sign-in" | "sign-up";
@@ -13,7 +12,6 @@ export default function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
-  const [token, setToken] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -23,7 +21,6 @@ export default function AuthPage() {
     setLoading(true);
     setError("");
     setMessage("");
-    clearLocalBearerToken();
     try {
       assertSupabaseConfigured();
       if (mode === "sign-in") {
@@ -50,16 +47,6 @@ export default function AuthPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function handleTokenSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (!token.trim()) {
-      setError("Paste a bearer token first.");
-      return;
-    }
-    saveLocalBearerToken(token.trim());
-    navigate("/agents");
   }
 
   return (
@@ -113,7 +100,7 @@ export default function AuthPage() {
 
           {!isSupabaseConfigured() && (
             <div className="mb-4 rounded-lg border border-warning/30 bg-warning/10 p-3 text-xs text-foreground">
-              Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to your `.env.local`, or use a bearer token below.
+              Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` to your `.env.local` to enable authentication.
             </div>
           )}
 
@@ -163,28 +150,6 @@ export default function AuthPage() {
             </div>
             <Button className="w-full bg-gradient-primary text-primary-foreground hover:opacity-90" type="submit" disabled={loading}>
               {loading ? "Working..." : mode === "sign-in" ? "Sign In" : "Create Account"}
-            </Button>
-          </form>
-
-          <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
-            <div className="h-px flex-1 bg-border" />
-            local dev
-            <div className="h-px flex-1 bg-border" />
-          </div>
-
-          <form onSubmit={handleTokenSubmit} className="space-y-3">
-            <label className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
-              <KeyRound className="h-3.5 w-3.5" /> Bearer token
-            </label>
-            <textarea
-              rows={3}
-              value={token}
-              onChange={(event) => setToken(event.target.value)}
-              className="w-full rounded-lg border border-border bg-background px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-ring/40"
-              placeholder="Paste Supabase access token for local testing"
-            />
-            <Button variant="outline" className="w-full" type="submit">
-              Continue With Token
             </Button>
           </form>
         </section>

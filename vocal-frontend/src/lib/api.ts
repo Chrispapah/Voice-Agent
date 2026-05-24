@@ -9,7 +9,6 @@ import { DEFAULT_ELEVENLABS_VOICE_ID, DEFAULT_SPEECH_LANGUAGE_CODE } from "./voi
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3000";
 const STATIC_BEARER_TOKEN = import.meta.env.VITE_API_BEARER_TOKEN;
-const LOCAL_BEARER_TOKEN_KEY = "akoi-api-bearer-token";
 
 export class AuthRequiredError extends Error {
   constructor() {
@@ -322,21 +321,8 @@ function tokenFromSupabaseStorage(): string | null {
   return null;
 }
 
-function localBearerToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.localStorage.getItem(LOCAL_BEARER_TOKEN_KEY);
-}
-
-export function saveLocalBearerToken(token: string): void {
-  window.localStorage.setItem(LOCAL_BEARER_TOKEN_KEY, token);
-}
-
-export function clearLocalBearerToken(): void {
-  window.localStorage.removeItem(LOCAL_BEARER_TOKEN_KEY);
-}
-
 async function requireAccessToken(): Promise<string> {
-  const token = STATIC_BEARER_TOKEN || localBearerToken() || await getSupabaseAccessToken() || tokenFromSupabaseStorage();
+  const token = STATIC_BEARER_TOKEN || await getSupabaseAccessToken() || tokenFromSupabaseStorage();
   if (!token) {
     throw new AuthRequiredError();
   }
