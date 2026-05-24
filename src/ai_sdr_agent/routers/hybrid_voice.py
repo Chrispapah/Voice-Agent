@@ -249,6 +249,10 @@ async def openai_realtime_elevenlabs_voice_session(websocket: WebSocket, bot_id:
             on_speech_started=on_realtime_speech_started,
             enable_audio_output=False,
             allow_interruptions=allow_voice_interruptions(),
+            vad_threshold=settings.openai_realtime_vad_threshold,
+            vad_silence_duration_ms=settings.openai_realtime_vad_silence_duration_ms,
+            vad_prefix_padding_ms=settings.openai_realtime_vad_prefix_padding_ms,
+            log_context=f"route=openai_realtime_elevenlabs bot_id={bot_id} conversation_id={conversation_id}",
         )
         await bridge.connect()
 

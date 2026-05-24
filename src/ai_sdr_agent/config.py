@@ -70,6 +70,10 @@ class SDRSettings(BaseSettings):
     openai_realtime_voice: str = "alloy"
     openai_realtime_instructions: str | None = None
     openai_realtime_transcription_model: str = "gpt-4o-mini-transcribe"
+    # Higher VAD threshold and longer silence reduce false barge-ins from speaker echo/noise.
+    openai_realtime_vad_threshold: float = 0.75
+    openai_realtime_vad_silence_duration_ms: int = 700
+    openai_realtime_vad_prefix_padding_ms: int = 300
 
     azure_speech_key: str | None = None
     azure_speech_region: str | None = None

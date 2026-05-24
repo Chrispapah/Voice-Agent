@@ -44,6 +44,10 @@ class OpenAIRealtimeVoiceBridge:
         on_speech_started: OnSpeechStarted,
         enable_audio_output: bool = True,
         allow_interruptions: bool = True,
+        vad_threshold: float = 0.75,
+        vad_silence_duration_ms: int = 700,
+        vad_prefix_padding_ms: int = 300,
+        log_context: str | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
@@ -52,6 +56,10 @@ class OpenAIRealtimeVoiceBridge:
         self.instructions = instructions
         self.enable_audio_output = enable_audio_output
         self.allow_interruptions = allow_interruptions
+        self.vad_threshold = max(0.0, min(1.0, float(vad_threshold)))
+        self.vad_silence_duration_ms = max(100, min(3000, int(vad_silence_duration_ms)))
+        self.vad_prefix_padding_ms = max(0, min(1000, int(vad_prefix_padding_ms)))
+        self.log_context = log_context or "-"
         self.send_json = send_json
         self.on_transcript_final = on_transcript_final
         self.on_speech_started = on_speech_started
@@ -84,6 +92,17 @@ class OpenAIRealtimeVoiceBridge:
             )
             if part and part.strip()
         )
+        logger.info(
+            "OpenAI Realtime session_update context={} model={} transcription_model={} allow_interruptions={} "
+            "vad_threshold={:.2f} vad_silence_duration_ms={} vad_prefix_padding_ms={}",
+            self.log_context,
+            self.model,
+            self.transcription_model,
+            self.allow_interruptions,
+            self.vad_threshold,
+            self.vad_silence_duration_ms,
+            self.vad_prefix_padding_ms,
+        )
         await self._send_openai(
             {
                 "type": "session.update",
@@ -97,6 +116,9 @@ class OpenAIRealtimeVoiceBridge:
                             "transcription": {"model": self.transcription_model, "language": "el"},
                             "turn_detection": {
                                 "type": "server_vad",
+                                "threshold": self.vad_threshold,
+                                "silence_duration_ms": self.vad_silence_duration_ms,
+                                "prefix_padding_ms": self.vad_prefix_padding_ms,
                                 "create_response": False,
                                 "interrupt_response": self.allow_interruptions,
                             },
@@ -237,12 +259,23 @@ class OpenAIRealtimeVoiceBridge:
             self._response_active = False
             return
         if event_type == "input_audio_buffer.speech_started":
+            logger.info(
+                "OpenAI Realtime speech_started context={} allow_interruptions={} response_active={}",
+                self.log_context,
+                self.allow_interruptions,
+                self._response_active,
+            )
             if self.allow_interruptions:
                 await self.on_speech_started()
             return
         if event_type == "conversation.item.input_audio_transcription.delta":
             delta = str(event.get("delta") or "")
             if delta:
+                logger.info(
+                    "OpenAI Realtime transcript_partial context={} text={!r}",
+                    self.log_context,
+                    delta,
+                )
                 await self.send_json({"type": "transcript.partial", "text": delta})
             return
         if event_type in {
@@ -251,6 +284,11 @@ class OpenAIRealtimeVoiceBridge:
         }:
             transcript = str(event.get("transcript") or "").strip()
             if transcript:
+                logger.info(
+                    "OpenAI Realtime transcript_final context={} text={!r}",
+                    self.log_context,
+                    transcript,
+                )
                 await self.send_json({"type": "transcript.final", "text": transcript})
                 await self.on_transcript_final(transcript)
             return

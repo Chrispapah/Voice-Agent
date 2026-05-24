@@ -642,6 +642,10 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
             on_transcript_final=on_realtime_transcript_final,
             on_speech_started=on_realtime_speech_started,
             allow_interruptions=allow_voice_interruptions(),
+            vad_threshold=settings.openai_realtime_vad_threshold,
+            vad_silence_duration_ms=settings.openai_realtime_vad_silence_duration_ms,
+            vad_prefix_padding_ms=settings.openai_realtime_vad_prefix_padding_ms,
+            log_context=f"route=preview_openai_realtime token={token[:8]} conversation_id={conversation_id}",
         )
         await bridge.connect()
 
@@ -914,6 +918,10 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
             on_speech_started=on_realtime_speech_started,
             enable_audio_output=False,
             allow_interruptions=allow_voice_interruptions(),
+            vad_threshold=settings.openai_realtime_vad_threshold,
+            vad_silence_duration_ms=settings.openai_realtime_vad_silence_duration_ms,
+            vad_prefix_padding_ms=settings.openai_realtime_vad_prefix_padding_ms,
+            log_context=f"route=preview_openai_realtime_elevenlabs token={token[:8]} conversation_id={conversation_id}",
         )
         await bridge.connect()
 
