@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ChevronLeft, Plus, Trash2, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,38 +13,70 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import WorkspaceEnvVarsPanel from "@/components/WorkspaceEnvVarsPanel";
+import {
   AuthRequiredError,
   createTool,
   deleteTool,
+  listAuthConnections,
   listTools,
   updateTool,
+  type AuthConnection,
   type ToolDefinition,
   type ToolDefinitionKind,
 } from "@/lib/api";
+import {
+  configToJson,
+  defaultHttpToolConfig,
+  parseToolConfig,
+  syncPathParameters,
+  type HttpToolConfigV1,
+  type ToolHeader,
+  type ToolParameterDef,
+} from "@/lib/toolConfig";
 
 const toolKinds: ToolDefinitionKind[] = ["http", "webhook", "custom"];
 
-function endpointFromConfig(config: Record<string, unknown>): string {
-  return typeof config.endpoint_url === "string" ? config.endpoint_url : "";
+const labelClass = "text-[11px] font-semibold text-muted-foreground tracking-wide";
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <label className={labelClass}>{children}</label>;
+}
+
+function textInput(className = "") {
+  return `mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm ${className}`;
 }
 
 export default function ToolsPage() {
   const navigate = useNavigate();
   const [tools, setTools] = useState<ToolDefinition[]>([]);
+  const [authConnections, setAuthConnections] = useState<AuthConnection[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
   const [selectedToolId, setSelectedToolId] = useState<string | null>(null);
   const [toolPendingDelete, setToolPendingDelete] = useState<ToolDefinition | null>(null);
+  const [envDialogOpen, setEnvDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [kind, setKind] = useState<ToolDefinitionKind>("http");
-  const [endpoint, setEndpoint] = useState("");
+  const [config, setConfig] = useState<HttpToolConfigV1>(defaultHttpToolConfig());
+  const [parametersJson, setParametersJson] = useState(
+    JSON.stringify(defaultHttpToolConfig().parameters, null, 2),
+  );
 
   useEffect(() => {
-    listTools()
-      .then(setTools)
+    Promise.all([listTools(), listAuthConnections().catch(() => [])])
+      .then(([toolList, connections]) => {
+        setTools(toolList);
+        setAuthConnections(connections);
+      })
       .catch((err: unknown) => {
         if (err instanceof AuthRequiredError) {
           navigate("/auth");
@@ -59,8 +91,10 @@ export default function ToolsPage() {
     setSelectedToolId(null);
     setName("");
     setDescription("");
-    setEndpoint("");
     setKind("http");
+    const d = defaultHttpToolConfig();
+    setConfig(d);
+    setParametersJson(JSON.stringify(d.parameters, null, 2));
     setError("");
   }
 
@@ -69,28 +103,51 @@ export default function ToolsPage() {
     setName(tool.name);
     setDescription(tool.description);
     setKind(tool.kind);
-    setEndpoint(endpointFromConfig(tool.config_json));
+    const parsed = parseToolConfig(tool.config_json);
+    setConfig(parsed);
+    setParametersJson(JSON.stringify(parsed.parameters ?? defaultHttpToolConfig().parameters, null, 2));
     setError("");
+  }
+
+  function updateConfig(patch: Partial<HttpToolConfigV1>) {
+    setConfig((current) => {
+      const next = { ...current, ...patch };
+      if (patch.url !== undefined) {
+        next.path_parameters = syncPathParameters(patch.url, current.path_parameters);
+      }
+      return next;
+    });
+  }
+
+  function setHeaders(headers: ToolHeader[]) {
+    updateConfig({ headers });
+  }
+
+  function setQueryParams(query_parameters: ToolParameterDef[]) {
+    updateConfig({ query_parameters });
   }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
+    if (kind === "custom") {
+      setError("Custom tools are not supported at runtime yet.");
+      return;
+    }
+    let parameters: Record<string, unknown> | null = null;
+    try {
+      parameters = JSON.parse(parametersJson) as Record<string, unknown>;
+    } catch {
+      setError("LLM parameters must be valid JSON Schema.");
+      return;
+    }
     setSubmitting(true);
     setError("");
-    const existingConfig = selectedToolId
-      ? tools.find((tool) => tool.id === selectedToolId)?.config_json ?? {}
-      : {};
     const payload = {
       name: name.trim(),
       description: description.trim(),
       kind,
-      config_json: {
-        ...existingConfig,
-        endpoint_url: endpoint.trim(),
-        method: typeof existingConfig.method === "string" ? existingConfig.method : "POST",
-        status: typeof existingConfig.status === "string" ? existingConfig.status : "placeholder",
-      },
+      config_json: configToJson({ ...config, parameters }),
     };
     try {
       if (selectedToolId) {
@@ -107,13 +164,7 @@ export default function ToolsPage() {
         navigate("/auth");
         return;
       }
-      setError(
-        err instanceof Error
-          ? err.message
-          : selectedToolId
-            ? "Failed to update tool"
-            : "Failed to create tool",
-      );
+      setError(err instanceof Error ? err.message : "Failed to save tool");
     } finally {
       setSubmitting(false);
     }
@@ -126,9 +177,7 @@ export default function ToolsPage() {
     try {
       await deleteTool(toolPendingDelete.id);
       setTools((current) => current.filter((t) => t.id !== toolPendingDelete.id));
-      if (selectedToolId === toolPendingDelete.id) {
-        resetForm();
-      }
+      if (selectedToolId === toolPendingDelete.id) resetForm();
       setToolPendingDelete(null);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
@@ -140,6 +189,8 @@ export default function ToolsPage() {
       setDeleting(false);
     }
   }
+
+  const isHttpKind = kind === "http" || kind === "webhook";
 
   return (
     <div className="flex flex-1 min-h-0">
@@ -160,35 +211,38 @@ export default function ToolsPage() {
         <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {loading && <p className="px-2 py-3 text-xs text-muted-foreground">Loading tools...</p>}
           {!loading && tools.length === 0 && (
-            <div className="grid h-full place-items-center text-xs text-muted-foreground">
-              No tools defined yet
-            </div>
+            <div className="grid h-full place-items-center text-xs text-muted-foreground">No tools defined yet</div>
           )}
-          {tools.map((tool) => (
-            <div
-              key={tool.id}
-              className={`flex gap-1 rounded-lg border p-1 transition ${
-                selectedToolId === tool.id ? "border-primary bg-primary/10" : "border-border bg-card"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => selectTool(tool)}
-                className="min-w-0 flex-1 rounded-md px-2 py-2 text-left hover:bg-primary/5"
+          {tools.map((tool) => {
+            const c = parseToolConfig(tool.config_json);
+            return (
+              <div
+                key={tool.id}
+                className={`flex gap-1 rounded-lg border p-1 transition ${
+                  selectedToolId === tool.id ? "border-primary bg-primary/10" : "border-border bg-card"
+                }`}
               >
-                <div className="text-sm font-medium truncate">{tool.name}</div>
-                <div className="mt-1 text-[11px] uppercase tracking-wide text-muted-foreground">{tool.kind}</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => setToolPendingDelete(tool)}
-                className="shrink-0 self-center rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                aria-label={`Delete ${tool.name}`}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
+                <button
+                  type="button"
+                  onClick={() => selectTool(tool)}
+                  className="min-w-0 flex-1 rounded-md px-2 py-2 text-left hover:bg-primary/5"
+                >
+                  <div className="text-sm font-medium truncate">{tool.name}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground truncate">
+                    {tool.kind} · {c.method} {c.url ? c.url.slice(0, 40) : "no URL"}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setToolPendingDelete(tool)}
+                  className="shrink-0 self-center rounded-md p-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`Delete ${tool.name}`}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            );
+          })}
         </div>
       </aside>
 
@@ -202,69 +256,19 @@ export default function ToolsPage() {
             <ChevronLeft className="w-4 h-4" /> Back to agents
           </button>
 
-          <div className="lg:hidden mb-4 space-y-2">
-            <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">SELECT TOOL</label>
-            <div className="flex gap-2">
-              <select
-                value={selectedToolId ?? ""}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  if (!id) {
-                    resetForm();
-                    return;
-                  }
-                  const tool = tools.find((t) => t.id === id);
-                  if (tool) selectTool(tool);
-                }}
-                className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
-                disabled={loading || tools.length === 0}
-              >
-                <option value="">New tool</option>
-                {tools.map((tool) => (
-                  <option key={tool.id} value={tool.id}>
-                    {tool.name}
-                  </option>
-                ))}
-              </select>
-              <Button type="button" size="icon" variant="outline" className="shrink-0" onClick={resetForm} aria-label="New tool">
-                <Plus className="w-4 h-4" />
-              </Button>
-            </div>
-          </div>
-
           <div className="rounded-xl border border-border bg-card p-5 sm:p-6 shadow-soft">
-            <div className="mb-5 flex items-start gap-3">
-              <div className="rounded-xl bg-gradient-soft p-3">
-                <Wrench className="h-5 w-5 text-primary" />
+            <div className="mb-5 flex items-start justify-between gap-3">
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight">
+                  {selectedToolId ? "Edit tool" : "Add webhook tool"}
+                </h1>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Configure HTTP tools for your agents. Requires Groq as the LLM provider when attached.
+                </p>
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <h1 className="text-xl font-semibold tracking-tight">
-                      {selectedToolId ? "Edit tool" : "Create tool"}
-                    </h1>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {selectedToolId
-                        ? "Update this tool, then attach it to a single-prompt agent or flow nodes."
-                        : "Define reusable tools, then attach them to agents or flow nodes."}
-                    </p>
-                  </div>
-                  {selectedToolId && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => {
-                        const tool = tools.find((t) => t.id === selectedToolId);
-                        if (tool) setToolPendingDelete(tool);
-                      }}
-                    >
-                      <Trash2 className="w-4 h-4" /> Delete
-                    </Button>
-                  )}
-                </div>
-              </div>
+              <Button type="button" variant="outline" size="sm" onClick={() => setEnvDialogOpen(true)}>
+                Env variables
+              </Button>
             </div>
 
             {error && (
@@ -275,62 +279,275 @@ export default function ToolsPage() {
 
             <form onSubmit={handleSubmit} className="grid gap-4">
               <div>
-                <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">TOOL NAME</label>
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Check calendar availability"
-                  className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-                />
+                <FieldLabel>NAME</FieldLabel>
+                <input value={name} onChange={(e) => setName(e.target.value)} className={textInput()} placeholder="check_calendar" />
               </div>
               <div>
-                <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">DESCRIPTION</label>
+                <FieldLabel>DESCRIPTION (how/when to use)</FieldLabel>
                 <textarea
                   rows={3}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Explain when the agent should call this tool."
-                  className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm resize-none"
+                  className={`${textInput()} resize-none`}
+                  placeholder="Call when the user asks about appointment availability."
                 />
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">TYPE</label>
+                  <FieldLabel>TYPE</FieldLabel>
                   <select
                     value={kind}
                     onChange={(e) => setKind(e.target.value as ToolDefinitionKind)}
-                    className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
+                    className={textInput()}
                   >
-                    {toolKinds.map((toolKind) => (
-                      <option key={toolKind} value={toolKind}>{toolKind}</option>
+                    {toolKinds.map((k) => (
+                      <option key={k} value={k}>{k}</option>
                     ))}
                   </select>
                 </div>
-                <div>
-                  <label className="text-[11px] font-semibold text-muted-foreground tracking-wide">ENDPOINT URL</label>
-                  <input
-                    value={endpoint}
-                    onChange={(e) => setEndpoint(e.target.value)}
-                    placeholder="https://api.example.com/tool"
-                    className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-                  />
-                </div>
+                {isHttpKind && (
+                  <div>
+                    <FieldLabel>METHOD</FieldLabel>
+                    <select
+                      value={config.method}
+                      onChange={(e) => updateConfig({ method: e.target.value as HttpToolConfigV1["method"] })}
+                      className={textInput()}
+                    >
+                      {(["GET", "POST", "PUT", "PATCH", "DELETE"] as const).map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
+
+              {kind === "custom" && (
+                <p className="text-sm text-muted-foreground rounded-lg border border-border bg-muted/30 p-3">
+                  Custom server-side plugins are coming soon. Use HTTP or webhook for now.
+                </p>
+              )}
+
+              {isHttpKind && (
+                <>
+                  <div>
+                    <FieldLabel>URL</FieldLabel>
+                    <input
+                      value={config.url}
+                      onChange={(e) => updateConfig({ url: e.target.value })}
+                      className={textInput()}
+                      placeholder="https://api.example.com/users/{userId}"
+                    />
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Type <code className="rounded bg-muted px-1">{`{{VAR}}`}</code> for environment variables.{" "}
+                      <button type="button" className="text-primary hover:underline" onClick={() => setEnvDialogOpen(true)}>
+                        Manage variables
+                      </button>
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel>RESPONSE TIMEOUT (seconds)</FieldLabel>
+                      <input
+                        type="number"
+                        min={1}
+                        max={120}
+                        value={config.response_timeout_seconds}
+                        onChange={(e) => updateConfig({ response_timeout_seconds: Number(e.target.value) || 20 })}
+                        className={textInput()}
+                      />
+                    </div>
+                    <div className="flex items-end pb-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={config.disable_interruptions}
+                          onChange={(e) => updateConfig({ disable_interruptions: e.target.checked })}
+                        />
+                        Disable interruptions while running
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel>PRE-TOOL SPEECH</FieldLabel>
+                      <select
+                        value={config.pre_tool_speech}
+                        onChange={(e) =>
+                          updateConfig({ pre_tool_speech: e.target.value as HttpToolConfigV1["pre_tool_speech"] })
+                        }
+                        className={textInput()}
+                      >
+                        <option value="auto">Auto</option>
+                        <option value="force">Force</option>
+                        <option value="disabled">Disabled</option>
+                      </select>
+                    </div>
+                    <div>
+                      <FieldLabel>EXECUTION MODE</FieldLabel>
+                      <select
+                        value={config.execution_mode}
+                        onChange={(e) =>
+                          updateConfig({ execution_mode: e.target.value as HttpToolConfigV1["execution_mode"] })
+                        }
+                        className={textInput()}
+                      >
+                        <option value="default">Default</option>
+                        <option value="blocking">Blocking</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {config.pre_tool_speech === "force" && (
+                    <div>
+                      <FieldLabel>PRE-TOOL SPEECH TEXT</FieldLabel>
+                      <input
+                        value={config.pre_tool_speech_text ?? ""}
+                        onChange={(e) => updateConfig({ pre_tool_speech_text: e.target.value })}
+                        className={textInput()}
+                        placeholder="One moment while I check that."
+                      />
+                    </div>
+                  )}
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel>TOOL CALL SOUND</FieldLabel>
+                      <select
+                        value={config.tool_call_sound}
+                        onChange={(e) =>
+                          updateConfig({ tool_call_sound: e.target.value as HttpToolConfigV1["tool_call_sound"] })
+                        }
+                        className={textInput()}
+                      >
+                        <option value="none">None</option>
+                        <option value="click">Click</option>
+                        <option value="custom_url">Custom URL</option>
+                      </select>
+                    </div>
+                    {config.tool_call_sound === "custom_url" && (
+                      <div>
+                        <FieldLabel>SOUND URL</FieldLabel>
+                        <input
+                          value={config.tool_call_sound_url ?? ""}
+                          onChange={(e) => updateConfig({ tool_call_sound_url: e.target.value })}
+                          className={textInput()}
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <FieldLabel>AUTHENTICATION</FieldLabel>
+                    <select
+                      value={config.auth.type}
+                      onChange={(e) =>
+                        setConfig((c) => ({
+                          ...c,
+                          auth: { ...c.auth, type: e.target.value as HttpToolConfigV1["auth"]["type"] },
+                        }))
+                      }
+                      className={textInput()}
+                    >
+                      <option value="none">None</option>
+                      <option value="bearer">Bearer token</option>
+                      <option value="basic">Basic auth</option>
+                      <option value="api_key_header">API key header</option>
+                      <option value="connection">Auth connection</option>
+                    </select>
+                    {config.auth.type === "connection" && (
+                      <select
+                        value={config.auth.connection_id ?? ""}
+                        onChange={(e) =>
+                          setConfig((c) => ({
+                            ...c,
+                            auth: { ...c.auth, connection_id: e.target.value || null },
+                          }))
+                        }
+                        className={`${textInput()} mt-2`}
+                      >
+                        <option value="">Select connection</option>
+                        {authConnections.map((conn) => (
+                          <option key={conn.id} value={conn.id}>{conn.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    {config.auth.type === "bearer" && (
+                      <input
+                        value={config.auth.bearer_token ?? ""}
+                        onChange={(e) =>
+                          setConfig((c) => ({ ...c, auth: { ...c.auth, bearer_token: e.target.value } }))
+                        }
+                        placeholder="Bearer token or {{VAR}}"
+                        className={`${textInput()} mt-2`}
+                      />
+                    )}
+                    {config.auth.type === "api_key_header" && (
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <input
+                          value={config.auth.api_key_header_name ?? "X-Api-Key"}
+                          onChange={(e) =>
+                            setConfig((c) => ({ ...c, auth: { ...c.auth, api_key_header_name: e.target.value } }))
+                          }
+                          placeholder="Header name"
+                          className={textInput()}
+                        />
+                        <input
+                          value={config.auth.api_key_value ?? ""}
+                          onChange={(e) =>
+                            setConfig((c) => ({ ...c, auth: { ...c.auth, api_key_value: e.target.value } }))
+                          }
+                          placeholder="Value or {{VAR}}"
+                          className={textInput()}
+                        />
+                      </div>
+                    )}
+                    {authConnections.length === 0 && config.auth.type === "connection" && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        No auth connections.{" "}
+                        <Link to="/settings" className="text-primary hover:underline">Create in Settings</Link>
+                      </p>
+                    )}
+                  </div>
+
+                  <HeaderEditor headers={config.headers} onChange={setHeaders} />
+                  <ParamEditor title="QUERY PARAMETERS" params={config.query_parameters} onChange={setQueryParams} />
+
+                  {config.path_parameters.length > 0 && (
+                    <div>
+                      <FieldLabel>PATH PARAMETERS (from URL)</FieldLabel>
+                      <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
+                        {config.path_parameters.map((p) => (
+                          <li key={p.name} className="font-mono">
+                            {`{${p.name}}`} {p.required ? "(required)" : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div>
+                    <FieldLabel>LLM PARAMETERS (JSON Schema)</FieldLabel>
+                    <textarea
+                      rows={8}
+                      value={parametersJson}
+                      onChange={(e) => setParametersJson(e.target.value)}
+                      className={`${textInput()} font-mono text-xs resize-y`}
+                    />
+                  </div>
+                </>
+              )}
+
               <div className="flex flex-wrap gap-2">
                 <Button
                   type="submit"
                   size="sm"
+                  disabled={submitting || !name.trim() || kind === "custom"}
                   className="w-fit gap-1.5 bg-gradient-primary text-primary-foreground shadow-elegant"
-                  disabled={submitting || !name.trim()}
                 >
                   {!selectedToolId && <Plus className="w-4 h-4" />}
-                  {submitting
-                    ? selectedToolId
-                      ? "Saving..."
-                      : "Creating..."
-                    : selectedToolId
-                      ? "Save changes"
-                      : "Create tool"}
+                  {submitting ? "Saving..." : selectedToolId ? "Save changes" : "Create tool"}
                 </Button>
                 {selectedToolId && (
                   <Button type="button" size="sm" variant="outline" onClick={resetForm} disabled={submitting}>
@@ -343,14 +560,21 @@ export default function ToolsPage() {
         </div>
       </div>
 
+      <Dialog open={envDialogOpen} onOpenChange={setEnvDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Environment variables</DialogTitle>
+          </DialogHeader>
+          <WorkspaceEnvVarsPanel onClose={() => setEnvDialogOpen(false)} />
+        </DialogContent>
+      </Dialog>
+
       <AlertDialog open={!!toolPendingDelete} onOpenChange={(open) => !open && setToolPendingDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this tool?</AlertDialogTitle>
             <AlertDialogDescription>
-              {toolPendingDelete
-                ? `“${toolPendingDelete.name}” will be removed. Agents or flows that still reference this tool ID may need to be updated.`
-                : ""}
+              {toolPendingDelete ? `"${toolPendingDelete.name}" will be removed.` : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -368,6 +592,120 @@ export default function ToolsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function HeaderEditor({
+  headers,
+  onChange,
+}: {
+  headers: ToolHeader[];
+  onChange: (h: ToolHeader[]) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <FieldLabel>HEADERS</FieldLabel>
+        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...headers, { name: "", value: "" }])}>
+          Add header
+        </Button>
+      </div>
+      <div className="mt-2 space-y-2">
+        {headers.map((h, i) => (
+          <div key={i} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <input
+              value={h.name}
+              onChange={(e) => {
+                const next = [...headers];
+                next[i] = { ...next[i], name: e.target.value };
+                onChange(next);
+              }}
+              placeholder="Header name"
+              className={textInput("mt-0")}
+            />
+            <input
+              value={h.value}
+              onChange={(e) => {
+                const next = [...headers];
+                next[i] = { ...next[i], value: e.target.value };
+                onChange(next);
+              }}
+              placeholder="Value or {{VAR}}"
+              className={textInput("mt-0")}
+            />
+            <Button type="button" variant="ghost" size="icon" onClick={() => onChange(headers.filter((_, j) => j !== i))}>
+              <Trash2 className="w-4 h-4" />
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ParamEditor({
+  title,
+  params,
+  onChange,
+}: {
+  title: string;
+  params: ToolParameterDef[];
+  onChange: (p: ToolParameterDef[]) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <FieldLabel>{title}</FieldLabel>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={() =>
+            onChange([...params, { name: "", description: "", type: "string", required: false }])
+          }
+        >
+          Add parameter
+        </Button>
+      </div>
+      <div className="mt-2 space-y-2">
+        {params.map((p, i) => (
+          <div key={i} className="grid gap-2 rounded-lg border border-border p-2 sm:grid-cols-4">
+            <input
+              value={p.name}
+              onChange={(e) => {
+                const next = [...params];
+                next[i] = { ...next[i], name: e.target.value };
+                onChange(next);
+              }}
+              placeholder="name"
+              className={textInput("mt-0")}
+            />
+            <input
+              value={p.description}
+              onChange={(e) => {
+                const next = [...params];
+                next[i] = { ...next[i], description: e.target.value };
+                onChange(next);
+              }}
+              placeholder="description"
+              className={`${textInput("mt-0")} sm:col-span-2`}
+            />
+            <label className="flex items-center gap-2 text-xs self-center">
+              <input
+                type="checkbox"
+                checked={p.required}
+                onChange={(e) => {
+                  const next = [...params];
+                  next[i] = { ...next[i], required: e.target.checked };
+                  onChange(next);
+                }}
+              />
+              Required
+            </label>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

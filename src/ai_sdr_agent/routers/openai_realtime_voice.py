@@ -37,8 +37,12 @@ async def openai_realtime_voice_session(websocket: WebSocket, bot_id: str) -> No
     bridge: OpenAIRealtimeVoiceBridge | None = None
     echo_guard = RealtimeEchoGuard()
 
+    from ai_sdr_agent.services.tool_context import voice_interruptions_allowed
+
     def allow_voice_interruptions() -> bool:
-        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        return voice_interruptions_allowed(
+            bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        )
 
     def invalidate_turns() -> int:
         nonlocal generation

@@ -50,6 +50,28 @@ CREATE TABLE public.agent_tools (
   CONSTRAINT agent_tools_pkey PRIMARY KEY (id),
   CONSTRAINT agent_tools_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
+CREATE TABLE public.workspace_env_vars (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  name character varying NOT NULL,
+  value text NOT NULL DEFAULT ''::text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT workspace_env_vars_pkey PRIMARY KEY (id),
+  CONSTRAINT workspace_env_vars_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT workspace_env_vars_user_name_unique UNIQUE (user_id, name)
+);
+CREATE TABLE public.auth_connections (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  label character varying NOT NULL,
+  type character varying NOT NULL DEFAULT 'api_key'::character varying,
+  config_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT auth_connections_pkey PRIMARY KEY (id),
+  CONSTRAINT auth_connections_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
 CREATE TABLE public.bot_configs (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,

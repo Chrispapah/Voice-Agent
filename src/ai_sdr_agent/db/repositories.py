@@ -8,10 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai_sdr_agent.db.models import (
+    AgentToolRow,
+    AuthConnectionRow,
     BotConfigRow,
     CallLogRow,
     LeadRow,
     SessionRow,
+    WorkspaceEnvVarRow,
 )
 from ai_sdr_agent.models import CallLogRecord, LeadRecord
 
@@ -225,3 +228,149 @@ class PgSessionStore:
         if row is not None and row.bot_id == self.bot_id:
             await self.session.delete(row)
             await self.session.flush()
+
+
+# ---------------------------------------------------------------------------
+# Agent tools
+# ---------------------------------------------------------------------------
+
+class PgAgentToolRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_by_ids(
+        self,
+        *,
+        user_id: uuid.UUID,
+        tool_ids: Sequence[uuid.UUID | str],
+    ) -> Sequence[AgentToolRow]:
+        if not tool_ids:
+            return []
+        ids = [uuid.UUID(str(tid)) for tid in tool_ids]
+        result = await self.session.execute(
+            select(AgentToolRow).where(
+                AgentToolRow.user_id == user_id,
+                AgentToolRow.id.in_(ids),
+                AgentToolRow.is_active.is_(True),
+            )
+        )
+        return result.scalars().all()
+
+    async def get(self, tool_id: uuid.UUID, user_id: uuid.UUID) -> AgentToolRow | None:
+        result = await self.session.execute(
+            select(AgentToolRow).where(
+                AgentToolRow.id == tool_id,
+                AgentToolRow.user_id == user_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+
+# ---------------------------------------------------------------------------
+# Workspace env vars
+# ---------------------------------------------------------------------------
+
+class PgWorkspaceEnvVarRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_for_user(self, user_id: uuid.UUID) -> Sequence[WorkspaceEnvVarRow]:
+        result = await self.session.execute(
+            select(WorkspaceEnvVarRow)
+            .where(WorkspaceEnvVarRow.user_id == user_id)
+            .order_by(WorkspaceEnvVarRow.name.asc())
+        )
+        return result.scalars().all()
+
+    async def get_by_name(self, user_id: uuid.UUID, name: str) -> WorkspaceEnvVarRow | None:
+        result = await self.session.execute(
+            select(WorkspaceEnvVarRow).where(
+                WorkspaceEnvVarRow.user_id == user_id,
+                WorkspaceEnvVarRow.name == name,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def create(
+        self,
+        *,
+        user_id: uuid.UUID,
+        name: str,
+        value: str,
+    ) -> WorkspaceEnvVarRow:
+        row = WorkspaceEnvVarRow(user_id=user_id, name=name, value=value)
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def update(
+        self,
+        var_id: uuid.UUID,
+        user_id: uuid.UUID,
+        **fields: str,
+    ) -> WorkspaceEnvVarRow | None:
+        row = await self.session.get(WorkspaceEnvVarRow, var_id)
+        if row is None or row.user_id != user_id:
+            return None
+        for key, value in fields.items():
+            if hasattr(row, key):
+                setattr(row, key, value)
+        await self.session.flush()
+        return row
+
+    async def delete(self, var_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        row = await self.session.get(WorkspaceEnvVarRow, var_id)
+        if row is None or row.user_id != user_id:
+            return False
+        await self.session.delete(row)
+        await self.session.flush()
+        return True
+
+
+# ---------------------------------------------------------------------------
+# Auth connections
+# ---------------------------------------------------------------------------
+
+class PgAuthConnectionRepository:
+    def __init__(self, session: AsyncSession):
+        self.session = session
+
+    async def list_for_user(self, user_id: uuid.UUID) -> Sequence[AuthConnectionRow]:
+        result = await self.session.execute(
+            select(AuthConnectionRow)
+            .where(AuthConnectionRow.user_id == user_id)
+            .order_by(AuthConnectionRow.label.asc())
+        )
+        return result.scalars().all()
+
+    async def get(self, connection_id: uuid.UUID, user_id: uuid.UUID) -> AuthConnectionRow | None:
+        row = await self.session.get(AuthConnectionRow, connection_id)
+        if row is None or row.user_id != user_id:
+            return None
+        return row
+
+    async def create(
+        self,
+        *,
+        user_id: uuid.UUID,
+        label: str,
+        type: str,
+        config_json: dict,
+    ) -> AuthConnectionRow:
+        row = AuthConnectionRow(
+            user_id=user_id,
+            label=label,
+            type=type,
+            config_json=config_json,
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def delete(self, connection_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+        row = await self.get(connection_id, user_id)
+        if row is None:
+            return False
+        await self.session.delete(row)
+        await self.session.flush()
+        return True

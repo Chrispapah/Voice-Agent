@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Settings as SettingsIcon } from "lucide-react";
+import AuthConnectionsPanel from "@/components/AuthConnectionsPanel";
+import WorkspaceEnvVarsPanel from "@/components/WorkspaceEnvVarsPanel";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,6 +15,8 @@ import { toast } from "@/components/ui/sonner";
 const sections = [
   { title: "Profile", desc: "Update your name, avatar, and contact email." },
   { title: "Workspace", desc: "Manage workspace name, members, and roles." },
+  { title: "Environment variables", desc: "Secrets referenced as {{NAME}} in tool URLs and headers." },
+  { title: "Auth connections", desc: "Reusable credentials for HTTP tool authentication." },
   { title: "API Keys", desc: "Create and revoke API keys used by your applications." },
   { title: "Webhooks", desc: "Receive real-time call and chat events on your endpoints." },
   { title: "Integrations", desc: "Connect Twilio, Telnyx, Zapier, Slack and more." },
@@ -21,6 +25,8 @@ const sections = [
 
 export default function SettingsPage() {
   const [apiKeysOpen, setApiKeysOpen] = useState(false);
+  const [envVarsOpen, setEnvVarsOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -40,9 +46,10 @@ export default function SettingsPage() {
                 size="sm"
                 className="mt-4"
                 onClick={() => {
-                  if (s.title === "API Keys") {
-                    setApiKeysOpen(true);
-                  } else {
+                  if (s.title === "API Keys") setApiKeysOpen(true);
+                  else if (s.title === "Environment variables") setEnvVarsOpen(true);
+                  else if (s.title === "Auth connections") setAuthOpen(true);
+                  else {
                     toast.info("Coming soon", { description: `${s.title} is not available in this build yet.` });
                   }
                 }}
@@ -53,6 +60,24 @@ export default function SettingsPage() {
           ))}
         </div>
       </div>
+
+      <Dialog open={envVarsOpen} onOpenChange={setEnvVarsOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Environment variables</DialogTitle>
+          </DialogHeader>
+          <WorkspaceEnvVarsPanel onClose={() => setEnvVarsOpen(false)} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={authOpen} onOpenChange={setAuthOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Auth connections</DialogTitle>
+          </DialogHeader>
+          <AuthConnectionsPanel />
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={apiKeysOpen} onOpenChange={setApiKeysOpen}>
         <DialogContent className="max-w-lg">

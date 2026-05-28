@@ -17,6 +17,7 @@ from ai_sdr_agent.routers import (
     openai_realtime_voice_router,
     test_sessions_router,
     web_voice_router,
+    workspace_router,
 )
 from ai_sdr_agent.services.latency_analytics import shared_latency_analytics
 
@@ -71,6 +72,7 @@ def create_app(settings: SDRSettings | None = None) -> FastAPI:
     app.include_router(hybrid_voice_router)
     app.include_router(openai_realtime_voice_router)
     app.include_router(web_voice_router)
+    app.include_router(workspace_router)
 
     @app.get("/healthz")
     async def healthz():

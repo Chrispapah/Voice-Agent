@@ -108,6 +108,28 @@ export interface ToolDefinition {
 
 export type ToolDefinitionInput = Pick<ToolDefinition, "name" | "description" | "kind" | "config_json">;
 
+export interface WorkspaceEnvVar {
+  id: string;
+  name: string;
+  value_masked: string;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface AuthConnection {
+  id: string;
+  label: string;
+  type: string;
+  config_json: Record<string, unknown>;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface ToolValidateResult {
+  valid: boolean;
+  errors: string[];
+}
+
 export interface KnowledgeBase {
   id: string;
   user_id: string;
@@ -467,6 +489,59 @@ export function updateTool(id: string, data: ToolDefinitionInput): Promise<ToolD
 
 export function deleteTool(id: string): Promise<void> {
   return deleteToolFromSupabase(id);
+}
+
+export function validateToolConfig(kind: string, config_json: Record<string, unknown>): Promise<ToolValidateResult> {
+  return apiRequest<ToolValidateResult>("/api/workspace/tools/validate", {
+    method: "POST",
+    body: JSON.stringify({ kind, config_json }),
+  });
+}
+
+export function listWorkspaceEnvVars(): Promise<WorkspaceEnvVar[]> {
+  return apiRequest<WorkspaceEnvVar[]>("/api/workspace/env-vars");
+}
+
+export function createWorkspaceEnvVar(name: string, value: string): Promise<WorkspaceEnvVar> {
+  return apiRequest<WorkspaceEnvVar>("/api/workspace/env-vars", {
+    method: "POST",
+    body: JSON.stringify({ name, value }),
+  });
+}
+
+export function updateWorkspaceEnvVar(
+  id: string,
+  fields: { name?: string; value?: string },
+): Promise<WorkspaceEnvVar> {
+  return apiRequest<WorkspaceEnvVar>(`/api/workspace/env-vars/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(fields),
+  });
+}
+
+export function deleteWorkspaceEnvVar(id: string): Promise<void> {
+  return apiRequest<void>(`/api/workspace/env-vars/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export function listAuthConnections(): Promise<AuthConnection[]> {
+  return apiRequest<AuthConnection[]>("/api/workspace/auth-connections");
+}
+
+export function createAuthConnection(
+  label: string,
+  type: string,
+  config_json: Record<string, unknown>,
+): Promise<AuthConnection> {
+  return apiRequest<AuthConnection>("/api/workspace/auth-connections", {
+    method: "POST",
+    body: JSON.stringify({ label, type, config_json }),
+  });
+}
+
+export function deleteAuthConnection(id: string): Promise<void> {
+  return apiRequest<void>(`/api/workspace/auth-connections/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }
 
 export function listKnowledgeBases(): Promise<KnowledgeBase[]> {

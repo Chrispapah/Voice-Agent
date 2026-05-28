@@ -266,3 +266,28 @@ def reply_turn_modes_for_node(spec: ConversationSpecV1, node_id: str) -> list[Re
         if n.id == node_id:
             return n.reply_turn_modes
     return None
+
+
+def tool_ids_for_node(spec: ConversationSpecV1, node_id: str) -> list[str]:
+    if spec.mode == "single":
+        return list(spec.tool_ids or [])
+    for n in spec.nodes:
+        if n.id == node_id:
+            return list(n.tool_ids or [])
+    return []
+
+
+def collect_tool_ids_from_spec(spec: ConversationSpecV1) -> list[str]:
+    ids: list[str] = []
+    seen: set[str] = set()
+    for tid in spec.tool_ids or []:
+        if tid and tid not in seen:
+            seen.add(tid)
+            ids.append(tid)
+    if spec.mode == "graph":
+        for n in spec.nodes:
+            for tid in n.tool_ids or []:
+                if tid and tid not in seen:
+                    seen.add(tid)
+                    ids.append(tid)
+    return ids

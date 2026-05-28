@@ -11,6 +11,7 @@ from ai_sdr_agent.db.engine import get_async_session_factory
 from ai_sdr_agent.db.repositories import PgCallLogRepository, PgLeadRepository, PgSessionStore
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot
 from ai_sdr_agent.services.latency_analytics import WebVoiceTurnSample, shared_latency_analytics
+from ai_sdr_agent.services.tool_context import reset_tool_sound_callback, set_tool_sound_callback
 from ai_sdr_agent.text.tts_sentence_buffer import SentenceStreamBuffer
 
 SendJson = Callable[[dict[str, Any]], Awaitable[None]]
@@ -104,6 +105,10 @@ async def run_voice_graph_turn(
         )
         await shared_latency_analytics.record_web_voice_turn(sample)
 
+    async def _tool_sound(payload: dict[str, Any]) -> None:
+        await send_json({"type": "tool.sound", **payload})
+
+    sound_token = set_tool_sound_callback(_tool_sound)
     try:
         async with get_async_session_factory()() as db:
             lead_repo = PgLeadRepository(db)
@@ -202,3 +207,5 @@ async def run_voice_graph_turn(
     except asyncio.CancelledError:
         await send_json({"type": "agent.interrupted"})
         raise
+    finally:
+        reset_tool_sound_callback(sound_token)

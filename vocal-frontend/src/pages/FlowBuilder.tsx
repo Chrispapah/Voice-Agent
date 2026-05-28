@@ -58,6 +58,7 @@ import {
   setNodeKnowledgeBaseAssignments,
   type KnowledgeBase,
 } from "@/lib/api";
+import { parseToolConfig } from "@/lib/toolConfig";
 import { toast } from "@/components/ui/sonner";
 import { OpenAIRealtimeElevenLabsVoiceSession } from "@/lib/openAIRealtimeElevenLabsVoiceSession";
 import { OpenAIRealtimeVoiceSession } from "@/lib/openAIRealtimeVoiceSession";
@@ -345,7 +346,13 @@ function ToolSelector({
               />
               <span className="min-w-0">
                 <span className="block font-medium">{tool.name}</span>
-                <span className="block truncate text-xs text-muted-foreground">{tool.description || tool.kind}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {!tool.is_active ? "inactive · " : ""}
+                  {(() => {
+                    const c = parseToolConfig(tool.config_json);
+                    return `${tool.kind} · ${c.method} ${c.url ? c.url.slice(0, 36) : "no URL"}`;
+                  })()}
+                </span>
               </span>
             </label>
           ))}

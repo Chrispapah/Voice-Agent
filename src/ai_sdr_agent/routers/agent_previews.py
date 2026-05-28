@@ -223,8 +223,12 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
     dg_tasks: list[asyncio.Task[None]] = []
     httpx_client = httpx.AsyncClient()
 
+    from ai_sdr_agent.services.tool_context import voice_interruptions_allowed
+
     def allow_voice_interruptions() -> bool:
-        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        return voice_interruptions_allowed(
+            bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        )
 
     def invalidate_turns() -> int:
         nonlocal generation
@@ -514,8 +518,12 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
     bridge: OpenAIRealtimeVoiceBridge | None = None
     echo_guard = RealtimeEchoGuard()
 
+    from ai_sdr_agent.services.tool_context import voice_interruptions_allowed
+
     def allow_voice_interruptions() -> bool:
-        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        return voice_interruptions_allowed(
+            bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        )
 
     def invalidate_turns() -> int:
         nonlocal generation
@@ -732,8 +740,12 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
     echo_guard = RealtimeEchoGuard()
     httpx_client = httpx.AsyncClient()
 
+    from ai_sdr_agent.services.tool_context import voice_interruptions_allowed
+
     def allow_voice_interruptions() -> bool:
-        return bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        return voice_interruptions_allowed(
+            bool((bot_cfg_merged or {}).get("allow_voice_interruptions", True))
+        )
 
     def invalidate_turns() -> int:
         nonlocal generation

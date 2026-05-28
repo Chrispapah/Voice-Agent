@@ -23,6 +23,11 @@ from ai_sdr_agent.services.knowledge import (
     lookup_knowledge_chunks,
     resolve_kb_settings,
 )
+from ai_sdr_agent.services.tool_runtime import (
+    build_tool_executor,
+    build_tooling_for_node,
+    resolve_node_tool_ids,
+)
 
 if TYPE_CHECKING:
     from ai_sdr_agent.services.brain import ConversationBrain
@@ -140,14 +145,7 @@ async def _llm_speak(
     max_tokens: int,
     trace: dict[str, Any],
 ) -> str:
-    """Single LLM speak step that opts into tool-calling when the node has KBs attached.
-
-    Selection rule:
-      * If the user has already spoken AND at least one knowledge base is attached
-        to (bot, node) (or bot-level fallback), call the LLM with the
-        ``lookup_knowledge`` tool so it can decide when to consult the KB.
-      * Otherwise call the streaming ``respond`` path unchanged.
-    """
+    """LLM speak with optional KB and HTTP tools when the user has spoken."""
     bot_cfg = state.get("bot_config") or {}
     bot_id = str(bot_cfg.get("bot_id") or "") or None
     user_id = str(bot_cfg.get("user_id") or "") or None
@@ -157,7 +155,10 @@ async def _llm_speak(
     if has_human and bot_id and user_id:
         kb_ids = await list_kb_ids_for_node(bot_id=bot_id, node_id=node_id, user_id=user_id)
 
-    if not kb_ids:
+    node_tool_ids = resolve_node_tool_ids(state, node_id) if has_human else []
+    use_tools = has_human and (bool(kb_ids) or bool(node_tool_ids))
+
+    if not use_tools:
         system = f"{base_prompt.strip()}\n\n{_VOICE_OUTPUT_RULES}"
         return await brain.respond(
             system_prompt=system,
@@ -166,11 +167,22 @@ async def _llm_speak(
             trace=trace,
         )
 
-    system = "\n\n".join([base_prompt.strip(), _KB_TOOL_USAGE_HINT, _VOICE_OUTPUT_RULES])
+    hints: list[str] = []
+    if kb_ids:
+        hints.append(_KB_TOOL_USAGE_HINT)
+    if node_tool_ids:
+        hints.append(
+            "You have HTTP tools available. Call them when needed to fetch live data "
+            "before answering. Use only the arguments defined for each tool."
+        )
+    system = "\n\n".join([base_prompt.strip(), *hints, _VOICE_OUTPUT_RULES])
     openai_key = bot_cfg.get("openai_api_key")
     kb_settings = resolve_kb_settings(dict(bot_cfg))
 
-    async def tool_executor(name: str, args: dict[str, Any]) -> str:
+    kb_tool = _KB_TOOL_DEFINITION if kb_ids else None
+    tools, by_fn = build_tooling_for_node(state=state, node_id=node_id, kb_tool=kb_tool)
+
+    async def kb_executor(name: str, args: dict[str, Any]) -> str:
         if name != _KB_TOOL_NAME:
             return f"ERROR: unknown tool {name!r}"
         query = (args.get("query") or state.get("last_human_message") or "").strip()
@@ -187,14 +199,24 @@ async def _llm_speak(
             max_context_chars=kb_settings["max_context_chars"],
         )
 
+    tool_executor = build_tool_executor(
+        state=state,
+        by_fn=by_fn,
+        kb_executor=kb_executor if kb_ids else None,
+    )
+
+    max_iter = kb_settings["max_tool_iterations"]
+    if node_tool_ids:
+        max_iter = min(5, max(max_iter, 3))
+
     return await brain.respond_with_tools(
         system_prompt=system,
         transcript=transcript,
-        tools=[_KB_TOOL_DEFINITION],
+        tools=tools,
         tool_executor=tool_executor,
         max_tokens=max_tokens,
         trace=trace,
-        max_tool_iterations=kb_settings["max_tool_iterations"],
+        max_tool_iterations=max_iter,
     )
 
 

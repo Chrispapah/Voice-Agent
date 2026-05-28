@@ -163,6 +163,21 @@ class SDRConversationService:
         session_start = time.perf_counter()
         build_state_t0 = time.perf_counter()
         state = await self.dependencies.pre_call_loader.build_initial_state(lead_id, bot_config=cfg)
+        db_session = getattr(self.dependencies.session_store, "session", None)
+        if db_session is not None and cfg:
+            user_id_raw = cfg.get("user_id")
+            if user_id_raw:
+                from ai_sdr_agent.services.tool_preload import (
+                    merge_tools_cache_into_state,
+                    preload_agent_tools_for_bot,
+                )
+
+                cache, env_map = await preload_agent_tools_for_bot(
+                    db_session,
+                    user_id=uuid.UUID(str(user_id_raw)),
+                    bot_config=cfg,
+                )
+                merge_tools_cache_into_state(state, cache, env_map)
         build_state_ms = (time.perf_counter() - build_state_t0) * 1000
         _log_session_step_latency(session_id, lead_id, "build_initial_state", build_state_ms)
         if self._can_parallelize_persistence():
@@ -563,6 +578,23 @@ class SDRConversationService:
             get_state_t0 = time.perf_counter()
             state = await self.get_state(conversation_id)
             get_state_ms = (time.perf_counter() - get_state_t0) * 1000
+            db_session = getattr(self.dependencies.session_store, "session", None)
+            meta = state.get("metadata") or {}
+            cfg = state.get("bot_config") or self._bot_config
+            if db_session is not None and cfg and "agent_tools_cache" not in meta:
+                user_id_raw = cfg.get("user_id")
+                if user_id_raw:
+                    from ai_sdr_agent.services.tool_preload import (
+                        merge_tools_cache_into_state,
+                        preload_agent_tools_for_bot,
+                    )
+
+                    cache, env_map = await preload_agent_tools_for_bot(
+                        db_session,
+                        user_id=uuid.UUID(str(user_id_raw)),
+                        bot_config=cfg,
+                    )
+                    merge_tools_cache_into_state(state, cache, env_map)
             if human_input:
                 state["transcript"].append({"role": "human", "content": human_input})
                 state["last_human_message"] = human_input
