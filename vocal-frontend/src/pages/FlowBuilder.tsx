@@ -465,7 +465,6 @@ export default function FlowBuilderPage() {
   const [testing, setTesting] = useState(false);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [listening, setListening] = useState(false);
-  const [voiceOutputEnabled, setVoiceOutputEnabled] = useState(false);
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceConnecting, setVoiceConnecting] = useState(false);
   const voiceRef = useRef<BrowserVoiceSession | null>(null);
@@ -494,22 +493,6 @@ export default function FlowBuilderPage() {
       }
     };
   }, []);
-
-  function speakAgentResponse(text: string) {
-    if (!voiceOutputEnabled || !text.trim() || typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    // Text console only: browser speech, not ElevenLabs (use Start Voice for agent TTS).
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = deepgramLanguage || DEFAULT_SPEECH_LANGUAGE_CODE;
-    window.speechSynthesis.speak(utterance);
-  }
-
-  function toggleVoiceOutput() {
-    setVoiceOutputEnabled((enabled) => {
-      if (enabled) window.speechSynthesis?.cancel();
-      return !enabled;
-    });
-  }
 
   function toggleListening() {
     if (listening) {
@@ -953,7 +936,6 @@ export default function FlowBuilderPage() {
       const response = await startTestSession(botId, leadId);
       setSessionId(response.conversation_id);
       setMessages([{ role: "agent", content: response.agent_response }]);
-      speakAgentResponse(response.agent_response);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
         navigate("/auth");
@@ -1006,7 +988,6 @@ export default function FlowBuilderPage() {
     try {
       const response = await sendTestTurn(botId, sessionId, text);
       setMessages((current) => [...current, { role: "agent", content: response.agent_response }]);
-      speakAgentResponse(response.agent_response);
     } catch (err: unknown) {
       if (err instanceof AuthRequiredError) {
         navigate("/auth");
@@ -1638,26 +1619,11 @@ export default function FlowBuilderPage() {
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h2 className="flex items-center gap-2 text-sm font-semibold"><MessageSquare className="h-4 w-4" /> Test Console</h2>
                 <div className="flex flex-wrap gap-1.5 justify-end">
-                  <Button
-                    variant={voiceOutputEnabled ? "default" : "outline"}
-                    size="sm"
-                    onClick={toggleVoiceOutput}
-                    title={
-                      voiceOutputEnabled
-                        ? "Turn off read-aloud for typed test replies"
-                        : "Read typed test replies aloud"
-                    }
-                  >
-                    <Volume2 className="h-4 w-4" />
-                  </Button>
                   {sessionId && (
                     <Button variant="outline" size="sm" onClick={handleStopTest} disabled={testing}>
                       Stop
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={handleStartTest} disabled={testing || voiceActive || voiceConnecting}>
-                    {sessionId ? "Restart" : "Start"}
-                  </Button>
                   <Button variant="outline" size="sm" onClick={() => void handleCopyLivePreview()} disabled={voiceActive || voiceConnecting}>
                     <Share2 className="w-3.5 h-3.5 mr-1" /> Share Live Preview
                   </Button>
@@ -1674,7 +1640,7 @@ export default function FlowBuilderPage() {
               </div>
               <div className="h-64 space-y-2 overflow-y-auto rounded-lg border border-border bg-surface-muted/40 p-3">
                 {messages.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Start a test to preview this agent.</p>
+                  <p className="text-sm text-muted-foreground">Use Test in the header or Start Voice to preview this agent.</p>
                 ) : (
                   messages.map((message, index) => (
                     <div key={index} className={`flex ${message.role === "human" ? "justify-end" : "justify-start"}`}>
@@ -1696,7 +1662,7 @@ export default function FlowBuilderPage() {
                         : listening
                           ? "Listening…"
                           : "Type or speak a reply…"
-                      : "Start test or voice first"
+                      : "Use Test or Start Voice first"
                   }
                   disabled={!sessionId || testing || voiceActive}
                   className="min-w-0 flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm"
