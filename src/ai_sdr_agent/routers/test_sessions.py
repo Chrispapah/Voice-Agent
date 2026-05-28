@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -19,7 +18,6 @@ from ai_sdr_agent.graph.service import SDRConversationService, SDRRuntimeDepende
 from ai_sdr_agent.services.brain import build_conversation_brain
 from ai_sdr_agent.services.latency_analytics import shared_latency_analytics
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
-from ai_sdr_agent.tools import StubCRMGateway, StubCalendarGateway, StubEmailGateway
 
 router = APIRouter(prefix="/api/bots/{bot_id}/test-session", tags=["test"])
 
@@ -43,25 +41,13 @@ async def _verify_bot(bot_id: str, user_id: uuid.UUID, session: AsyncSession):
 def _build_service_for_bot(bot_config: dict, lead_repo, session_store, call_log_repo):
     """Build a per-bot SDRConversationService using the bot's config."""
     brain = build_conversation_brain(bot_config=bot_config)
-    calendar_gateway = StubCalendarGateway()
-    email_gateway = StubEmailGateway()
-    crm_gateway = StubCRMGateway(seed_leads=[])
-    pre_call_loader = PreCallLoader(
-        lead_repository=lead_repo,
-        calendar_gateway=calendar_gateway,
-    )
+    pre_call_loader = PreCallLoader(lead_repository=lead_repo)
     return SDRConversationService(
         SDRRuntimeDependencies(
             brain=brain,
-            calendar_gateway=calendar_gateway,
-            email_gateway=email_gateway,
-            crm_gateway=crm_gateway,
             pre_call_loader=pre_call_loader,
             session_store=session_store,
             call_log_repository=call_log_repo,
-            email_template_path=Path("templates/follow_up_email.html"),
-            sales_rep_name=bot_config.get("sales_rep_name", "Sales Team"),
-            from_name="AI SDR",
             latency_analytics=shared_latency_analytics,
         ),
         bot_config=bot_config,
@@ -98,21 +84,22 @@ async def start_test_session(
 
 @router.post("/{session_id}/turns")
 async def run_test_turn(
-    bot_id: str,
     session_id: str,
     body: TurnRequest,
+    bot_id: str,
     user_id: uuid.UUID = Depends(get_current_user_id),
     session: AsyncSession = Depends(get_async_session),
 ):
-    bot = await _verify_bot(bot_id, user_id, session)
-    bot_cfg = bot.to_config_dict()
-
+    await _verify_bot(bot_id, user_id, session)
     bid = uuid.UUID(bot_id)
     lead_repo = PgLeadRepository(session)
     session_store = PgSessionStore(session, bid)
     call_log_repo = PgCallLogRepository(session, bid)
 
+    bot = await PgBotConfigRepository(session).get(bid)
+    bot_cfg = bot.to_config_dict() if bot else {}
     svc = _build_service_for_bot(bot_cfg, lead_repo, session_store, call_log_repo)
+
     try:
         state = await svc.handle_turn(session_id, body.human_input)
     except KeyError as exc:
@@ -124,18 +111,4 @@ async def run_test_turn(
         "stage": state["current_node"],
         "active_node": state["current_node"],
         "next_node": state["next_node"],
-        "call_outcome": state["call_outcome"],
     }
-
-
-@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def stop_test_session(
-    bot_id: str,
-    session_id: str,
-    user_id: uuid.UUID = Depends(get_current_user_id),
-    session: AsyncSession = Depends(get_async_session),
-):
-    bot = await _verify_bot(bot_id, user_id, session)
-    session_store = PgSessionStore(session, bot.id)
-    await session_store.delete(session_id)
-    await session.commit()

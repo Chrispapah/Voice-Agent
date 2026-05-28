@@ -27,9 +27,7 @@ Single mode:
 - One internal node id (``__single__``) runs every turn with ``system_prompt`` until
   max turns, exit phrases handled in the service layer, or ``complete``.
 
-Template ``sdr``:
-- Ignores ``mode``/``nodes``/``edges`` for execution; the app uses the legacy
-  SDR LangGraph (tools, stages) while still storing optional spec metadata.
+Every bot must have a valid ``conversation_spec`` (``template: "custom"``).
 """
 
 from __future__ import annotations
@@ -141,7 +139,7 @@ class ConversationSpecV1(BaseModel):
 
     conversation_spec_version: Literal[1] = 1
     mode: Literal["single", "graph"]
-    template: Literal["custom", "sdr"] = "custom"
+    template: Literal["custom"] = "custom"
     system_prompt: str | None = None
     tool_ids: list[str] = Field(default_factory=list)
     entry_node_id: str | None = None
@@ -168,8 +166,8 @@ class ConversationSpecV1(BaseModel):
 
     @model_validator(mode="after")
     def validate_mode_shape(self) -> ConversationSpecV1:
-        if self.template == "sdr":
-            return self
+        if self.template != "custom":
+            raise ValueError('template must be "custom"')
         if self.mode == "single":
             if not (self.system_prompt and self.system_prompt.strip()):
                 raise ValueError("single mode requires non-empty system_prompt")
@@ -206,14 +204,26 @@ def parse_conversation_spec(raw: Any | None) -> ConversationSpecV1 | None:
         return raw
     if not isinstance(raw, dict):
         raise ValueError("conversation_spec must be a JSON object")
+    if raw.get("template") == "sdr":
+        raise ValueError(
+            'Legacy SDR template is no longer supported. Rebuild the agent in Flow Builder.'
+        )
     return ConversationSpecV1.model_validate(raw)
 
 
-def graph_execution_kind(bot_config: dict[str, Any]) -> Literal["sdr", "single", "graph"]:
+def require_conversation_spec(raw: Any | None) -> ConversationSpecV1:
+    """Parse and require a non-null conversation spec."""
+    spec = parse_conversation_spec(raw)
+    if spec is None:
+        raise ValueError(
+            "conversation_spec is required. Rebuild the agent in Flow Builder."
+        )
+    return spec
+
+
+def graph_execution_kind(bot_config: dict[str, Any]) -> Literal["single", "graph"]:
     """Which LangGraph pipeline to run for this bot."""
-    spec = parse_conversation_spec(bot_config.get("conversation_spec"))
-    if spec is None or spec.template == "sdr":
-        return "sdr"
+    spec = require_conversation_spec(bot_config.get("conversation_spec"))
     if spec.mode == "single":
         return "single"
     return "graph"

@@ -266,7 +266,7 @@ function validateGraphNodeId(id: string): string | null {
 
 function firstUsableSpec(bot: BotConfig | null): ConversationSpecV1 {
   const spec = bot?.conversation_spec;
-  if (spec?.template !== "sdr" && (spec?.mode === "single" || spec?.mode === "graph")) return spec;
+  if (spec?.mode === "single" || spec?.mode === "graph") return spec;
   return defaultGraphConversationSpec();
 }
 

@@ -13,7 +13,7 @@ class SDRSettings(BaseSettings):
         extra="ignore",
     )
 
-    app_name: str = "AI SDR Voice Agent"
+    app_name: str = "Voice Agent"
     app_env: str = "development"
     host: str = "0.0.0.0"
     port: int = 3000
@@ -96,15 +96,7 @@ class SDRSettings(BaseSettings):
     default_sales_rep_name: str = "Sales Team"
     default_sender_email: str = "sales@example.com"
     default_from_name: str = "AI SDR"
-    outbound_caller_name: str = "John"
-    max_objection_attempts: int = 2
     max_call_turns: int = 12
-
-    use_redis_config_manager: bool = True
-    use_stub_integrations: bool = True
-    auto_send_follow_up_email: bool = True
-    auto_update_crm: bool = True
-    prefetch_calendar_days: int = 5
 
     def normalized_base_url(self) -> str | None:
         if not self.base_url:
@@ -116,51 +108,12 @@ class SDRSettings(BaseSettings):
             value = value[len("https://") :]
         return value.rstrip("/")
 
-    def missing_runtime_values(self) -> list[str]:
-        missing: list[str] = []
-        if self.llm_provider == "openai" and not self.openai_api_key:
-            missing.append("OPENAI_API_KEY")
-        if self.llm_provider == "anthropic" and not self.anthropic_api_key:
-            missing.append("ANTHROPIC_API_KEY")
-        if self.llm_provider == "groq" and not self.groq_api_key:
-            missing.append("GROQ_API_KEY")
-        if self.stt_provider == "google" and not self.google_speech_api_key:
-            missing.append("GOOGLE_SPEECH_API_KEY")
-        if self.stt_provider == "deepgram" and not self.deepgram_api_key:
-            missing.append("DEEPGRAM_API_KEY")
-        if not self.elevenlabs_api_key:
-            missing.append("ELEVENLABS_API_KEY")
-        if not self.elevenlabs_voice_id:
-            missing.append("ELEVENLABS_VOICE_ID")
-        if not self.twilio_account_sid:
-            missing.append("TWILIO_ACCOUNT_SID")
-        if not self.twilio_auth_token:
-            missing.append("TWILIO_AUTH_TOKEN")
-        if not self.twilio_phone_number:
-            missing.append("TWILIO_PHONE_NUMBER")
-        if not self.normalized_base_url():
-            missing.append("BASE_URL")
-        return missing
-
-    def telephony_ready(self) -> bool:
-        return not self.missing_runtime_values()
-
-    def config_manager_kind(self) -> str:
-        if self.use_redis_config_manager and self.redis_url:
-            return "redis"
-        return "memory"
-
     def provider_summary(self) -> dict[str, str]:
         return {
             "llm_provider": self.llm_provider,
-            "stt_provider": self.stt_provider,
             "voice_provider": self.voice_provider,
             "tts_provider": "openai_realtime" if self.voice_provider == "openai_realtime" else "elevenlabs",
-            "tts_transport": "realtime_ws" if self.voice_provider == "openai_realtime" else "http_stream",
-            "calendar": "stub",
-            "email": "stub",
-            "crm": "stub",
-            "persistence": "memory-first",
+            "persistence": "postgres",
         }
 
 

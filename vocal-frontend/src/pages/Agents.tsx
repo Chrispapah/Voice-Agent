@@ -14,20 +14,20 @@ import {
 } from "@/lib/api";
 import { DEFAULT_ELEVENLABS_VOICE_ID } from "@/lib/voiceDefaults";
 
-type AgentFilter = "all" | "templates" | "transfer" | "folder";
+type AgentFilter = "all" | "transfer" | "folder" | "unconfigured";
 const AGENTS_PAGE_QUERY_KEY = ["agents-page"] as const;
 
 const typeStyles: Record<string, string> = {
   "Conversation Flow": "bg-accent text-accent-foreground",
   "Single Prompt": "bg-secondary text-secondary-foreground",
-  "Classic SDR": "bg-secondary text-secondary-foreground",
+  "Not configured": "bg-muted text-muted-foreground",
 };
 
 const filterTitles: Record<AgentFilter, string> = {
   all: "All Agents",
-  templates: "Template Agents",
   transfer: "Transfer Screening Agents",
   folder: "Folder",
+  unconfigured: "Needs Flow Builder",
 };
 
 function hasTransferSignal(agent: AgentListItem): boolean {
@@ -44,9 +44,7 @@ function hasTransferSignal(agent: AgentListItem): boolean {
 
 function matchesFilter(agent: AgentListItem, filter: AgentFilter, folderId: string | null): boolean {
   if (filter === "all") return true;
-  if (filter === "templates") {
-    return agent.conversation_spec == null || agent.conversation_spec.template === "sdr";
-  }
+  if (filter === "unconfigured") return agent.conversation_spec == null;
   if (filter === "folder") return agent.folder_id === folderId;
   return hasTransferSignal(agent);
 }
@@ -86,7 +84,7 @@ export default function AgentsPage() {
 
   const activeFolder = folders.find((folder) => folder.id === activeFolderId) ?? null;
   const pageTitle = activeFilter === "folder" ? activeFolder?.name ?? "Folder" : filterTitles[activeFilter];
-  const templateCount = agents.filter((agent) => matchesFilter(agent, "templates", null)).length;
+  const unconfiguredCount = agents.filter((agent) => matchesFilter(agent, "unconfigured", null)).length;
   const transferCount = agents.filter((agent) => matchesFilter(agent, "transfer", null)).length;
   const filteredAgents = agents.filter(
     (agent) => matchesFilter(agent, activeFilter, activeFolderId) && matchesSearch(agent, searchQuery),
@@ -221,13 +219,13 @@ export default function AgentsPage() {
           )}
           <button
             type="button"
-            onClick={() => selectFilter("templates")}
+            onClick={() => selectFilter("unconfigured")}
             className={`w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md ${
-              activeFilter === "templates" ? "bg-secondary" : "hover:bg-secondary"
+              activeFilter === "unconfigured" ? "bg-secondary" : "hover:bg-secondary"
             }`}
           >
-            <Folder className="w-4 h-4 text-muted-foreground" /> Template Agents
-            <span className="ml-auto text-xs text-muted-foreground">{templateCount}</span>
+            <Folder className="w-4 h-4 text-muted-foreground" /> Needs Flow Builder
+            <span className="ml-auto text-xs text-muted-foreground">{unconfiguredCount}</span>
           </button>
           {folders.map((folder) => {
             const folderCount = agents.filter((agent) => agent.folder_id === folder.id).length;

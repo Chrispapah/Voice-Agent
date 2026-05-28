@@ -1,7 +1,7 @@
 export const SINGLE_AGENT_NODE_ID = "__single__" as const;
 
 export type ConversationSpecMode = "single" | "graph";
-export type ConversationSpecTemplate = "custom" | "sdr";
+export type ConversationSpecTemplate = "custom";
 
 export type ReplyTurnMode = "static" | "llm";
 
@@ -109,7 +109,7 @@ export function parseReplyTurnModes(raw: string): ReplyTurnMode[] | undefined {
 }
 
 export function botExecutionLabel(spec?: ConversationSpecV1 | null): string {
-  if (spec == null || spec.template === "sdr") return "Classic SDR";
+  if (spec == null) return "Not configured";
   if (spec.mode === "single") return "Single Prompt";
   return "Conversation Flow";
 }

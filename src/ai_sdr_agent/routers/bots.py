@@ -15,7 +15,7 @@ from ai_sdr_agent.db.repositories import (
     PgCallLogRepository,
     PgLeadRepository,
 )
-from ai_sdr_agent.graph.spec import parse_conversation_spec
+from ai_sdr_agent.graph.spec import parse_conversation_spec, require_conversation_spec
 from ai_sdr_agent.models import LeadRecord
 
 router = APIRouter(prefix="/api/bots", tags=["bots"])
@@ -55,16 +55,7 @@ _BOT_UPDATE_FIELDS = {
     "twilio_auth_token",
     "twilio_phone_number",
     "max_call_turns",
-    "max_objection_attempts",
-    "max_qualify_attempts",
-    "max_booking_attempts",
     "sales_rep_name",
-    "prompt_greeting",
-    "prompt_qualify",
-    "prompt_pitch",
-    "prompt_objection",
-    "prompt_booking",
-    "prompt_wrapup",
     "conversation_spec",
     "kb_match_count",
     "kb_min_similarity",
@@ -105,16 +96,7 @@ class BotUpdateRequest(BaseModel):
     twilio_auth_token: str | None = None
     twilio_phone_number: str | None = None
     max_call_turns: int | None = None
-    max_objection_attempts: int | None = None
-    max_qualify_attempts: int | None = None
-    max_booking_attempts: int | None = None
     sales_rep_name: str | None = None
-    prompt_greeting: str | None = None
-    prompt_qualify: str | None = None
-    prompt_pitch: str | None = None
-    prompt_objection: str | None = None
-    prompt_booking: str | None = None
-    prompt_wrapup: str | None = None
     conversation_spec: dict[str, Any] | None = None
     kb_match_count: int | None = Field(default=None, ge=1, le=20)
     kb_min_similarity: float | None = Field(default=None, ge=0, le=1)
@@ -169,16 +151,7 @@ def _public_bot(row: BotConfigRow) -> dict[str, Any]:
         "twilio_auth_token": _mask_secret(row.twilio_auth_token),
         "twilio_phone_number": row.twilio_phone_number,
         "max_call_turns": row.max_call_turns,
-        "max_objection_attempts": row.max_objection_attempts,
-        "max_qualify_attempts": row.max_qualify_attempts,
-        "max_booking_attempts": row.max_booking_attempts,
         "sales_rep_name": row.sales_rep_name,
-        "prompt_greeting": row.prompt_greeting,
-        "prompt_qualify": row.prompt_qualify,
-        "prompt_pitch": row.prompt_pitch,
-        "prompt_objection": row.prompt_objection,
-        "prompt_booking": row.prompt_booking,
-        "prompt_wrapup": row.prompt_wrapup,
         "conversation_spec": row.conversation_spec,
         "kb_match_count": row.kb_match_count,
         "kb_min_similarity": row.kb_min_similarity,
@@ -285,9 +258,15 @@ async def update_bot(
     for key in list(fields):
         if key in _SECRET_FIELDS and isinstance(fields[key], str) and "****" in fields[key]:
             fields.pop(key)
-    if "conversation_spec" in fields and fields["conversation_spec"] is not None:
+    if "conversation_spec" in fields:
+        raw_spec = fields["conversation_spec"]
+        if raw_spec is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversation_spec is required. Rebuild the agent in Flow Builder.",
+            )
         try:
-            parse_conversation_spec(fields["conversation_spec"])
+            require_conversation_spec(raw_spec)
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 

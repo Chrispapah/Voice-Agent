@@ -51,16 +51,7 @@ class BotConfigDict(TypedDict, total=False):
     twilio_auth_token: str | None
     twilio_phone_number: str | None
     max_call_turns: int
-    max_objection_attempts: int
-    max_qualify_attempts: int
-    max_booking_attempts: int
     sales_rep_name: str
-    prompt_greeting: str | None
-    prompt_qualify: str | None
-    prompt_pitch: str | None
-    prompt_objection: str | None
-    prompt_booking: str | None
-    prompt_wrapup: str | None
     conversation_spec: dict[str, Any] | None
     kb_match_count: int
     kb_min_similarity: float
@@ -100,9 +91,7 @@ class ConversationState(TypedDict):
     follow_up_action: str | None
     qualification_notes: dict[str, str | bool | None]
     metadata: dict[str, str]
-    # Custom graph mode: consecutive self-loop completions per node id (for loop_min/max_turns).
     graph_node_streaks: NotRequired[dict[str, int]]
-    # Custom graph / single mode: next utterance index per node id for reply_turn_modes scheduling.
     graph_node_utterance_index: NotRequired[dict[str, int]]
 
 
@@ -126,16 +115,7 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
     "twilio_auth_token": None,
     "twilio_phone_number": None,
     "max_call_turns": 12,
-    "max_objection_attempts": 2,
-    "max_qualify_attempts": 3,
-    "max_booking_attempts": 3,
     "sales_rep_name": "Sales Team",
-    "prompt_greeting": None,
-    "prompt_qualify": None,
-    "prompt_pitch": None,
-    "prompt_objection": None,
-    "prompt_booking": None,
-    "prompt_wrapup": None,
     "conversation_spec": None,
     "kb_match_count": 5,
     "kb_min_similarity": 0.2,
@@ -148,15 +128,13 @@ _DEFAULT_BOT_CONFIG: BotConfigDict = {
 def _initial_route_target(bot_config: BotConfigDict | None) -> str:
     cfg: BotConfigDict = bot_config or dict(_DEFAULT_BOT_CONFIG)
     kind = graph_execution_kind(dict(cfg))
-    if kind == "sdr":
-        return "greeting"
     if kind == "single":
         return SINGLE_AGENT_NODE_ID
     spec = cfg.get("conversation_spec") or {}
     entry = spec.get("entry_node_id")
     if isinstance(entry, str) and entry:
         return entry
-    return "greeting"
+    raise ValueError("graph mode requires entry_node_id in conversation_spec")
 
 
 def build_initial_state(
@@ -168,7 +146,7 @@ def build_initial_state(
     company: str,
     calendar_id: str,
     lead_context: str,
-    available_slots: list[SlotPayload],
+    available_slots: list[SlotPayload] | None = None,
     bot_config: BotConfigDict | None = None,
 ) -> ConversationState:
     merged = dict(_DEFAULT_BOT_CONFIG)
@@ -195,7 +173,7 @@ def build_initial_state(
         "budget_confirmed": None,
         "timeline": None,
         "pain_points": [],
-        "available_slots": available_slots,
+        "available_slots": available_slots or [],
         "proposed_slot": None,
         "meeting_booked": False,
         "meeting_link": None,

@@ -45,16 +45,7 @@ export interface BotConfig {
   twilio_auth_token: string | null;
   twilio_phone_number: string | null;
   max_call_turns: number;
-  max_objection_attempts: number;
-  max_qualify_attempts: number;
-  max_booking_attempts: number;
   sales_rep_name: string;
-  prompt_greeting: string | null;
-  prompt_qualify: string | null;
-  prompt_pitch: string | null;
-  prompt_objection: string | null;
-  prompt_booking: string | null;
-  prompt_wrapup: string | null;
   conversation_spec?: ConversationSpecV1 | null;
   kb_match_count: number;
   kb_min_similarity: number;

@@ -73,18 +73,7 @@ class BotConfigRow(Base):
 
     # Conversation behaviour
     max_call_turns: Mapped[int] = mapped_column(Integer, default=12)
-    max_objection_attempts: Mapped[int] = mapped_column(Integer, default=2)
-    max_qualify_attempts: Mapped[int] = mapped_column(Integer, default=3)
-    max_booking_attempts: Mapped[int] = mapped_column(Integer, default=3)
     sales_rep_name: Mapped[str] = mapped_column(String(200), default="Sales Team")
-
-    # Custom prompts (nullable → use defaults)
-    prompt_greeting: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_qualify: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_pitch: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_objection: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_booking: Mapped[str | None] = mapped_column(Text, nullable=True)
-    prompt_wrapup: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     conversation_spec: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
@@ -133,16 +122,7 @@ class BotConfigRow(Base):
             "twilio_auth_token": self.twilio_auth_token,
             "twilio_phone_number": self.twilio_phone_number,
             "max_call_turns": self.max_call_turns,
-            "max_objection_attempts": self.max_objection_attempts,
-            "max_qualify_attempts": self.max_qualify_attempts,
-            "max_booking_attempts": self.max_booking_attempts,
             "sales_rep_name": self.sales_rep_name,
-            "prompt_greeting": self.prompt_greeting,
-            "prompt_qualify": self.prompt_qualify,
-            "prompt_pitch": self.prompt_pitch,
-            "prompt_objection": self.prompt_objection,
-            "prompt_booking": self.prompt_booking,
-            "prompt_wrapup": self.prompt_wrapup,
             "conversation_spec": self.conversation_spec,
             "kb_match_count": self.kb_match_count,
             "kb_min_similarity": self.kb_min_similarity,

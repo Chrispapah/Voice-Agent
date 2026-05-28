@@ -72,16 +72,7 @@ CREATE TABLE public.bot_configs (
   twilio_auth_token text,
   twilio_phone_number character varying,
   max_call_turns integer NOT NULL DEFAULT 12,
-  max_objection_attempts integer NOT NULL DEFAULT 2,
-  max_qualify_attempts integer NOT NULL DEFAULT 3,
-  max_booking_attempts integer NOT NULL DEFAULT 3,
   sales_rep_name character varying NOT NULL DEFAULT 'Sales Team'::character varying,
-  prompt_greeting text,
-  prompt_qualify text,
-  prompt_pitch text,
-  prompt_objection text,
-  prompt_booking text,
-  prompt_wrapup text,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   conversation_spec jsonb,
@@ -90,19 +81,15 @@ CREATE TABLE public.bot_configs (
   openai_realtime_model character varying NOT NULL DEFAULT 'gpt-realtime'::character varying,
   openai_realtime_voice character varying NOT NULL DEFAULT 'alloy'::character varying,
   openai_realtime_instructions text,
-  allow_voice_interruptions boolean NOT NULL DEFAULT true,
-  kb_match_count integer NOT NULL DEFAULT 5,
-  kb_min_similarity double precision NOT NULL DEFAULT 0.2,
+  kb_match_count integer NOT NULL DEFAULT 5 CHECK (kb_match_count >= 1 AND kb_match_count <= 20),
+  kb_min_similarity double precision NOT NULL DEFAULT 0.2 CHECK (kb_min_similarity >= 0::double precision AND kb_min_similarity <= 1::double precision),
   kb_embedding_model character varying NOT NULL DEFAULT 'text-embedding-3-small'::character varying,
-  kb_max_context_chars integer NOT NULL DEFAULT 6000,
-  kb_max_tool_iterations integer NOT NULL DEFAULT 2,
+  kb_max_context_chars integer NOT NULL DEFAULT 6000 CHECK (kb_max_context_chars >= 500 AND kb_max_context_chars <= 20000),
+  kb_max_tool_iterations integer NOT NULL DEFAULT 2 CHECK (kb_max_tool_iterations >= 1 AND kb_max_tool_iterations <= 4),
+  allow_voice_interruptions boolean NOT NULL DEFAULT true,
   CONSTRAINT bot_configs_pkey PRIMARY KEY (id),
   CONSTRAINT bot_configs_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
-  CONSTRAINT bot_configs_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES public.agent_folders(id),
-  CONSTRAINT bot_configs_kb_match_count_check CHECK (kb_match_count BETWEEN 1 AND 20),
-  CONSTRAINT bot_configs_kb_min_similarity_check CHECK (kb_min_similarity >= 0 AND kb_min_similarity <= 1),
-  CONSTRAINT bot_configs_kb_max_context_chars_check CHECK (kb_max_context_chars BETWEEN 500 AND 20000),
-  CONSTRAINT bot_configs_kb_max_tool_iterations_check CHECK (kb_max_tool_iterations BETWEEN 1 AND 4)
+  CONSTRAINT bot_configs_folder_id_fkey FOREIGN KEY (folder_id) REFERENCES public.agent_folders(id)
 );
 CREATE TABLE public.bot_knowledge_bases (
   bot_id uuid NOT NULL,
@@ -127,6 +114,7 @@ CREATE TABLE public.call_logs (
   meeting_booked boolean NOT NULL DEFAULT false,
   proposed_slot character varying,
   follow_up_action character varying,
+  call_quality character varying NOT NULL DEFAULT 'needs_attention'::character varying CHECK (call_quality::text = ANY (ARRAY['satisfactory'::character varying, 'unsatisfactory'::character varying, 'needs_attention'::character varying]::text[])),
   CONSTRAINT call_logs_pkey PRIMARY KEY (id),
   CONSTRAINT call_logs_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id)
 );
@@ -217,3 +205,44 @@ CREATE TABLE public.sessions (
   CONSTRAINT sessions_pkey PRIMARY KEY (conversation_id),
   CONSTRAINT sessions_bot_id_fkey FOREIGN KEY (bot_id) REFERENCES public.bot_configs(id)
 );
+
+-- Masked API keys for client reads (must match bot_configs columns after SDR legacy removal).
+CREATE OR REPLACE VIEW public.bot_configs_safe AS
+SELECT
+  id, user_id, folder_id, name, is_active,
+  llm_provider, llm_model_name, llm_temperature, llm_max_tokens,
+  CASE WHEN openai_api_key IS NOT NULL
+       THEN left(openai_api_key, 4) || '****' || right(openai_api_key, 4)
+  END AS openai_api_key,
+  CASE WHEN anthropic_api_key IS NOT NULL
+       THEN left(anthropic_api_key, 4) || '****' || right(anthropic_api_key, 4)
+  END AS anthropic_api_key,
+  CASE WHEN groq_api_key IS NOT NULL
+       THEN left(groq_api_key, 4) || '****' || right(groq_api_key, 4)
+  END AS groq_api_key,
+  CASE WHEN elevenlabs_api_key IS NOT NULL
+       THEN left(elevenlabs_api_key, 4) || '****' || right(elevenlabs_api_key, 4)
+  END AS elevenlabs_api_key,
+  elevenlabs_voice_id, elevenlabs_model_id,
+  CASE WHEN deepgram_api_key IS NOT NULL
+       THEN left(deepgram_api_key, 4) || '****' || right(deepgram_api_key, 4)
+  END AS deepgram_api_key,
+  deepgram_model, deepgram_language,
+  voice_provider, openai_realtime_model, openai_realtime_voice,
+  openai_realtime_instructions, allow_voice_interruptions,
+  CASE WHEN twilio_account_sid IS NOT NULL
+       THEN left(twilio_account_sid, 4) || '****' || right(twilio_account_sid, 4)
+  END AS twilio_account_sid,
+  CASE WHEN twilio_auth_token IS NOT NULL
+       THEN left(twilio_auth_token, 4) || '****' || right(twilio_auth_token, 4)
+  END AS twilio_auth_token,
+  twilio_phone_number,
+  max_call_turns, sales_rep_name,
+  conversation_spec,
+  kb_match_count, kb_min_similarity, kb_embedding_model,
+  kb_max_context_chars, kb_max_tool_iterations,
+  created_at, updated_at
+FROM public.bot_configs;
+
+GRANT SELECT ON public.bot_configs_safe TO authenticated;
+GRANT SELECT ON public.bot_configs_safe TO service_role;

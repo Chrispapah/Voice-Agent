@@ -193,15 +193,6 @@ class ConversationBrain(Protocol):
     ) -> str:
         ...
 
-    async def extract_qualification(
-        self,
-        *,
-        transcript: list[dict[str, str]],
-        existing_pain_points: list[str],
-        trace: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        ...
-
 
 @dataclass
 class StubConversationBrain:
@@ -219,38 +210,8 @@ class StubConversationBrain:
         max_tokens: int | None = None,
         trace: dict[str, Any] | None = None,
     ) -> str:
-        human_text = self._last_human_text(transcript).strip()
-        pl = system_prompt.lower()
-        if "outbound cold call" in pl:
-            return "Hi, this is Ava following up on your recent interest. Did I catch you at an okay time?"
-        if "qualifying the prospect" in pl:
-            return (
-                "Thanks. To make sure this is relevant, are you the person who owns sales process decisions "
-                "and are you looking to improve follow-up speed this quarter?"
-            )
-        if "you are the sdr for an ai outbound" in pl:
-            return (
-                "We help teams automate outbound follow-up so prospects get contacted quickly and "
-                "reps spend more time in qualified conversations. Would you be open to a short walkthrough?"
-            )
-        if "handling an objection" in pl or "objection handling" in pl:
-            return (
-                "That makes sense. Teams usually start small with one workflow, so the first step is low lift. "
-                "Would it help if I showed you what that looks like in a short demo?"
-            )
-        if "book a meeting" in system_prompt.lower():
-            return (
-                "I can get something on the calendar. I have tomorrow at 3 PM UTC, "
-                "two days from now at 10 AM UTC, or three days from now at 5 PM UTC."
-            )
-        if "wrap up" in system_prompt.lower() or "wrapping up" in system_prompt.lower():
-            if "booked" in human_text.lower():
-                return "Perfect, you are all set. I will send a confirmation email right after this call."
-            return "Thanks for your time. I will send a brief follow-up email so you have the next steps in writing."
-        return (
-            "We help teams automate outbound follow-up so prospects get contacted quickly and "
-            "reps spend more time in qualified conversations. Would you be open to a short walkthrough?"
-        )
+        _ = self._last_human_text(transcript)
+        return "Καταλαβαίνω. Πώς μπορώ να σας βοηθήσω;"
 
     async def stream_respond_tokens(
         self,
@@ -312,77 +273,13 @@ class StubConversationBrain:
         trace: dict[str, Any] | None = None,
     ) -> str:
         text = human_input.lower().strip()
-        labels_set = set(labels)
-        # Qualify router: move to pitch once the prospect has given substantive role/engagement
-        # (tests rely on these phrases; real LLM routing is smarter).
-        if (
-            "continue_qualifying" in labels_set
-            and "pitch" in labels_set
-            and "not_interested" in labels_set
-        ):
-            if any(
-                s in text
-                for s in (
-                    "oversee",
-                    "sales operations",
-                    "sales ops",
-                    "i lead",
-                    "i run sales",
-                    "let's do it",
-                    "sounds interesting",
-                )
-            ):
-                return "pitch"
         if any(phrase in text for phrase in self._EXIT_PHRASES):
-            return "wrap_up" if "wrap_up" in labels else "not_interested"
-        if "continue_qualifying" in labels:
-            qual_signals = ("i handle", "i'm the", "i am the", "i own", "budget",
-                            "approved", "quarter", "month", "pain", "problem",
-                            "struggle", "slow", "manual")
-            if any(s in text for s in qual_signals):
-                return "continue_qualifying"
-        if "busy" in text or "already have" in text or "send info" in text or "maybe later" in text:
-            if "handle_objection" in labels:
-                return "handle_objection"
-        if "yes" in text or "sounds good" in text or "let's do it" in text:
-            if "book_meeting" in labels:
-                return "book_meeting"
-            if "continue_qualifying" in labels:
-                return "continue_qualifying"
-            if "pitch" in labels:
-                return "pitch"
-            if "continue_booking" in labels:
-                return "continue_booking"
-        if "tuesday" in text or "tomorrow" in text or "3 pm" in text or "10 am" in text:
-            if "continue_booking" in labels:
-                return "continue_booking"
-            if "wrap_up" in labels:
-                return "wrap_up"
+            if "complete" in labels:
+                return "complete"
         if text in self._NEGATIVE_PHRASES or any(text.startswith(p) for p in self._NEGATIVE_PHRASES):
-            if "not_interested" in labels:
-                return "not_interested"
-            if "wrap_up" in labels:
-                return "wrap_up"
-            if "handle_objection" in labels:
-                return "handle_objection"
+            if "complete" in labels:
+                return "complete"
         return labels[0]
-
-    async def extract_qualification(
-        self,
-        *,
-        transcript: list[dict[str, str]],
-        existing_pain_points: list[str],
-        trace: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        text = self._last_human_text(transcript).lower().strip()
-        updates: dict[str, Any] = {}
-        if any(p in text for p in ("i handle", "i'm the", "i am the", "i own", "my call")):
-            updates["is_decision_maker"] = True
-        if "budget" in text or "approved" in text:
-            updates["budget_confirmed"] = True
-        if "quarter" in text or "month" in text:
-            updates["timeline"] = self._last_human_text(transcript)
-        return updates
 
 
 class LangChainConversationBrain:
@@ -959,56 +856,6 @@ class LangChainConversationBrain:
             if label in raw:
                 return label
         return labels[0]
-
-    async def extract_qualification(
-        self,
-        *,
-        transcript: list[dict[str, str]],
-        existing_pain_points: list[str],
-        trace: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        from ai_sdr_agent.graph.prompts import qualification_extraction_prompt
-
-        system = qualification_extraction_prompt(existing_pain_points)
-        trimmed_transcript = _slice_transcript(
-            transcript,
-            max_messages=self._EXTRACTION_TRANSCRIPT_LIMIT,
-        )
-        messages = [SystemMessage(content=system), *_messages_from_transcript(trimmed_transcript)]
-
-        response = await self._ainvoke_with_logging(
-            self._model,
-            messages,
-            operation="extract_qualification",
-            trace=trace,
-            prompt_chars=len(system),
-            transcript=trimmed_transcript,
-        )
-        raw = str(response.content).strip()
-
-        if raw.startswith("```"):
-            raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse qualification JSON, falling back to empty: {!r}", raw)
-            return {}
-
-        updates: dict[str, Any] = {}
-        if data.get("is_decision_maker") is not None:
-            updates["is_decision_maker"] = bool(data["is_decision_maker"])
-        if data.get("budget_confirmed") is not None:
-            updates["budget_confirmed"] = bool(data["budget_confirmed"])
-        if data.get("timeline") is not None:
-            updates["timeline"] = str(data["timeline"])
-        new_pain = data.get("pain_points") or []
-        if isinstance(new_pain, list) and new_pain:
-            combined = list(existing_pain_points) + [
-                p for p in new_pain if isinstance(p, str) and p not in existing_pain_points
-            ]
-            updates["pain_points"] = combined
-        return updates
 
 
 def build_conversation_brain(

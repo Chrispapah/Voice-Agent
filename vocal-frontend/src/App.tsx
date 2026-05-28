@@ -15,8 +15,6 @@ import PhoneNumbersPage from "./pages/PhoneNumbers.tsx";
 import CallHistoryPage from "./pages/CallHistory.tsx";
 import AnalyticsPage from "./pages/Analytics.tsx";
 import BillingPage from "./pages/Billing.tsx";
-import BatchCallPage from "./pages/BatchCall.tsx";
-import CreateBatchCallPage from "./pages/CreateBatchCall.tsx";
 import ChatHistoryPage from "./pages/ChatHistory.tsx";
 import QualityPage from "./pages/Quality.tsx";
 import AlertingPage from "./pages/Alerting.tsx";
@@ -46,8 +44,6 @@ const App = () => (
             <Route path="/knowledge-base" element={<KnowledgeBasePage />} />
             <Route path="/tools" element={<ToolsPage />} />
             <Route path="/phone-numbers" element={<PhoneNumbersPage />} />
-            <Route path="/batch-call" element={<BatchCallPage />} />
-            <Route path="/batch-call/new" element={<CreateBatchCallPage />} />
             <Route path="/call-history" element={<CallHistoryPage />} />
             <Route path="/chat-history" element={<ChatHistoryPage />} />
             <Route path="/analytics" element={<AnalyticsPage />} />

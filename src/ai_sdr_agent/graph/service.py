@@ -6,13 +6,11 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import AsyncGenerator
 
 from loguru import logger
 
 from ai_sdr_agent.graph.dynamic_graph import build_compiled_graph
-from ai_sdr_agent.graph.spec import graph_execution_kind
 from ai_sdr_agent.graph.state import ConversationState
 from ai_sdr_agent.models import CallLogRecord
 from ai_sdr_agent.services.brain import (
@@ -23,7 +21,6 @@ from ai_sdr_agent.services.brain import (
 from ai_sdr_agent.services.latency_analytics import LatencyAnalyticsBuffer
 from ai_sdr_agent.services.persistence import CallLogRepository, SessionStore
 from ai_sdr_agent.services.pre_call_loader import PreCallLoader
-from ai_sdr_agent.tools import CRMGateway, CalendarGateway, EmailGateway
 
 _EXIT_PATTERNS = re.compile(
     r"\b("
@@ -125,15 +122,9 @@ def _log_turn_step_latency(
 @dataclass
 class SDRRuntimeDependencies:
     brain: ConversationBrain
-    calendar_gateway: CalendarGateway
-    email_gateway: EmailGateway
-    crm_gateway: CRMGateway
     pre_call_loader: PreCallLoader
     session_store: SessionStore
     call_log_repository: CallLogRepository
-    email_template_path: Path
-    sales_rep_name: str
-    from_name: str
     latency_analytics: LatencyAnalyticsBuffer | None = None
 
 
@@ -151,12 +142,6 @@ class SDRConversationService:
         self.graph = build_compiled_graph(
             brain=dependencies.brain,
             bot_config=bot_config,
-            calendar_gateway=dependencies.calendar_gateway,
-            email_gateway=dependencies.email_gateway,
-            crm_gateway=dependencies.crm_gateway,
-            email_template_path=dependencies.email_template_path,
-            sales_rep_name=dependencies.sales_rep_name,
-            from_name=dependencies.from_name,
         )
 
     def _can_parallelize_persistence(self) -> bool:
@@ -320,25 +305,21 @@ class SDRConversationService:
                         state["turn_count"],
                     )
                 if force_exit and state["next_node"] != "complete":
-                    if graph_execution_kind(state.get("bot_config", {})) == "sdr":
-                        state["next_node"] = "wrap_up"
-                        state["call_outcome"] = "not_interested"
-                    else:
-                        state["next_node"] = "complete"
-                        state["route_decision"] = "complete"
-                        state["call_outcome"] = "not_interested"
-                        state["last_agent_response"] = "Thanks for your time. Goodbye."
-                        turn_start = time.perf_counter()
-                        persisted = await self._persist_updated_state(
-                            conversation_id,
-                            turn_id,
-                            state["turn_count"],
-                            state,
-                            graph_ms=0.0,
-                            turn_start=turn_start,
-                        )
-                        await _end_chunk_stream()
-                        return persisted
+                    state["next_node"] = "complete"
+                    state["route_decision"] = "complete"
+                    state["call_outcome"] = "not_interested"
+                    state["last_agent_response"] = "Thanks for your time. Goodbye."
+                    turn_start = time.perf_counter()
+                    persisted = await self._persist_updated_state(
+                        conversation_id,
+                        turn_id,
+                        state["turn_count"],
+                        state,
+                        graph_ms=0.0,
+                        turn_start=turn_start,
+                    )
+                    await _end_chunk_stream()
+                    return persisted
 
                 token = set_response_chunk_sink(_chunk_sink)
                 try:
@@ -635,22 +616,18 @@ class SDRConversationService:
                     state["turn_count"],
                 )
             if force_exit and state["next_node"] != "complete":
-                if graph_execution_kind(state.get("bot_config", {})) == "sdr":
-                    state["next_node"] = "wrap_up"
-                    state["call_outcome"] = "not_interested"
-                else:
-                    state["next_node"] = "complete"
-                    state["route_decision"] = "complete"
-                    state["call_outcome"] = "not_interested"
-                    state["last_agent_response"] = "Thanks for your time. Goodbye."
-                    turn_start = time.perf_counter()
-                    return await self._persist_updated_state(
-                        conversation_id,
-                        turn_id,
-                        turn_count,
-                        state,
-                        graph_ms=0.0,
-                        turn_start=turn_start,
-                    )
+                state["next_node"] = "complete"
+                state["route_decision"] = "complete"
+                state["call_outcome"] = "not_interested"
+                state["last_agent_response"] = "Thanks for your time. Goodbye."
+                turn_start = time.perf_counter()
+                return await self._persist_updated_state(
+                    conversation_id,
+                    turn_id,
+                    turn_count,
+                    state,
+                    graph_ms=0.0,
+                    turn_start=turn_start,
+                )
 
             return await self._run_turn_graph(conversation_id, state)

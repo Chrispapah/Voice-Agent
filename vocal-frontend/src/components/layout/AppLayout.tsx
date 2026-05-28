@@ -18,10 +18,7 @@ const nav = [
   },
   {
     label: "DEPLOY",
-    items: [
-      { to: "/phone-numbers", label: "Phone Numbers", icon: Phone },
-      { to: "/batch-call", label: "Batch Call", icon: PhoneCall },
-    ],
+    items: [{ to: "/phone-numbers", label: "Phone Numbers", icon: Phone }],
   },
   {
     label: "MONITOR",
