@@ -152,6 +152,14 @@ function normalizeToolIds(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function defaultNodeLabel(nodeId: string): string {
+  return nodeId
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function specToNodes(spec: ConversationSpecV1): Node[] {
   if (spec.mode !== "graph" || !spec.nodes?.length) return specToNodes(defaultGraphConversationSpec());
   return spec.nodes.map((n, i) => ({
@@ -159,7 +167,7 @@ function specToNodes(spec: ConversationSpecV1): Node[] {
     type: "agentSpec",
     position: spec.positions?.[n.id] ?? { x: 160 + i * 320, y: 160 },
     data: {
-      label: n.label || n.id,
+      label: n.label?.trim() ?? "",
       system_prompt: n.system_prompt,
       static_message: typeof n.static_message === "string" ? n.static_message : "",
       tool_ids: n.tool_ids ?? [],
@@ -192,7 +200,11 @@ function nodesEdgesToSpec(
   const specNodes: SpecNode[] = nodes.map((n) => {
     const sn: SpecNode = {
       id: n.id,
-      label: typeof n.data?.label === "string" ? n.data.label : null,
+      label: (() => {
+        const raw = typeof n.data?.label === "string" ? n.data.label.trim() : "";
+        if (!raw || raw === n.id) return null;
+        return raw;
+      })(),
       system_prompt: typeof n.data?.system_prompt === "string" ? n.data.system_prompt : "",
       tool_ids: normalizeToolIds(n.data?.tool_ids),
     };
@@ -683,7 +695,7 @@ export default function FlowBuilderPage() {
         type: "agentSpec",
         position: { x: 220 + nodes.length * 80, y: 180 + nodes.length * 40 },
         data: {
-          label: id,
+          label: defaultNodeLabel(id),
           system_prompt: "Describe this agent's role. Keep voice replies short and natural.",
           static_message: "",
           reply_turn_modes_text: "",

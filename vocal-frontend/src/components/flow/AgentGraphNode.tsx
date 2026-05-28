@@ -14,6 +14,9 @@ function AgentGraphNodeInner({ id, data, selected }: NodeProps<Node<AgentGraphNo
   const entryNodeId = useContext(AgentGraphEntryContext);
   const isEntry = id === entryNodeId;
   const toolCount = Array.isArray(data.tool_ids) ? data.tool_ids.length : 0;
+  const rawLabel = typeof data.label === "string" ? data.label.trim() : "";
+  const displayLabel = rawLabel || id;
+  const showTechnicalId = displayLabel !== id;
 
   return (
     <>
@@ -31,7 +34,10 @@ function AgentGraphNodeInner({ id, data, selected }: NodeProps<Node<AgentGraphNo
               Entry
             </span>
           )}
-          <div className="truncate font-mono text-sm font-semibold leading-snug text-foreground">{id}</div>
+          <div className="truncate text-sm font-semibold leading-snug text-foreground">{displayLabel}</div>
+          {showTechnicalId ? (
+            <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground">{id}</div>
+          ) : null}
           {toolCount > 0 ? (
             <div className="mt-1 flex justify-end">
               <span className="inline-flex items-center gap-1 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
