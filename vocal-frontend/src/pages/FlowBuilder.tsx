@@ -38,15 +38,13 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  createLead,
+  ensureConsoleTestLead,
   getBot,
-  listLeads,
   sendTestTurn,
   startTestSession,
   stopTestSession,
   updateBot,
   type BotConfig,
-  type Lead,
   listTools,
   type ToolDefinition,
   AuthRequiredError,
@@ -445,12 +443,10 @@ export default function FlowBuilderPage() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [previewShareUrl, setPreviewShareUrl] = useState("");
-  const [leads, setLeads] = useState<Lead[]>([]);
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [selectedAgentKnowledgeBaseIds, setSelectedAgentKnowledgeBaseIds] = useState<string[]>([]);
   const [nodeKnowledgeBaseIds, setNodeKnowledgeBaseIds] = useState<Record<string, string[]>>({});
-  const [selectedLead, setSelectedLead] = useState("");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
@@ -543,13 +539,12 @@ export default function FlowBuilderPage() {
     setError("");
     Promise.all([
       getBot(botId),
-      listLeads(botId),
       listTools(),
       listKnowledgeBases(),
       listBotKnowledgeBaseIds(botId),
       listNodeKnowledgeBaseAssignments(botId),
     ])
-      .then(([loadedBot, loadedLeads, loadedTools, loadedKnowledgeBases, loadedAgentKnowledgeBaseIds, loadedNodeKnowledgeBaseIds]) => {
+      .then(([loadedBot, loadedTools, loadedKnowledgeBases, loadedAgentKnowledgeBaseIds, loadedNodeKnowledgeBaseIds]) => {
         const loadedSpec = firstUsableSpec(loadedBot);
         setBot(loadedBot);
         setDraftName(loadedBot.name);
@@ -572,12 +567,10 @@ export default function FlowBuilderPage() {
         setEntryNodeId(loadedSpec.entry_node_id || loadedSpec.nodes?.[0]?.id || "welcome");
         setNodes(specToNodes(loadedSpec));
         setEdges(specToEdges(loadedSpec));
-        setLeads(loadedLeads);
         setTools(loadedTools);
         setKnowledgeBases(loadedKnowledgeBases);
         setSelectedAgentKnowledgeBaseIds(loadedAgentKnowledgeBaseIds);
         setNodeKnowledgeBaseIds(loadedNodeKnowledgeBaseIds);
-        setSelectedLead(loadedLeads[0]?.id || "");
       })
       .catch((err: unknown) => {
         if (err instanceof AuthRequiredError) {
@@ -930,20 +923,7 @@ export default function FlowBuilderPage() {
   }
 
   async function ensureLead(): Promise<string> {
-    if (selectedLead) return selectedLead;
-    const created = await createLead(botId, {
-      lead_name: "Test Lead",
-      company: "Demo Company",
-      phone_number: "+15551234567",
-      lead_email: "test@example.com",
-      lead_context: "Created from the Akoi test console.",
-      timezone: "UTC",
-      owner_name: "Sales Team",
-      calendar_id: "sales-team",
-    });
-    setLeads((current) => [created, ...current]);
-    setSelectedLead(created.id);
-    return created.id;
+    return ensureConsoleTestLead(botId);
   }
 
   async function handleStartTest() {
@@ -1680,16 +1660,6 @@ export default function FlowBuilderPage() {
                   )}
                 </div>
               </div>
-              <select
-                value={selectedLead}
-                onChange={(e) => setSelectedLead(e.target.value)}
-                className="mb-3 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm"
-              >
-                <option value="">Auto-create demo lead</option>
-                {leads.map((lead) => (
-                  <option key={lead.id} value={lead.id}>{lead.lead_name} - {lead.company}</option>
-                ))}
-              </select>
               <div className="h-64 space-y-2 overflow-y-auto rounded-lg border border-border bg-surface-muted/40 p-3">
                 {messages.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Start a test to preview this agent.</p>

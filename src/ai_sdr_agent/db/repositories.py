@@ -93,6 +93,15 @@ class PgLeadRepository:
         )
         return result.scalars().all()
 
+    async def get_by_bot_and_phone(self, bot_id: uuid.UUID, phone_number: str) -> LeadRow | None:
+        result = await self.session.execute(
+            select(LeadRow).where(
+                LeadRow.bot_id == bot_id,
+                LeadRow.phone_number == phone_number,
+            )
+        )
+        return result.scalar_one_or_none()
+
     def _row_to_record(self, row: LeadRow) -> LeadRecord:
         return LeadRecord(
             lead_id=str(row.id),

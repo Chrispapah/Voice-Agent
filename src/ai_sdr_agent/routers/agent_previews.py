@@ -180,21 +180,27 @@ async def start_public_agent_preview_session(
     session: AsyncSession = Depends(get_async_session),
 ):
     share, bot = await _get_active_preview_share(token, session)
-    preview_id = secrets.token_hex(6)
-    lead = LeadRow(
-        bot_id=bot.id,
-        lead_name="Preview Visitor",
-        company="Public Preview",
-        phone_number=f"preview-{preview_id}",
-        lead_email="",
-        lead_context="Public live agent preview session.",
-        lifecycle_stage="preview",
-        timezone="UTC",
-        owner_name="Preview",
-        calendar_id="preview",
-        metadata_json={"source": "agent_preview", "share_id": str(share.id)},
-    )
-    session.add(lead)
+    from ai_sdr_agent.db.repositories import PgLeadRepository
+
+    lead_repo = PgLeadRepository(session)
+    preview_phone = f"preview-share-{share.id}"
+    lead = await lead_repo.get_by_bot_and_phone(bot.id, preview_phone)
+    if lead is None:
+        lead = LeadRow(
+            bot_id=bot.id,
+            lead_name="Visitor",
+            company="",
+            phone_number=preview_phone,
+            lead_email="",
+            lead_context="",
+            lifecycle_stage="preview",
+            timezone="UTC",
+            owner_name="",
+            calendar_id="",
+            metadata_json={"source": "agent_preview", "share_id": str(share.id)},
+        )
+        session.add(lead)
+        await session.flush()
     share.session_count += 1
     await session.commit()
     return {

@@ -471,8 +471,34 @@ export function createAgentFolder(name: string): Promise<AgentFolder> {
   return createAgentFolderInSupabase(name);
 }
 
+export const FLOW_BUILDER_TEST_LEAD_PHONE = "builder-test-console";
+
 export function listLeads(botId: string): Promise<Lead[]> {
   return listLeadsFromSupabase(botId);
+}
+
+/** One reusable lead per agent for the Flow Builder test console (no SDR demo rows). */
+export async function ensureConsoleTestLead(botId: string): Promise<string> {
+  assertSupabaseConfigured();
+  const { data: existing, error: lookupError } = await supabase
+    .from("leads")
+    .select("id")
+    .eq("bot_id", botId)
+    .eq("phone_number", FLOW_BUILDER_TEST_LEAD_PHONE)
+    .maybeSingle();
+  throwIfSupabaseError(lookupError);
+  if (existing?.id) return existing.id as string;
+  const created = await createLead(botId, {
+    lead_name: "Test caller",
+    company: "",
+    phone_number: FLOW_BUILDER_TEST_LEAD_PHONE,
+    lead_email: "",
+    lead_context: "",
+    timezone: "UTC",
+    owner_name: "",
+    calendar_id: "",
+  });
+  return created.id;
 }
 
 export function listTools(): Promise<ToolDefinition[]> {
