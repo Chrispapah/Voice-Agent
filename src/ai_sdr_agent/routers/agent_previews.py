@@ -23,8 +23,9 @@ from starlette.websockets import WebSocketDisconnect
 from ai_sdr_agent.auth.dependencies import get_current_user_id
 from ai_sdr_agent.config import get_settings
 from ai_sdr_agent.db.engine import get_async_session, get_async_session_factory
-from ai_sdr_agent.db.models import AgentPreviewShareRow, BotConfigRow, LeadRow
-from ai_sdr_agent.db.repositories import PgCallLogRepository, PgLeadRepository, PgSessionStore
+from ai_sdr_agent.db.models import AgentPreviewShareRow, BotConfigRow
+from ai_sdr_agent.db.repositories import PgCallLogRepository, PgSessionStore
+from ai_sdr_agent.models import LeadRecord
 from ai_sdr_agent.routers.test_sessions import _build_service_for_bot, _verify_bot
 from ai_sdr_agent.routers.web_voice import (
     _client_message_for_deepgram_connect_failure,
@@ -43,6 +44,7 @@ from ai_sdr_agent.voice.elevenlabs_tts import stream_elevenlabs_text_to_ws
 from ai_sdr_agent.voice.echo_filter import RealtimeEchoGuard
 from ai_sdr_agent.voice.openai_realtime import OpenAIRealtimeVoiceBridge
 from ai_sdr_agent.voice.turn_orchestrator import run_voice_graph_turn
+from ai_sdr_agent.services.persistence import InMemoryLeadRepository
 
 router = APIRouter(tags=["agent-previews"])
 
@@ -93,6 +95,30 @@ def _public_share_payload(row: AgentPreviewShareRow, bot: BotConfigRow) -> dict[
         "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "remaining_sessions": max(0, row.max_sessions - row.session_count),
     }
+
+
+def _preview_lead_id(share: AgentPreviewShareRow) -> str:
+    return f"preview-share-{share.id}"
+
+
+def _preview_lead_record(share: AgentPreviewShareRow) -> LeadRecord:
+    return LeadRecord(
+        lead_id=_preview_lead_id(share),
+        lead_name="Visitor",
+        company="",
+        phone_number=_preview_lead_id(share),
+        lead_email="",
+        lead_context="",
+        lifecycle_stage="follow_up",
+        timezone="UTC",
+        owner_name="",
+        calendar_id="",
+        metadata={"source": "agent_preview", "share_id": str(share.id)},
+    )
+
+
+def _preview_lead_repo(share: AgentPreviewShareRow) -> InMemoryLeadRepository:
+    return InMemoryLeadRepository([_preview_lead_record(share)])
 
 
 async def _get_active_preview_share(
@@ -180,37 +206,10 @@ async def start_public_agent_preview_session(
     session: AsyncSession = Depends(get_async_session),
 ):
     share, bot = await _get_active_preview_share(token, session)
-    preview_phone = f"preview-share-{share.id}"
-    result = await session.execute(
-        select(LeadRow)
-        .where(
-            LeadRow.bot_id == bot.id,
-            LeadRow.phone_number == preview_phone,
-        )
-        .order_by(LeadRow.created_at.asc(), LeadRow.id.asc())
-        .limit(1)
-    )
-    lead = result.scalar_one_or_none()
-    if lead is None:
-        lead = LeadRow(
-            bot_id=bot.id,
-            lead_name="Visitor",
-            company="",
-            phone_number=preview_phone,
-            lead_email="",
-            lead_context="",
-            lifecycle_stage="follow_up",
-            timezone="UTC",
-            owner_name="",
-            calendar_id="",
-            metadata_json={"source": "agent_preview", "share_id": str(share.id)},
-        )
-        session.add(lead)
-        await session.flush()
     share.session_count += 1
     await session.commit()
     return {
-        "lead_id": str(lead.id),
+        "lead_id": _preview_lead_id(share),
         "conversation_id": None,
         "voice_provider": bot.voice_provider,
     }
@@ -419,19 +418,18 @@ async def public_agent_preview_voice_session(websocket: WebSocket, token: str) -
 
         async with get_async_session_factory()() as db:
             try:
-                _, bot = await _get_active_preview_share(token, db, require_capacity=False)
+                share, bot = await _get_active_preview_share(token, db, require_capacity=False)
             except HTTPException as exc:
                 await _send_json(websocket, {"type": "error", "message": str(exc.detail)})
                 await websocket.close(code=1008)
                 return
-            lead = await db.get(LeadRow, uuid.UUID(lead_id))
-            if lead is None or lead.bot_id != bot.id:
+            if lead_id != _preview_lead_id(share):
                 await _send_json(websocket, {"type": "error", "message": "Preview session not found"})
                 await websocket.close(code=4404)
                 return
             bid = bot.id
             bot_cfg_merged = _merge_voice_credentials(bot.to_config_dict(), settings)
-            lead_repo = PgLeadRepository(db)
+            lead_repo = _preview_lead_repo(share)
             session_store = PgSessionStore(db, bid)
             call_log_repo = PgCallLogRepository(db, bid)
             svc = _build_service_for_bot(bot_cfg_merged, lead_repo, session_store, call_log_repo)
@@ -623,13 +621,12 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
         state0: dict[str, Any] | None = None
         async with get_async_session_factory()() as db:
             try:
-                _, bot = await _get_active_preview_share(token, db, require_capacity=False)
+                share, bot = await _get_active_preview_share(token, db, require_capacity=False)
             except HTTPException as exc:
                 await _send_json(websocket, {"type": "error", "message": str(exc.detail)})
                 await websocket.close(code=1008)
                 return
-            lead = await db.get(LeadRow, uuid.UUID(lead_id))
-            if lead is None or lead.bot_id != bot.id:
+            if lead_id != _preview_lead_id(share):
                 await _send_json(websocket, {"type": "error", "message": "Preview session not found"})
                 await websocket.close(code=4404)
                 return
@@ -640,7 +637,7 @@ async def public_agent_preview_openai_realtime_voice_session(websocket: WebSocke
                 await _send_json(websocket, {"type": "error", "message": "OpenAI API key required for Realtime voice."})
                 await websocket.close(code=4400)
                 return
-            lead_repo = PgLeadRepository(db)
+            lead_repo = _preview_lead_repo(share)
             session_store = PgSessionStore(db, bid)
             call_log_repo = PgCallLogRepository(db, bid)
             svc = _build_service_for_bot(bot_cfg_merged, lead_repo, session_store, call_log_repo)
@@ -892,13 +889,12 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
         state0: dict[str, Any] | None = None
         async with get_async_session_factory()() as db:
             try:
-                _, bot = await _get_active_preview_share(token, db, require_capacity=False)
+                share, bot = await _get_active_preview_share(token, db, require_capacity=False)
             except HTTPException as exc:
                 await _send_json(websocket, {"type": "error", "message": str(exc.detail)})
                 await websocket.close(code=1008)
                 return
-            lead = await db.get(LeadRow, uuid.UUID(lead_id))
-            if lead is None or lead.bot_id != bot.id:
+            if lead_id != _preview_lead_id(share):
                 await _send_json(websocket, {"type": "error", "message": "Preview session not found"})
                 await websocket.close(code=4404)
                 return
@@ -919,7 +915,7 @@ async def public_agent_preview_openai_realtime_elevenlabs_voice_session(websocke
                 await websocket.close(code=4400)
                 return
 
-            lead_repo = PgLeadRepository(db)
+            lead_repo = _preview_lead_repo(share)
             session_store = PgSessionStore(db, bid)
             call_log_repo = PgCallLogRepository(db, bid)
             svc = _build_service_for_bot(bot_cfg_merged, lead_repo, session_store, call_log_repo)

@@ -5,8 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ai_sdr_agent.db.models import AgentPreviewShareRow, BotConfigRow, LeadRow
-from ai_sdr_agent.routers.agent_previews import _token_hash, start_public_agent_preview_session
+from ai_sdr_agent.db.models import AgentPreviewShareRow, BotConfigRow
+from ai_sdr_agent.routers.agent_previews import (
+    _preview_lead_id,
+    _preview_lead_repo,
+    _token_hash,
+    start_public_agent_preview_session,
+)
 
 
 class _ShareResult:
@@ -17,17 +22,9 @@ class _ShareResult:
         return self._row
 
 
-class _LeadResult:
-    def __init__(self, lead: LeadRow | None):
-        self._lead = lead
-
-    def scalar_one_or_none(self):
-        return self._lead
-
-
 class _Session:
-    def __init__(self, share: AgentPreviewShareRow, bot: BotConfigRow, lead: LeadRow | None = None):
-        self._results = [_ShareResult(share, bot), _LeadResult(lead)]
+    def __init__(self, share: AgentPreviewShareRow, bot: BotConfigRow):
+        self._results = [_ShareResult(share, bot)]
         self.added = []
         self.flushed = False
         self.committed = False
@@ -62,50 +59,33 @@ def _preview_share_rows(token: str):
 
 
 @pytest.mark.asyncio
-async def test_start_public_preview_session_reuses_existing_preview_lead():
+async def test_start_public_preview_session_uses_synthetic_lead_without_touching_leads_table():
     token = "preview-token"
     share, bot = _preview_share_rows(token)
-    lead = LeadRow(
-        id=uuid.uuid4(),
-        bot_id=bot.id,
-        lead_name="Visitor",
-        company="",
-        phone_number=f"preview-share-{share.id}",
-        lead_email="",
-        lead_context="",
-        lifecycle_stage="follow_up",
-        timezone="UTC",
-        owner_name="",
-        calendar_id="",
-        metadata_json={"source": "agent_preview", "share_id": str(share.id)},
-    )
-    session = _Session(share, bot, lead)
+    session = _Session(share, bot)
 
     payload = await start_public_agent_preview_session(token, session=session)
 
     assert payload == {
-        "lead_id": str(lead.id),
+        "lead_id": f"preview-share-{share.id}",
         "conversation_id": None,
         "voice_provider": "builtin",
     }
     assert share.session_count == 1
+    assert session._results == []
     assert session.added == []
+    assert session.flushed is False
     assert session.committed is True
 
 
 @pytest.mark.asyncio
-async def test_start_public_preview_session_creates_preview_lead_with_standard_lifecycle():
-    token = "preview-token"
-    share, bot = _preview_share_rows(token)
-    session = _Session(share, bot, None)
+async def test_preview_lead_repo_builds_synthetic_visitor_lead():
+    share, _ = _preview_share_rows("preview-token")
+    repo = _preview_lead_repo(share)
 
-    payload = await start_public_agent_preview_session(token, session=session)
+    lead = await repo.get_lead(_preview_lead_id(share))
 
-    assert payload["conversation_id"] is None
-    assert payload["voice_provider"] == "builtin"
-    assert share.session_count == 1
-    assert len(session.added) == 1
-    assert session.added[0].lifecycle_stage == "follow_up"
-    assert session.added[0].metadata_json == {"source": "agent_preview", "share_id": str(share.id)}
-    assert session.flushed is True
-    assert session.committed is True
+    assert lead.lead_id == f"preview-share-{share.id}"
+    assert lead.lead_name == "Visitor"
+    assert lead.lifecycle_stage == "follow_up"
+    assert lead.metadata == {"source": "agent_preview", "share_id": str(share.id)}
